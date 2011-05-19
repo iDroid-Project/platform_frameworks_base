@@ -23,6 +23,7 @@ import com.android.internal.statusbar.StatusBarIcon;
 import com.android.internal.statusbar.StatusBarIconList;
 import com.android.internal.statusbar.StatusBarNotification;
 
+import android.app.Activity;
 import android.app.ActivityManagerNative;
 import android.app.Dialog;
 import android.app.Notification;
@@ -51,6 +52,7 @@ import android.util.Slog;
 import android.util.Log;
 import android.view.Display;
 import android.view.Gravity;
+import android.view.IWindowManager;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
@@ -62,6 +64,7 @@ import android.view.WindowManager;
 import android.view.WindowManagerImpl;
 import android.view.animation.Animation;
 import android.view.animation.AnimationUtils;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.RemoteViews;
@@ -94,7 +97,11 @@ public class StatusBarService extends Service implements CommandQueue.Callbacks 
     private static final int MSG_ANIMATE = 1000;
     private static final int MSG_ANIMATE_REVEAL = 1001;
 
+    private int mKey = KeyEvent.KEYCODE_BACK;
+
     StatusBarPolicy mIconPolicy;
+
+    private final Handler miDroid = new Handler();
 
     CommandQueue mCommandQueue;
     IStatusBarService mBarService;
@@ -252,6 +259,70 @@ public class StatusBarService extends Service implements CommandQueue.Callbacks 
         return null;
     }
 
+/* SOFT BUTTONS */
+    private void setupSoftButtons()
+    {
+        LinearLayout homeButton = (LinearLayout) mExpandedView.findViewById(R.id.exp_idroid_btn_1);
+        LinearLayout backButton = (LinearLayout) mStatusBarView.findViewById(R.id.bar_idroid_btn_back);
+        LinearLayout menuButton = (LinearLayout) mStatusBarView.findViewById(R.id.bar_idroid_btn_menu);
+	
+        homeButton.setOnClickListener(idroidButtonListener);
+        backButton.setOnClickListener(idroidButtonListener);
+        menuButton.setOnClickListener(idroidButtonListener);
+        menuButton.setOnLongClickListener(new View.OnLongClickListener() {
+        public boolean onLongClick(View v) {
+                runKey(KeyEvent.KEYCODE_BUTTON_MODE);
+                return true;
+            }
+        });
+    }
+
+    private View.OnClickListener idroidButtonListener = new View.OnClickListener() 
+    {
+        public void onClick(View v) {
+            animateCollapse();
+            int viewId = v.getId();
+            switch(viewId) {
+                case R.id.exp_idroid_btn_1:
+                    runKey(KeyEvent.KEYCODE_HOME);
+                    break;
+                case R.id.bar_idroid_btn_back:
+                    runKey(KeyEvent.KEYCODE_BACK);
+                    break;
+                case R.id.bar_idroid_btn_menu:
+                    runKey(KeyEvent.KEYCODE_MENU);
+                    break;
+                default:
+                    runKey(KeyEvent.KEYCODE_BACK);
+                    break;
+            }
+            return;
+        }
+    };
+
+    private void runKey(int key) {	
+        mKey = key;
+        miDroid.post(new Runnable() {
+            public void run() {
+                press(mKey);
+            }
+        });
+    }
+
+    public void press(int key) {
+        sendKey(new KeyEvent(KeyEvent.ACTION_DOWN, key));
+        sendKey(new KeyEvent(KeyEvent.ACTION_UP, key));
+    }
+
+    public void sendKey(KeyEvent event) {
+        try {
+            IWindowManager.Stub.asInterface(ServiceManager.getService("window")).injectKeyEvent(event, false);
+        } catch (RemoteException e) {
+            Log.e("StatusBar", "sendKey exception " + e);
+        }
+    }
+/* END SOFT BUTTONS */
+
     // ================================================================================
     // Constructing the view
     // ================================================================================
@@ -339,6 +410,7 @@ public class StatusBarService extends Service implements CommandQueue.Callbacks 
         lp.windowAnimations = com.android.internal.R.style.Animation_StatusBar;
 
         WindowManagerImpl.getDefault().addView(view, lp);
+        this.setupSoftButtons(); 
     }
 
     public void addIcon(String slot, int index, int viewIndex, StatusBarIcon icon) {
@@ -961,7 +1033,8 @@ public class StatusBarService extends Service implements CommandQueue.Callbacks 
                 // that rotates (like g1 and droid)
                 int x = (int)event.getRawX();
                 final int edgeBorder = mEdgeBorder;
-                if (x >= edgeBorder && x < mDisplay.getWidth() - edgeBorder) {
+                LinearLayout idroidBar = (LinearLayout) mStatusBarView.findViewById(R.id.bar_idroid_btn);
+                if (x > edgeBorder + idroidBar.getMeasuredWidth() && x < mDisplay.getWidth() - edgeBorder) {    
                     prepareTracking(y, !mExpanded);// opening if we're not already fully visible
                     mVelocityTracker.addMovement(event);
                 }

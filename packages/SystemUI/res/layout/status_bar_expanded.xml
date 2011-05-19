@@ -24,6 +24,33 @@
     android:descendantFocusability="afterDescendants"
     >
 
+    <!-- Begin Soft Buttons Widget -->
+    <LinearLayout android:id="@+id/exp_idroid_btn"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        >
+		<LinearLayout android:id="@+id/exp_idroid_btn_1"
+			android:layout_width="0dip"
+			android:layout_weight="1"
+			android:layout_height="match_parent"
+			android:orientation="vertical"
+			android:clickable="true"
+			android:focusable="true"
+			android:background="@drawable/stat_idroidbtn_bg"
+			>
+			<ImageView android:id="@+id/exp_idroid_image_1"
+				android:layout_width="match_parent"
+				android:layout_height="0dip"
+				android:layout_weight="1"
+				android:scaleType="center"
+				android:src="@drawable/stat_idroidbtn_home"
+				/>
+               </LinearLayout>
+    </LinearLayout>
+    <!-- End Soft Buttons Widget -->
+
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
