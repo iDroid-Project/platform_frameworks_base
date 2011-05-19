@@ -381,7 +381,7 @@ public class Environment {
      * <p>See {@link #getExternalStorageDirectory()} for more information.
      */
     public static String getExternalStorageState() {
-        try {
+/*        try {
             if (mMntSvc == null) {
                 mMntSvc = IMountService.Stub.asInterface(ServiceManager
                                                          .getService("mount"));
@@ -389,8 +389,9 @@ public class Environment {
             return mMntSvc.getVolumeState(getExternalStorageDirectory().toString());
         } catch (Exception rex) {
             return Environment.MEDIA_REMOVED;
-        }
-    }
+        } */
+    return SystemProperties.get("EXTERNAL_STORAGE_STATE", MEDIA_REMOVED);
+	}
 
     /**
      * Returns whether the primary "external" storage device is removable.
