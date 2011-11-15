@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009 The Android Open Source Project
+ * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,246 +17,174 @@
 #include "rsContext.h"
 #include "rsProgram.h"
 
-#include <GLES2/gl2.h>
-#include <GLES2/gl2ext.h>
-
 using namespace android;
 using namespace android::renderscript;
 
-
-Program::Program(Context *rsc) : ObjectBase(rsc)
-{
-    mAllocFile = __FILE__;
-    mAllocLine = __LINE__;
-    mDirty = true;
-    mShaderID = 0;
-    mAttribCount = 0;
-    mUniformCount = 0;
-
-    mInputElements = NULL;
-    mOutputElements = NULL;
-    mConstantTypes = NULL;
-    mInputCount = 0;
-    mOutputCount = 0;
-    mConstantCount = 0;
-    mIsValid = false;
-}
-
 Program::Program(Context *rsc, const char * shaderText, uint32_t shaderLength,
-                 const uint32_t * params, uint32_t paramLength) :
-    ObjectBase(rsc)
-{
-    mAllocFile = __FILE__;
-    mAllocLine = __LINE__;
-    mDirty = true;
-    mShaderID = 0;
-    mAttribCount = 0;
-    mUniformCount = 0;
-    mTextureCount = 0;
+                 const uint32_t * params, uint32_t paramLength)
+    : ProgramBase(rsc) {
 
-    mInputCount = 0;
-    mOutputCount = 0;
-    mConstantCount = 0;
-
+    initMemberVars();
     for (uint32_t ct=0; ct < paramLength; ct+=2) {
         if (params[ct] == RS_PROGRAM_PARAM_INPUT) {
-            mInputCount++;
-        }
-        if (params[ct] == RS_PROGRAM_PARAM_OUTPUT) {
-            mOutputCount++;
+            mHal.state.inputElementsCount++;
         }
         if (params[ct] == RS_PROGRAM_PARAM_CONSTANT) {
-            mConstantCount++;
+            mHal.state.constantsCount++;
         }
-        if (params[ct] == RS_PROGRAM_PARAM_TEXTURE_COUNT) {
-            mTextureCount = params[ct+1];
+        if (params[ct] == RS_PROGRAM_PARAM_TEXTURE_TYPE) {
+            mHal.state.texturesCount++;
         }
     }
 
-    mInputElements = new ObjectBaseRef<Element>[mInputCount];
-    mOutputElements = new ObjectBaseRef<Element>[mOutputCount];
-    mConstantTypes = new ObjectBaseRef<Type>[mConstantCount];
+    mHal.state.textures = new ObjectBaseRef<Allocation>[mHal.state.texturesCount];
+    mHal.state.samplers = new ObjectBaseRef<Sampler>[mHal.state.texturesCount];
+    mHal.state.textureTargets = new RsTextureTarget[mHal.state.texturesCount];
+    mHal.state.inputElements = new ObjectBaseRef<Element>[mHal.state.inputElementsCount];
+    mHal.state.constantTypes = new ObjectBaseRef<Type>[mHal.state.constantsCount];
+    mHal.state.constants = new ObjectBaseRef<Allocation>[mHal.state.constantsCount];
 
     uint32_t input = 0;
-    uint32_t output = 0;
     uint32_t constant = 0;
+    uint32_t texture = 0;
     for (uint32_t ct=0; ct < paramLength; ct+=2) {
         if (params[ct] == RS_PROGRAM_PARAM_INPUT) {
-            mInputElements[input++].set(reinterpret_cast<Element *>(params[ct+1]));
-        }
-        if (params[ct] == RS_PROGRAM_PARAM_OUTPUT) {
-            mOutputElements[output++].set(reinterpret_cast<Element *>(params[ct+1]));
+            mHal.state.inputElements[input++].set(reinterpret_cast<Element *>(params[ct+1]));
         }
         if (params[ct] == RS_PROGRAM_PARAM_CONSTANT) {
-            mConstantTypes[constant++].set(reinterpret_cast<Type *>(params[ct+1]));
+            mHal.state.constantTypes[constant++].set(reinterpret_cast<Type *>(params[ct+1]));
         }
+        if (params[ct] == RS_PROGRAM_PARAM_TEXTURE_TYPE) {
+            mHal.state.textureTargets[texture++] = (RsTextureTarget)params[ct+1];
+        }
+    }
+    mIsInternal = false;
+    uint32_t internalTokenLen = strlen(RS_SHADER_INTERNAL);
+    if (shaderLength > internalTokenLen &&
+       strncmp(RS_SHADER_INTERNAL, shaderText, internalTokenLen) == 0) {
+        mIsInternal = true;
+        shaderText += internalTokenLen;
+        shaderLength -= internalTokenLen;
     }
     mUserShader.setTo(shaderText, shaderLength);
 }
 
-Program::~Program()
-{
-    for (uint32_t ct=0; ct < MAX_UNIFORMS; ct++) {
-        bindAllocation(NULL, ct);
-    }
+Program::~Program() {
+    freeChildren();
 
-    delete[] mInputElements;
-    delete[] mOutputElements;
-    delete[] mConstantTypes;
-    mInputCount = 0;
-    mOutputCount = 0;
-    mConstantCount = 0;
+    delete[] mHal.state.textures;
+    delete[] mHal.state.samplers;
+    delete[] mHal.state.textureTargets;
+    delete[] mHal.state.inputElements;
+    delete[] mHal.state.constantTypes;
+    delete[] mHal.state.constants;
+    mHal.state.inputElementsCount = 0;
+    mHal.state.constantsCount = 0;
+    mHal.state.texturesCount = 0;
 }
 
+bool Program::freeChildren() {
+    for (uint32_t ct=0; ct < mHal.state.constantsCount; ct++) {
+        bindAllocation(NULL, NULL, ct);
+    }
 
-void Program::bindAllocation(Allocation *alloc, uint32_t slot)
-{
-    if (mConstants[slot].get() == alloc) {
+    for (uint32_t ct=0; ct < mHal.state.texturesCount; ct++) {
+        bindTexture(NULL, ct, NULL);
+        bindSampler(NULL, ct, NULL);
+    }
+    return false;
+}
+
+void Program::initMemberVars() {
+    mDirty = true;
+
+    mHal.drv = NULL;
+    mHal.state.textures = NULL;
+    mHal.state.samplers = NULL;
+    mHal.state.textureTargets = NULL;
+    mHal.state.inputElements = NULL;
+    mHal.state.constantTypes = NULL;
+    mHal.state.constants = NULL;
+
+    mHal.state.inputElementsCount = 0;
+    mHal.state.constantsCount = 0;
+    mHal.state.texturesCount = 0;
+
+    mIsInternal = false;
+}
+
+void Program::bindAllocation(Context *rsc, Allocation *alloc, uint32_t slot) {
+    if (alloc != NULL) {
+        if (slot >= mHal.state.constantsCount) {
+            LOGE("Attempt to bind alloc at slot %u, on shader id %u, but const count is %u",
+                 slot, (uint32_t)this, mHal.state.constantsCount);
+            rsc->setError(RS_ERROR_BAD_SHADER, "Cannot bind allocation");
+            return;
+        }
+        if (alloc->getType() != mHal.state.constantTypes[slot].get()) {
+            LOGE("Attempt to bind alloc at slot %u, on shader id %u, but types mismatch",
+                 slot, (uint32_t)this);
+            rsc->setError(RS_ERROR_BAD_SHADER, "Cannot bind allocation");
+            return;
+        }
+    }
+    if (mHal.state.constants[slot].get() == alloc) {
         return;
     }
-    if (mConstants[slot].get()) {
-        mConstants[slot].get()->removeProgramToDirty(this);
+    if (mHal.state.constants[slot].get()) {
+        mHal.state.constants[slot].get()->removeProgramToDirty(this);
     }
-    mConstants[slot].set(alloc);
+    mHal.state.constants[slot].set(alloc);
     if (alloc) {
         alloc->addProgramToDirty(this);
     }
     mDirty = true;
 }
 
-void Program::bindTexture(uint32_t slot, Allocation *a)
-{
-    if (slot >= MAX_TEXTURE) {
-        LOGE("Attempt to bind a texture to a slot > MAX_TEXTURE");
+void Program::bindTexture(Context *rsc, uint32_t slot, Allocation *a) {
+    if (slot >= mHal.state.texturesCount) {
+        LOGE("Attempt to bind texture to slot %u but tex count is %u", slot, mHal.state.texturesCount);
+        rsc->setError(RS_ERROR_BAD_SHADER, "Cannot bind texture");
         return;
     }
 
-    //LOGE("bindtex %i %p", slot, a);
-    mTextures[slot].set(a);
-    mDirty = true;
-}
-
-void Program::bindSampler(uint32_t slot, Sampler *s)
-{
-    if (slot >= MAX_TEXTURE) {
-        LOGE("Attempt to bind a Sampler to a slot > MAX_TEXTURE");
+    if (a && a->getType()->getDimFaces() && mHal.state.textureTargets[slot] != RS_TEXTURE_CUBE) {
+        LOGE("Attempt to bind cubemap to slot %u but 2d texture needed", slot);
+        rsc->setError(RS_ERROR_BAD_SHADER, "Cannot bind cubemap to 2d texture slot");
         return;
     }
 
-    mSamplers[slot].set(s);
+    mHal.state.textures[slot].set(a);
     mDirty = true;
 }
 
-String8 Program::getGLSLInputString() const
-{
-    String8 s;
-    for (uint32_t ct=0; ct < mInputCount; ct++) {
-        const Element *e = mInputElements[ct].get();
-        for (uint32_t field=0; field < e->getFieldCount(); field++) {
-            const Element *f = e->getField(field);
-
-            // Cannot be complex
-            rsAssert(!f->getFieldCount());
-            switch(f->getComponent().getVectorSize()) {
-            case 1: s.append("attribute float ATTRIB_"); break;
-            case 2: s.append("attribute vec2 ATTRIB_"); break;
-            case 3: s.append("attribute vec3 ATTRIB_"); break;
-            case 4: s.append("attribute vec4 ATTRIB_"); break;
-            default:
-                rsAssert(0);
-            }
-
-            s.append(e->getFieldName(field));
-            s.append(";\n");
-        }
-    }
-    return s;
-}
-
-String8 Program::getGLSLOutputString() const
-{
-    return String8();
-}
-
-String8 Program::getGLSLConstantString() const
-{
-    return String8();
-}
-
-
-void Program::createShader()
-{
-}
-
-bool Program::loadShader(Context *rsc, uint32_t type)
-{
-    mShaderID = glCreateShader(type);
-    rsAssert(mShaderID);
-
-    if (rsc->props.mLogShaders) {
-        LOGV("Loading shader type %x, ID %i", type, mShaderID);
-        LOGV("%s", mShader.string());
+void Program::bindSampler(Context *rsc, uint32_t slot, Sampler *s) {
+    if (slot >= mHal.state.texturesCount) {
+        LOGE("Attempt to bind sampler to slot %u but tex count is %u", slot, mHal.state.texturesCount);
+        rsc->setError(RS_ERROR_BAD_SHADER, "Cannot bind sampler");
+        return;
     }
 
-    if (mShaderID) {
-        const char * ss = mShader.string();
-        glShaderSource(mShaderID, 1, &ss, NULL);
-        glCompileShader(mShaderID);
-
-        GLint compiled = 0;
-        glGetShaderiv(mShaderID, GL_COMPILE_STATUS, &compiled);
-        if (!compiled) {
-            GLint infoLen = 0;
-            glGetShaderiv(mShaderID, GL_INFO_LOG_LENGTH, &infoLen);
-            if (infoLen) {
-                char* buf = (char*) malloc(infoLen);
-                if (buf) {
-                    glGetShaderInfoLog(mShaderID, infoLen, NULL, buf);
-                    LOGE("Could not compile shader \n%s\n", buf);
-                    free(buf);
-                }
-                glDeleteShader(mShaderID);
-                mShaderID = 0;
-                rsc->setError(RS_ERROR_BAD_SHADER, "Error returned from GL driver loading shader text,");
-                return false;
-            }
-        }
-    }
-
-    if (rsc->props.mLogShaders) {
-        LOGV("--Shader load result %x ", glGetError());
-    }
-    mIsValid = true;
-    return true;
+    mHal.state.samplers[slot].set(s);
+    mDirty = true;
 }
-
-void Program::setShader(const char *txt, uint32_t len)
-{
-    mUserShader.setTo(txt, len);
-}
-
-
 
 namespace android {
 namespace renderscript {
 
-
-void rsi_ProgramBindConstants(Context *rsc, RsProgram vp, uint32_t slot, RsAllocation constants)
-{
+void rsi_ProgramBindConstants(Context *rsc, RsProgram vp, uint32_t slot, RsAllocation constants) {
     Program *p = static_cast<Program *>(vp);
-    p->bindAllocation(static_cast<Allocation *>(constants), slot);
+    p->bindAllocation(rsc, static_cast<Allocation *>(constants), slot);
 }
 
-void rsi_ProgramBindTexture(Context *rsc, RsProgram vpf, uint32_t slot, RsAllocation a)
-{
+void rsi_ProgramBindTexture(Context *rsc, RsProgram vpf, uint32_t slot, RsAllocation a) {
     Program *p = static_cast<Program *>(vpf);
-    p->bindTexture(slot, static_cast<Allocation *>(a));
+    p->bindTexture(rsc, slot, static_cast<Allocation *>(a));
 }
 
-void rsi_ProgramBindSampler(Context *rsc, RsProgram vpf, uint32_t slot, RsSampler s)
-{
+void rsi_ProgramBindSampler(Context *rsc, RsProgram vpf, uint32_t slot, RsSampler s) {
     Program *p = static_cast<Program *>(vpf);
-    p->bindSampler(slot, static_cast<Sampler *>(s));
+    p->bindSampler(rsc, slot, static_cast<Sampler *>(s));
 }
 
 }

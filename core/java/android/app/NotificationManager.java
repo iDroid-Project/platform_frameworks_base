@@ -39,17 +39,28 @@ import android.util.Log;
  * </ul>
  *
  * <p>
- * Each of the notify methods takes an int id parameter.  This id identifies
- * this notification from your app to the system, so that id should be unique
- * within your app.  If you call one of the notify methods with an id that is
- * currently active and a new set of notification parameters, it will be
- * updated.  For example, if you pass a new status bar icon, the old icon in
- * the status bar will be replaced with the new one.  This is also the same
- * id you pass to the {@link #cancel} method to clear this notification.
+ * Each of the notify methods takes an int id parameter and optionally a
+ * {@link String} tag parameter, which may be {@code null}.  These parameters
+ * are used to form a pair (tag, id), or ({@code null}, id) if tag is
+ * unspecified.  This pair identifies this notification from your app to the
+ * system, so that pair should be unique within your app.  If you call one
+ * of the notify methods with a (tag, id) pair that is currently active and
+ * a new set of notification parameters, it will be updated.  For example,
+ * if you pass a new status bar icon, the old icon in the status bar will
+ * be replaced with the new one.  This is also the same tag and id you pass
+ * to the {@link #cancel(int)} or {@link #cancel(String, int)} method to clear
+ * this notification.
  *
  * <p>
  * You do not instantiate this class directly; instead, retrieve it through
  * {@link android.content.Context#getSystemService}.
+ *
+ * <div class="special reference">
+ * <h3>Developer Guides</h3>
+ * <p>For a guide to creating notifications, read the
+ * <a href="{@docRoot}guide/topics/ui/notifiers/notifications.html">Status Bar Notifications</a>
+ * developer guide.</p>
+ * </div>
  *
  * @see android.app.Notification
  * @see android.content.Context#getSystemService
@@ -57,8 +68,7 @@ import android.util.Log;
 public class NotificationManager
 {
     private static String TAG = "NotificationManager";
-    private static boolean DEBUG = false;
-    private static boolean localLOGV = DEBUG || android.util.Config.LOGV;
+    private static boolean localLOGV = false;
 
     private static INotificationManager sService;
 
@@ -79,12 +89,14 @@ public class NotificationManager
     }
 
     /**
-     * Persistent notification on the status bar, 
+     * Post a notification to be shown in the status bar. If a notification with
+     * the same id has already been posted by your application and has not yet been canceled, it
+     * will be replaced by the updated information.
      *
      * @param id An identifier for this notification unique within your
      *        application.
-     * @param notification A {@link Notification} object describing how to
-     *        notify the user, other than the view you're providing. Must not be null.
+     * @param notification A {@link Notification} object describing what to show the user. Must not
+     *        be null.
      */
     public void notify(int id, Notification notification)
     {
@@ -92,14 +104,15 @@ public class NotificationManager
     }
 
     /**
-     * Persistent notification on the status bar,
+     * Post a notification to be shown in the status bar. If a notification with
+     * the same tag and id has already been posted by your application and has not yet been
+     * canceled, it will be replaced by the updated information.
      *
-     * @param tag An string identifier for this notification unique within your
-     *        application.
-     * @param notification A {@link Notification} object describing how to
-     *        notify the user, other than the view you're providing. Must not be null.
-     * @return the id of the notification that is associated with the string identifier that
-     * can be used to cancel the notification
+     * @param tag A string identifier for this notification.  May be {@code null}.
+     * @param id An identifier for this notification.  The pair (tag, id) must be unique
+     *        within your application.
+     * @param notification A {@link Notification} object describing what to
+     *        show the user. Must not be null.
      */
     public void notify(String tag, int id, Notification notification)
     {

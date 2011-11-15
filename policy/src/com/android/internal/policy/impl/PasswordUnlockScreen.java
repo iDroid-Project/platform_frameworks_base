@@ -16,25 +16,32 @@
 
 package com.android.internal.policy.impl;
 
+import java.util.List;
+
 import android.app.admin.DevicePolicyManager;
 import android.content.Context;
 import android.content.res.Configuration;
 import android.graphics.Rect;
 
-import com.android.internal.policy.impl.PatternUnlockScreen.FooterMode;
 import com.android.internal.widget.LockPatternUtils;
 import com.android.internal.widget.PasswordEntryKeyboardView;
 
 import android.os.CountDownTimer;
 import android.os.SystemClock;
-import android.telephony.TelephonyManager;
+import android.provider.Settings;
+import android.security.KeyStore;
+import android.text.Editable;
+import android.text.InputType;
+import android.text.TextWatcher;
 import android.text.method.DigitsKeyListener;
 import android.text.method.TextKeyListener;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
-import android.widget.Button;
+import android.view.inputmethod.InputMethodInfo;
+import android.view.inputmethod.InputMethodManager;
+import android.view.inputmethod.InputMethodSubtype;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -48,21 +55,25 @@ import com.android.internal.widget.PasswordEntryKeyboardHelper;
  * an unlock password
  */
 public class PasswordUnlockScreen extends LinearLayout implements KeyguardScreen,
-        View.OnClickListener, KeyguardUpdateMonitor.InfoCallback, OnEditorActionListener {
+        OnEditorActionListener {
 
+    private static final String TAG = "PasswordUnlockScreen";
     private final KeyguardUpdateMonitor mUpdateMonitor;
     private final KeyguardScreenCallback mCallback;
 
-    private EditText mPasswordEntry;
-    private Button mEmergencyCallButton;
-    private LockPatternUtils mLockPatternUtils;
-    private PasswordEntryKeyboardView mKeyboardView;
-    private PasswordEntryKeyboardHelper mKeyboardHelper;
+    private final boolean mIsAlpha;
 
-    private int mCreationOrientation;
-    private int mCreationHardKeyboardHidden;
-    private CountDownTimer mCountdownTimer;
-    private TextView mTitle;
+    private final EditText mPasswordEntry;
+    private final LockPatternUtils mLockPatternUtils;
+    private final PasswordEntryKeyboardView mKeyboardView;
+    private final PasswordEntryKeyboardHelper mKeyboardHelper;
+
+    private final int mCreationOrientation;
+    private final int mCreationHardKeyboardHidden;
+
+    private final KeyguardStatusViewManager mStatusViewManager;
+    private final boolean mUseSystemIME = true; // TODO: Make configurable
+    private boolean mResuming; // used to prevent poking the wakelock during onResume()
 
     // To avoid accidental lockout due to events while the device in in the pocket, ignore
     // any passwords with length less than or equal to this length.
@@ -86,36 +97,145 @@ public class PasswordUnlockScreen extends LinearLayout implements KeyguardScreen
             layoutInflater.inflate(R.layout.keyguard_screen_password_landscape, this, true);
         }
 
+        mStatusViewManager = new KeyguardStatusViewManager(this, mUpdateMonitor, mLockPatternUtils,
+                mCallback, true);
+
         final int quality = lockPatternUtils.getKeyguardStoredPasswordQuality();
-        final boolean isAlpha = DevicePolicyManager.PASSWORD_QUALITY_ALPHABETIC == quality
-                || DevicePolicyManager.PASSWORD_QUALITY_ALPHANUMERIC == quality;
+        mIsAlpha = DevicePolicyManager.PASSWORD_QUALITY_ALPHABETIC == quality
+                || DevicePolicyManager.PASSWORD_QUALITY_ALPHANUMERIC == quality
+                || DevicePolicyManager.PASSWORD_QUALITY_COMPLEX == quality;
 
         mKeyboardView = (PasswordEntryKeyboardView) findViewById(R.id.keyboard);
         mPasswordEntry = (EditText) findViewById(R.id.passwordEntry);
         mPasswordEntry.setOnEditorActionListener(this);
-        mEmergencyCallButton = (Button) findViewById(R.id.emergencyCall);
-        mEmergencyCallButton.setOnClickListener(this);
-        mLockPatternUtils.updateEmergencyCallButtonState(mEmergencyCallButton);
-        mTitle = (TextView) findViewById(R.id.enter_password_label);
 
-        mKeyboardHelper = new PasswordEntryKeyboardHelper(context, mKeyboardView, this);
-        mKeyboardHelper.setKeyboardMode(isAlpha ? PasswordEntryKeyboardHelper.KEYBOARD_MODE_ALPHA
-                : PasswordEntryKeyboardHelper.KEYBOARD_MODE_NUMERIC);
-
-        mKeyboardView.setVisibility(mCreationHardKeyboardHidden == Configuration.HARDKEYBOARDHIDDEN_NO
-                ? View.INVISIBLE : View.VISIBLE);
-        mPasswordEntry.requestFocus();
-
-        // This allows keyboards with overlapping qwerty/numeric keys to choose just the
-        // numeric keys.
-        if (isAlpha) {
-            mPasswordEntry.setKeyListener(TextKeyListener.getInstance());
+        mKeyboardHelper = new PasswordEntryKeyboardHelper(context, mKeyboardView, this, false);
+        mKeyboardHelper.setEnableHaptics(
+                Settings.Secure.getInt(mContext.getContentResolver(),
+                        Settings.Secure.LOCK_PATTERN_TACTILE_FEEDBACK_ENABLED, 0)
+                        != 0);
+        if (mIsAlpha) {
+            // We always use the system IME for alpha keyboard, so hide lockscreen's soft keyboard
+            mKeyboardHelper.setKeyboardMode(PasswordEntryKeyboardHelper.KEYBOARD_MODE_ALPHA);
+            mKeyboardView.setVisibility(View.GONE);
         } else {
-            mPasswordEntry.setKeyListener(DigitsKeyListener.getInstance());
+            // Use lockscreen's numeric keyboard if the physical keyboard isn't showing
+            mKeyboardHelper.setKeyboardMode(PasswordEntryKeyboardHelper.KEYBOARD_MODE_NUMERIC);
+            mKeyboardView.setVisibility(mCreationHardKeyboardHidden
+                    == Configuration.HARDKEYBOARDHIDDEN_NO ? View.INVISIBLE : View.VISIBLE);
+
+            // The delete button is of the PIN keyboard itself in some (e.g. tablet) layouts,
+            // not a separate view
+            View pinDelete = findViewById(R.id.pinDel);
+            if (pinDelete != null) {
+                pinDelete.setVisibility(View.VISIBLE);
+                pinDelete.setOnClickListener(new OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        mKeyboardHelper.handleBackspace();
+                    }
+                });
+            }
         }
 
-        mKeyboardHelper.setVibratePattern(mLockPatternUtils.isTactileFeedbackEnabled() ?
-                com.android.internal.R.array.config_virtualKeyVibePattern : 0);
+        mPasswordEntry.requestFocus();
+
+        // This allows keyboards with overlapping qwerty/numeric keys to choose just numeric keys.
+        if (mIsAlpha) {
+            mPasswordEntry.setKeyListener(TextKeyListener.getInstance());
+            mPasswordEntry.setInputType(InputType.TYPE_CLASS_TEXT
+                    | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+            //mStatusViewManager.setHelpMessage(R.string.keyguard_password_enter_password_code,
+                    //KeyguardStatusViewManager.LOCK_ICON);
+        } else {
+            mPasswordEntry.setKeyListener(DigitsKeyListener.getInstance());
+            mPasswordEntry.setInputType(InputType.TYPE_CLASS_NUMBER
+                    | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+            //mStatusViewManager.setHelpMessage(R.string.keyguard_password_enter_pin_code,
+                    //KeyguardStatusViewManager.LOCK_ICON);
+        }
+
+        // Poke the wakelock any time the text is selected or modified
+        mPasswordEntry.setOnClickListener(new OnClickListener() {
+            public void onClick(View v) {
+                mCallback.pokeWakelock();
+            }
+        });
+        mPasswordEntry.addTextChangedListener(new TextWatcher() {
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+            }
+
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            public void afterTextChanged(Editable s) {
+                if (!mResuming) {
+                    mCallback.pokeWakelock();
+                }
+            }
+        });
+
+        // If there's more than one IME, enable the IME switcher button
+        View switchImeButton = findViewById(R.id.switch_ime_button);
+        final InputMethodManager imm = (InputMethodManager) getContext().getSystemService(
+                Context.INPUT_METHOD_SERVICE);
+        if (mIsAlpha && switchImeButton != null && hasMultipleEnabledIMEsOrSubtypes(imm, false)) {
+            switchImeButton.setVisibility(View.VISIBLE);
+            switchImeButton.setOnClickListener(new OnClickListener() {
+                public void onClick(View v) {
+                    mCallback.pokeWakelock(); // Leave the screen on a bit longer
+                    imm.showInputMethodPicker();
+                }
+            });
+        }
+    }
+
+    /**
+     * Method adapted from com.android.inputmethod.latin.Utils
+     *
+     * @param imm The input method manager
+     * @param shouldIncludeAuxiliarySubtypes
+     * @return true if we have multiple IMEs to choose from
+     */
+    private boolean hasMultipleEnabledIMEsOrSubtypes(InputMethodManager imm,
+            final boolean shouldIncludeAuxiliarySubtypes) {
+        final List<InputMethodInfo> enabledImis = imm.getEnabledInputMethodList();
+
+        // Number of the filtered IMEs
+        int filteredImisCount = 0;
+
+        for (InputMethodInfo imi : enabledImis) {
+            // We can return true immediately after we find two or more filtered IMEs.
+            if (filteredImisCount > 1) return true;
+            final List<InputMethodSubtype> subtypes =
+                    imm.getEnabledInputMethodSubtypeList(imi, true);
+            // IMEs that have no subtypes should be counted.
+            if (subtypes.isEmpty()) {
+                ++filteredImisCount;
+                continue;
+            }
+
+            int auxCount = 0;
+            for (InputMethodSubtype subtype : subtypes) {
+                if (subtype.isAuxiliary()) {
+                    ++auxCount;
+                }
+            }
+            final int nonAuxCount = subtypes.size() - auxCount;
+
+            // IMEs that have one or more non-auxiliary subtypes should be counted.
+            // If shouldIncludeAuxiliarySubtypes is true, IMEs that have two or more auxiliary
+            // subtypes should be counted as well.
+            if (nonAuxCount > 0 || (shouldIncludeAuxiliarySubtypes && auxCount > 1)) {
+                ++filteredImisCount;
+                continue;
+            }
+        }
+
+        return filteredImisCount > 1
+        // imm.getEnabledInputMethodSubtypeList(null, false) will return the current IME's enabled
+        // input method subtype (The current IME should be LatinIME.)
+                || imm.getEnabledInputMethodSubtypeList(null, false).size() > 1;
     }
 
     @Override
@@ -126,26 +246,30 @@ public class PasswordUnlockScreen extends LinearLayout implements KeyguardScreen
 
     /** {@inheritDoc} */
     public boolean needsInput() {
-        return false;
+        return mUseSystemIME && mIsAlpha;
     }
 
     /** {@inheritDoc} */
     public void onPause() {
-
+        mStatusViewManager.onPause();
     }
 
     /** {@inheritDoc} */
     public void onResume() {
+        mResuming = true;
+        // reset status
+        mStatusViewManager.onResume();
+
         // start fresh
         mPasswordEntry.setText("");
         mPasswordEntry.requestFocus();
-        mLockPatternUtils.updateEmergencyCallButtonState(mEmergencyCallButton);
 
         // if the user is currently locked out, enforce it.
         long deadline = mLockPatternUtils.getLockoutAttemptDeadline();
         if (deadline != 0) {
             handleAttemptLockout(deadline);
         }
+        mResuming = false;
     }
 
     /** {@inheritDoc} */
@@ -153,18 +277,13 @@ public class PasswordUnlockScreen extends LinearLayout implements KeyguardScreen
         mUpdateMonitor.removeCallback(this);
     }
 
-    public void onClick(View v) {
-        if (v == mEmergencyCallButton) {
-            mCallback.takeEmergencyCallAction();
-        }
-        mCallback.pokeWakelock();
-    }
-
     private void verifyPasswordAndUnlock() {
         String entry = mPasswordEntry.getText().toString();
         if (mLockPatternUtils.checkPassword(entry)) {
             mCallback.keyguardDone(true);
             mCallback.reportSuccessfulUnlockAttempt();
+            mStatusViewManager.setInstructionText(null);
+            KeyStore.getInstance().password(entry);
         } else if (entry.length() > MINIMUM_PASSWORD_LENGTH_BEFORE_REPORT ) {
             // to avoid accidental lockout, only count attempts that are long enough to be a
             // real password. This may require some tweaking.
@@ -174,6 +293,11 @@ public class PasswordUnlockScreen extends LinearLayout implements KeyguardScreen
                 long deadline = mLockPatternUtils.setLockoutAttemptDeadline();
                 handleAttemptLockout(deadline);
             }
+            mStatusViewManager.setInstructionText(
+                    mContext.getString(R.string.lockscreen_password_wrong));
+        } else if (entry.length() > 0) {
+            mStatusViewManager.setInstructionText(
+                    mContext.getString(R.string.lockscreen_password_wrong));
         }
         mPasswordEntry.setText("");
     }
@@ -183,7 +307,7 @@ public class PasswordUnlockScreen extends LinearLayout implements KeyguardScreen
         mPasswordEntry.setEnabled(false);
         mKeyboardView.setEnabled(false);
         long elapsedRealtime = SystemClock.elapsedRealtime();
-        mCountdownTimer = new CountDownTimer(elapsedRealtimeDeadline - elapsedRealtime, 1000) {
+        new CountDownTimer(elapsedRealtimeDeadline - elapsedRealtime, 1000) {
 
             @Override
             public void onTick(long millisUntilFinished) {
@@ -191,18 +315,17 @@ public class PasswordUnlockScreen extends LinearLayout implements KeyguardScreen
                 String instructions = getContext().getString(
                         R.string.lockscreen_too_many_failed_attempts_countdown,
                         secondsRemaining);
-                mTitle.setText(instructions);
+                mStatusViewManager.setInstructionText(instructions);
             }
 
             @Override
             public void onFinish() {
                 mPasswordEntry.setEnabled(true);
-                mTitle.setText(R.string.keyguard_password_enter_password_code);
                 mKeyboardView.setEnabled(true);
+                mStatusViewManager.resetStatusInfo();
             }
         }.start();
     }
-
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
@@ -237,31 +360,11 @@ public class PasswordUnlockScreen extends LinearLayout implements KeyguardScreen
 
     public boolean onEditorAction(TextView v, int actionId, KeyEvent event) {
         // Check if this was the result of hitting the enter key
-        if (actionId == EditorInfo.IME_NULL) {
+        if (actionId == EditorInfo.IME_NULL || actionId == EditorInfo.IME_ACTION_DONE
+                || actionId == EditorInfo.IME_ACTION_NEXT) {
             verifyPasswordAndUnlock();
             return true;
         }
         return false;
     }
-
-    public void onPhoneStateChanged(String newState) {
-        mLockPatternUtils.updateEmergencyCallButtonState(mEmergencyCallButton);
-    }
-
-    public void onRefreshBatteryInfo(boolean showBatteryInfo, boolean pluggedIn, int batteryLevel) {
-
-    }
-
-    public void onRefreshCarrierInfo(CharSequence plmn, CharSequence spn) {
-
-    }
-
-    public void onRingerModeChanged(int state) {
-
-    }
-
-    public void onTimeChanged() {
-
-    }
-
 }

@@ -201,7 +201,7 @@ void ASessionDescription::getFormatType(
     AString format;
     getFormat(index, &format);
 
-    char *lastSpacePos = strrchr(format.c_str(), ' ');
+    const char *lastSpacePos = strrchr(format.c_str(), ' ');
     CHECK(lastSpacePos != NULL);
 
     char *end;

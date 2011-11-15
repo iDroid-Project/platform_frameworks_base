@@ -17,60 +17,155 @@
 package android.renderscript;
 
 /**
- * @hide
+ *
  **/
 public class Script extends BaseObj {
-    public static final int MAX_SLOT = 16;
+    /**
+     * Only intended for use by generated reflected code.
+     *
+     * @param slot
+     */
+    protected void invoke(int slot) {
+        mRS.nScriptInvoke(getID(), slot);
+    }
 
-    boolean mIsRoot;
-    Type[] mTypes;
-    boolean[] mWritable;
-    Invokable[] mInvokables;
-
-    public static class Invokable {
-        RenderScript mRS;
-        Script mScript;
-        int mSlot;
-        String mName;
-
-        Invokable() {
-            mSlot = -1;
-        }
-
-        public void execute() {
-            mRS.nScriptInvoke(mScript.mID, mSlot);
+    /**
+     * Only intended for use by generated reflected code.
+     *
+     * @param slot
+     * @param v
+     */
+    protected void invoke(int slot, FieldPacker v) {
+        if (v != null) {
+            mRS.nScriptInvokeV(getID(), slot, v.getData());
+        } else {
+            mRS.nScriptInvoke(getID(), slot);
         }
     }
+
+    /**
+     * Only intended for use by generated reflected code.
+     *
+     * @param slot
+     * @param ain
+     * @param aout
+     * @param v
+     */
+    protected void forEach(int slot, Allocation ain, Allocation aout, FieldPacker v) {
+        if (ain == null && aout == null) {
+            throw new RSIllegalArgumentException(
+                "At least one of ain or aout is required to be non-null.");
+        }
+        int in_id = 0;
+        if (ain != null) {
+            in_id = ain.getID();
+        }
+        int out_id = 0;
+        if (aout != null) {
+            out_id = aout.getID();
+        }
+        byte[] params = null;
+        if (v != null) {
+            params = v.getData();
+        }
+        mRS.nScriptForEach(getID(), slot, in_id, out_id, params);
+    }
+
 
     Script(int id, RenderScript rs) {
-        super(rs);
-        mID = id;
+        super(id, rs);
     }
 
+
+    /**
+     * Only intended for use by generated reflected code.
+     *
+     * @param va
+     * @param slot
+     */
     public void bindAllocation(Allocation va, int slot) {
         mRS.validate();
-        mRS.nScriptBindAllocation(mID, va.mID, slot);
+        if (va != null) {
+            mRS.nScriptBindAllocation(getID(), va.getID(), slot);
+        } else {
+            mRS.nScriptBindAllocation(getID(), 0, slot);
+        }
     }
 
-    public void setClearColor(float r, float g, float b, float a) {
-        mRS.validate();
-        mRS.nScriptSetClearColor(mID, r, g, b, a);
+    /**
+     * Only intended for use by generated reflected code.
+     *
+     * @param index
+     * @param v
+     */
+    public void setVar(int index, float v) {
+        mRS.nScriptSetVarF(getID(), index, v);
     }
 
-    public void setClearDepth(float d) {
-        mRS.validate();
-        mRS.nScriptSetClearDepth(mID, d);
+    /**
+     * Only intended for use by generated reflected code.
+     *
+     * @param index
+     * @param v
+     */
+    public void setVar(int index, double v) {
+        mRS.nScriptSetVarD(getID(), index, v);
     }
 
-    public void setClearStencil(int stencil) {
-        mRS.validate();
-        mRS.nScriptSetClearStencil(mID, stencil);
+    /**
+     * Only intended for use by generated reflected code.
+     *
+     * @param index
+     * @param v
+     */
+    public void setVar(int index, int v) {
+        mRS.nScriptSetVarI(getID(), index, v);
+    }
+
+    /**
+     * Only intended for use by generated reflected code.
+     *
+     * @param index
+     * @param v
+     */
+    public void setVar(int index, long v) {
+        mRS.nScriptSetVarJ(getID(), index, v);
+    }
+
+    /**
+     * Only intended for use by generated reflected code.
+     *
+     * @param index
+     * @param v
+     */
+    public void setVar(int index, boolean v) {
+        mRS.nScriptSetVarI(getID(), index, v ? 1 : 0);
+    }
+
+    /**
+     * Only intended for use by generated reflected code.
+     *
+     * @param index
+     * @param o
+     */
+    public void setVar(int index, BaseObj o) {
+        mRS.nScriptSetVarObj(getID(), index, (o == null) ? 0 : o.getID());
+    }
+
+    /**
+     * Only intended for use by generated reflected code.
+     *
+     * @param index
+     * @param v
+     */
+    public void setVar(int index, FieldPacker v) {
+        mRS.nScriptSetVarV(getID(), index, v.getData());
     }
 
     public void setTimeZone(String timeZone) {
         mRS.validate();
         try {
-            mRS.nScriptSetTimeZone(mID, timeZone.getBytes("UTF-8"));
+            mRS.nScriptSetTimeZone(getID(), timeZone.getBytes("UTF-8"));
         } catch (java.io.UnsupportedEncodingException e) {
             throw new RuntimeException(e);
         }
@@ -78,72 +173,43 @@ public class Script extends BaseObj {
 
     public static class Builder {
         RenderScript mRS;
-        boolean mIsRoot = false;
-        Type[] mTypes;
-        String[] mNames;
-        boolean[] mWritable;
-        int mInvokableCount = 0;
-        Invokable[] mInvokables;
 
         Builder(RenderScript rs) {
             mRS = rs;
-            mTypes = new Type[MAX_SLOT];
-            mNames = new String[MAX_SLOT];
-            mWritable = new boolean[MAX_SLOT];
-            mInvokables = new Invokable[MAX_SLOT];
         }
-
-        public void setType(Type t, int slot) {
-            mTypes[slot] = t;
-            mNames[slot] = null;
-        }
-
-        public void setType(Type t, String name, int slot) {
-            mTypes[slot] = t;
-            mNames[slot] = name;
-        }
-
-        public Invokable addInvokable(String func) {
-            Invokable i = new Invokable();
-            i.mName = func;
-            i.mRS = mRS;
-            i.mSlot = mInvokableCount;
-            mInvokables[mInvokableCount++] = i;
-            return i;
-        }
-
-        public void setType(boolean writable, int slot) {
-            mWritable[slot] = writable;
-        }
-
-        void transferCreate() {
-            mRS.nScriptSetRoot(mIsRoot);
-            for(int ct=0; ct < mTypes.length; ct++) {
-                if(mTypes[ct] != null) {
-                    mRS.nScriptSetType(mTypes[ct].mID, mWritable[ct], mNames[ct], ct);
-                }
-            }
-            for(int ct=0; ct < mInvokableCount; ct++) {
-                mRS.nScriptSetInvokable(mInvokables[ct].mName, ct);
-            }
-        }
-
-        void transferObject(Script s) {
-            s.mIsRoot = mIsRoot;
-            s.mTypes = mTypes;
-            s.mInvokables = new Invokable[mInvokableCount];
-            for(int ct=0; ct < mInvokableCount; ct++) {
-                s.mInvokables[ct] = mInvokables[ct];
-                s.mInvokables[ct].mScript = s;
-            }
-            s.mInvokables = null;
-        }
-
-        public void setRoot(boolean r) {
-            mIsRoot = r;
-        }
-
     }
 
+
+    public static class FieldBase {
+        protected Element mElement;
+        protected Allocation mAllocation;
+
+        protected void init(RenderScript rs, int dimx) {
+            mAllocation = Allocation.createSized(rs, mElement, dimx, Allocation.USAGE_SCRIPT);
+        }
+
+        protected void init(RenderScript rs, int dimx, int usages) {
+            mAllocation = Allocation.createSized(rs, mElement, dimx, Allocation.USAGE_SCRIPT | usages);
+        }
+
+        protected FieldBase() {
+        }
+
+        public Element getElement() {
+            return mElement;
+        }
+
+        public Type getType() {
+            return mAllocation.getType();
+        }
+
+        public Allocation getAllocation() {
+            return mAllocation;
+        }
+
+        //@Override
+        public void updateAllocation() {
+        }
+    }
 }
 

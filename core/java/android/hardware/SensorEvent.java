@@ -122,13 +122,13 @@ public class SensorEvent {
      *
      *          final float alpha = 0.8;
      *
-     *          gravity[0] = alpha * gravity[0] + (1 - alpha) * event.data[0];
-     *          gravity[1] = alpha * gravity[1] + (1 - alpha) * event.data[1];
-     *          gravity[2] = alpha * gravity[2] + (1 - alpha) * event.data[2];
+     *          gravity[0] = alpha * gravity[0] + (1 - alpha) * event.values[0];
+     *          gravity[1] = alpha * gravity[1] + (1 - alpha) * event.values[1];
+     *          gravity[2] = alpha * gravity[2] + (1 - alpha) * event.values[2];
      *
-     *          linear_acceleration[0] = event.data[0] - gravity[0];
-     *          linear_acceleration[1] = event.data[1] - gravity[1];
-     *          linear_acceleration[2] = event.data[2] - gravity[2];
+     *          linear_acceleration[0] = event.values[0] - gravity[0];
+     *          linear_acceleration[1] = event.values[1] - gravity[1];
+     *          linear_acceleration[2] = event.values[2] - gravity[2];
      *     }
      * </pre>
      *
@@ -154,16 +154,16 @@ public class SensorEvent {
      * All values are in micro-Tesla (uT) and measure the ambient magnetic field
      * in the X, Y and Z axis.
      * 
-     * <h4>{@link android.hardware.Sensor#TYPE_GYROSCOPE Sensor.TYPE_GYROSCOPE}:</h4>
-     *  All values are in radians/second and measure the rate of rotation
-     *  around the X, Y and Z axis. The coordinate system is the same as is
-     *  used for the acceleration sensor.  Rotation is positive in the counter-clockwise
-     *  direction.  That is, an observer looking from some positive location on the x, y.
-     *  or z axis at a device positioned on the origin would report positive rotation
-     *  if the device appeared to be rotating counter clockwise.  Note that this is the
-     *  standard mathematical definition of positive rotation and does not agree with the
-     *  definition of roll given earlier.
-     *
+     * <h4>{@link android.hardware.Sensor#TYPE_GYROSCOPE Sensor.TYPE_GYROSCOPE}:
+     * </h4> All values are in radians/second and measure the rate of rotation
+     * around the device's local X, Y and Z axis. The coordinate system is the
+     * same as is used for the acceleration sensor. Rotation is positive in the
+     * counter-clockwise direction. That is, an observer looking from some
+     * positive location on the x, y or z axis at a device positioned on the
+     * origin would report positive rotation if the device appeared to be
+     * rotating counter clockwise. Note that this is the standard mathematical
+     * definition of positive rotation and does not agree with the definition of
+     * roll given earlier.
      * <ul>
      * <p>
      * values[0]: Angular speed around the x-axis
@@ -176,34 +176,73 @@ public class SensorEvent {
      * </p>
      * </ul>
      * <p>
-     * Typically the output of the gyroscope is integrated over time to calculate
-     * an angle, for example:
+     * Typically the output of the gyroscope is integrated over time to
+     * calculate a rotation describing the change of angles over the timestep,
+     * for example:
      * </p>
+     *
      * <pre class="prettyprint">
      *     private static final float NS2S = 1.0f / 1000000000.0f;
+     *     private final float[] deltaRotationVector = new float[4]();
      *     private float timestamp;
-     *     public void onSensorChanged(SensorEvent event)
-     *     {
+     *
+     *     public void onSensorChanged(SensorEvent event) {
+     *          // This timestep's delta rotation to be multiplied by the current rotation
+     *          // after computing it from the gyro sample data.
      *          if (timestamp != 0) {
      *              final float dT = (event.timestamp - timestamp) * NS2S;
-     *              angle[0] += event.data[0] * dT;
-     *              angle[1] += event.data[1] * dT;
-     *              angle[2] += event.data[2] * dT;
+     *              // Axis of the rotation sample, not normalized yet.
+     *              float axisX = event.values[0];
+     *              float axisY = event.values[1];
+     *              float axisZ = event.values[2];
+     *
+     *              // Calculate the angular speed of the sample
+     *              float omegaMagnitude = sqrt(axisX*axisX + axisY*axisY + axisZ*axisZ);
+     *
+     *              // Normalize the rotation vector if it's big enough to get the axis
+     *              if (omegaMagnitude > EPSILON) {
+     *                  axisX /= omegaMagnitude;
+     *                  axisY /= omegaMagnitude;
+     *                  axisZ /= omegaMagnitude;
+     *              }
+     *
+     *              // Integrate around this axis with the angular speed by the timestep
+     *              // in order to get a delta rotation from this sample over the timestep
+     *              // We will convert this axis-angle representation of the delta rotation
+     *              // into a quaternion before turning it into the rotation matrix.
+     *              float thetaOverTwo = omegaMagnitude * dT / 2.0f;
+     *              float sinThetaOverTwo = sin(thetaOverTwo);
+     *              float cosThetaOverTwo = cos(thetaOverTwo);
+     *              deltaRotationVector[0] = sinThetaOverTwo * axisX;
+     *              deltaRotationVector[1] = sinThetaOverTwo * axisY;
+     *              deltaRotationVector[2] = sinThetaOverTwo * axisZ;
+     *              deltaRotationVector[3] = cosThetaOverTwo;
      *          }
      *          timestamp = event.timestamp;
+     *          float[] deltaRotationMatrix = new float[9];
+     *          SensorManager.getRotationMatrixFromVector(deltaRotationMatrix, deltaRotationVector);
+     *          // User code should concatenate the delta rotation we computed with the current rotation
+     *          // in order to get the updated rotation.
+     *          // rotationCurrent = rotationCurrent * deltaRotationMatrix;
      *     }
      * </pre>
-     *
-     * <p>In practice, the gyroscope noise and offset will introduce some errors which need
-     * to be compensated for. This is usually done using the information from other
-     * sensors, but is beyond the scope of this document.</p>
-     *
+     * <p>
+     * In practice, the gyroscope noise and offset will introduce some errors
+     * which need to be compensated for. This is usually done using the
+     * information from other sensors, but is beyond the scope of this document.
+     * </p>
      * <h4>{@link android.hardware.Sensor#TYPE_LIGHT Sensor.TYPE_LIGHT}:</h4>
      * <ul>
      * <p>
      * values[0]: Ambient light level in SI lux units
      * </ul>
      * 
+     * <h4>{@link android.hardware.Sensor#TYPE_PRESSURE Sensor.TYPE_PRESSURE}:</h4>
+     * <ul>
+     * <p>
+     * values[0]: Atmospheric pressure in hPa (millibar)
+     * </ul>
+     *
      * <h4>{@link android.hardware.Sensor#TYPE_PROXIMITY Sensor.TYPE_PROXIMITY}:
      * </h4>
      * 
@@ -247,6 +286,23 @@ public class SensorEvent {
      *  <p>Elements of the rotation vector are unitless.
      *  The x,y, and z axis are defined in the same way as the acceleration
      *  sensor.</p>
+     *  The reference coordinate system is defined as a direct orthonormal basis,
+     *  where:
+     * </p>
+     *
+     * <ul>
+     * <li>X is defined as the vector product <b>Y.Z</b> (It is tangential to
+     * the ground at the device's current location and roughly points East).</li>
+     * <li>Y is tangential to the ground at the device's current location and
+     * points towards the magnetic North Pole.</li>
+     * <li>Z points towards the sky and is perpendicular to the ground.</li>
+     * </ul>
+     *
+     * <p>
+     * <center><img src="../../../images/axis_globe.png"
+     * alt="World coordinate-system diagram." border="0" /></center>
+     * </p>
+     *
      * <ul>
      * <p>
      * values[0]: x*sin(&#952/2)
@@ -304,7 +360,73 @@ public class SensorEvent {
      * in the clockwise direction (mathematically speaking, it should be
      * positive in the counter-clockwise direction).
      * </p>
+     *
+     * <h4>{@link android.hardware.Sensor#TYPE_RELATIVE_HUMIDITY
+     * Sensor.TYPE_RELATIVE_HUMIDITY}:</h4>
+     * <ul>
+     * <p>
+     * values[0]: Relative ambient air humidity in percent
+     * </p>
+     * </ul>
+     * <p>
+     * When relative ambient air humidity and ambient temperature are
+     * measured, the dew point and absolute humidity can be calculated.
+     * </p>
+     * <u>Dew Point</u>
+     * <p>
+     * The dew point is the temperature to which a given parcel of air must be
+     * cooled, at constant barometric pressure, for water vapor to condense
+     * into water.
+     * </p>
+     * <center><pre>
+     *                    ln(RH/100%) + m&#183;t/(T<sub>n</sub>+t)
+     * t<sub>d</sub>(t,RH) = T<sub>n</sub> &#183; ------------------------------
+     *                 m - [ln(RH/100%) + m&#183;t/(T<sub>n</sub>+t)]
+     * </pre></center>
+     * <dl>
+     * <dt>t<sub>d</sub></dt> <dd>dew point temperature in &deg;C</dd>
+     * <dt>t</dt>             <dd>actual temperature in &deg;C</dd>
+     * <dt>RH</dt>            <dd>actual relative humidity in %</dd>
+     * <dt>m</dt>             <dd>17.62</dd>
+     * <dt>T<sub>n</sub></dt> <dd>243.12 &deg;C</dd>
+     * </dl>
+     * <p>for example:</p>
+     * <pre class="prettyprint">
+     * h = Math.log(rh / 100.0) + (17.62 * t) / (243.12 + t);
+     * td = 243.12 * h / (17.62 - h);
+     * </pre>
+     * <u>Absolute Humidity</u>
+     * <p>
+     * The absolute humidity is the mass of water vapor in a particular volume
+     * of dry air. The unit is g/m<sup>3</sup>.
+     * </p>
+     * <center><pre>
+     *                    RH/100%&#183;A&#183;exp(m&#183;t/(T<sub>n</sub>+t))
+     * d<sub>v</sub>(t,RH) = 216.7 &#183; -------------------------
+     *                           273.15 + t
+     * </pre></center>
+     * <dl>
+     * <dt>d<sub>v</sub></dt> <dd>absolute humidity in g/m<sup>3</sup></dd>
+     * <dt>t</dt>             <dd>actual temperature in &deg;C</dd>
+     * <dt>RH</dt>            <dd>actual relative humidity in %</dd>
+     * <dt>m</dt>             <dd>17.62</dd>
+     * <dt>T<sub>n</sub></dt> <dd>243.12 &deg;C</dd>
+     * <dt>A</dt>             <dd>6.112 hPa</dd>
+     * </dl>
+     * <p>for example:</p>
+     * <pre class="prettyprint">
+     * dv = 216.7 *
+     * (rh / 100.0 * 6.112 * Math.exp(17.62 * t / (243.12 + t)) / (273.15 + t));
+     * </pre>
      * 
+     * <h4>{@link android.hardware.Sensor#TYPE_AMBIENT_TEMPERATURE Sensor.TYPE_AMBIENT_TEMPERATURE}:
+     * </h4>
+     *
+     * <ul>
+     * <p>
+     * values[0]: ambient (room) temperature in degree Celsius.
+     * </ul>
+     *
      * @see SensorEvent
      * @see GeomagneticField
      */

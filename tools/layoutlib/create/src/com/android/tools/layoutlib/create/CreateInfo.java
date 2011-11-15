@@ -51,6 +51,8 @@ public final class CreateInfo implements ICreateInfo {
      * Returns The list of methods to stub out. Each entry must be in the form
      * "package.package.OuterClass$InnerClass#MethodName".
      * The list can be empty but must not be null.
+     * <p/>
+     * This usage is deprecated. Please use method 'delegates' instead.
      */
     public String[] getOverriddenMethods() {
         return OVERRIDDEN_METHODS;
@@ -93,22 +95,30 @@ public final class CreateInfo implements ICreateInfo {
     /**
      * The list of methods to rewrite as delegates.
      */
-    private final static String[] DELEGATE_METHODS = new String[] {
+    public final static String[] DELEGATE_METHODS = new String[] {
+        "android.app.Fragment#instantiate", //(Landroid/content/Context;Ljava/lang/String;Landroid/os/Bundle;)Landroid/app/Fragment;",
         "android.content.res.Resources$Theme#obtainStyledAttributes",
         "android.content.res.Resources$Theme#resolveAttribute",
+        "android.content.res.TypedArray#getValueAt",
         "android.graphics.BitmapFactory#finishDecode",
         "android.os.Handler#sendMessageAtTime",
         "android.os.HandlerThread#run",
         "android.os.Build#getString",
+        "android.view.Display#getWindowManager",
+        "android.view.LayoutInflater#rInflate",
         "android.view.LayoutInflater#parseInclude",
         "android.view.View#isInEditMode",
+        "android.view.inputmethod.InputMethodManager#getInstance",
+        "android.util.Log#println_native",
         "com.android.internal.util.XmlUtils#convertValueToInt",
+        "com.android.internal.textservice.ITextServicesManager$Stub#asInterface",
     };
 
     /**
      * The list of classes on which to delegate all native methods.
      */
-    private final static String[] DELEGATE_CLASS_NATIVES = new String[] {
+    public final static String[] DELEGATE_CLASS_NATIVES = new String[] {
+        "android.animation.PropertyValuesHolder",
         "android.graphics.AvoidXfermode",
         "android.graphics.Bitmap",
         "android.graphics.BitmapFactory",
@@ -147,12 +157,16 @@ public final class CreateInfo implements ICreateInfo {
         "android.graphics.Typeface",
         "android.graphics.Xfermode",
         "android.os.SystemClock",
+        "android.text.AndroidBidi",
         "android.util.FloatMath",
+        "android.view.Display",
+        "libcore.icu.ICU",
     };
 
     /**
      * The list of methods to stub out. Each entry must be in the form
      *  "package.package.OuterClass$InnerClass#MethodName".
+     *  This usage is deprecated. Please use method 'delegates' instead.
      */
     private final static String[] OVERRIDDEN_METHODS = new String[] {
     };

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009 The Android Open Source Project
+ * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,97 +18,129 @@
 #define ANDROID_RS_CONTEXT_H
 
 #include "rsUtils.h"
-
-#include "rsThreadIO.h"
 #include "rsType.h"
-#include "rsMatrix.h"
 #include "rsAllocation.h"
-#include "rsSimpleMesh.h"
 #include "rsMesh.h"
+
+#include "rs_hal.h"
+
+#include "rsMutex.h"
+#include "rsThreadIO.h"
+#include "rsMatrix4x4.h"
 #include "rsDevice.h"
 #include "rsScriptC.h"
-#include "rsAllocation.h"
 #include "rsAdapter.h"
 #include "rsSampler.h"
-#include "rsLight.h"
+#include "rsFont.h"
 #include "rsProgramFragment.h"
-#include "rsProgramFragmentStore.h"
+#include "rsProgramStore.h"
 #include "rsProgramRaster.h"
 #include "rsProgramVertex.h"
-#include "rsShaderCache.h"
-#include "rsVertexArray.h"
+#include "rsFBOCache.h"
 
 #include "rsgApiStructs.h"
 #include "rsLocklessFifo.h"
-
-#include <ui/egl/android_natives.h>
 
 // ---------------------------------------------------------------------------
 namespace android {
 
 namespace renderscript {
 
-class Context
-{
+#if 0
+#define CHECK_OBJ(o) { \
+    GET_TLS(); \
+    if (!ObjectBase::isValid(rsc, (const ObjectBase *)o)) {  \
+        LOGE("Bad object %p at %s, %i", o, __FILE__, __LINE__);  \
+    } \
+}
+#define CHECK_OBJ_OR_NULL(o) { \
+    GET_TLS(); \
+    if (o && !ObjectBase::isValid(rsc, (const ObjectBase *)o)) {  \
+        LOGE("Bad object %p at %s, %i", o, __FILE__, __LINE__);  \
+    } \
+}
+#else
+#define CHECK_OBJ(o)
+#define CHECK_OBJ_OR_NULL(o)
+#endif
+
+class Context {
 public:
-    Context(Device *, bool isGraphics, bool useDepth);
+    struct Hal {
+        void * drv;
+
+        RsdHalFunctions funcs;
+    };
+    Hal mHal;
+
+    static Context * createContext(Device *, const RsSurfaceConfig *sc);
+    static Context * createContextLite();
     ~Context();
 
-    static pthread_key_t gThreadTLSKey;
-    static uint32_t gThreadTLSKeyCount;
-    static uint32_t gGLContextCount;
     static pthread_mutex_t gInitMutex;
+    // Library mutex (for providing thread-safe calls from the runtime)
+    static pthread_mutex_t gLibMutex;
 
-    struct ScriptTLSStruct {
-        Context * mContext;
-        Script * mScript;
+    class PushState {
+    public:
+        PushState(Context *);
+        ~PushState();
+
+    private:
+        ObjectBaseRef<ProgramFragment> mFragment;
+        ObjectBaseRef<ProgramVertex> mVertex;
+        ObjectBaseRef<ProgramStore> mStore;
+        ObjectBaseRef<ProgramRaster> mRaster;
+        ObjectBaseRef<Font> mFont;
+        Context *mRsc;
     };
 
+    RsSurfaceConfig mUserSurfaceConfig;
 
-    //StructuredAllocationContext mStateAllocation;
     ElementState mStateElement;
     TypeState mStateType;
     SamplerState mStateSampler;
     ProgramFragmentState mStateFragment;
-    ProgramFragmentStoreState mStateFragmentStore;
+    ProgramStoreState mStateFragmentStore;
     ProgramRasterState mStateRaster;
     ProgramVertexState mStateVertex;
-    LightState mStateLight;
-    VertexArrayState mStateVertexArray;
+    FontState mStateFont;
 
     ScriptCState mScriptC;
-    ShaderCache mShaderCache;
+    FBOCache mFBOCache;
 
     void swapBuffers();
     void setRootScript(Script *);
-    void setRaster(ProgramRaster *);
-    void setVertex(ProgramVertex *);
-    void setFragment(ProgramFragment *);
-    void setFragmentStore(ProgramFragmentStore *);
+    void setProgramRaster(ProgramRaster *);
+    void setProgramVertex(ProgramVertex *);
+    void setProgramFragment(ProgramFragment *);
+    void setProgramStore(ProgramStore *);
+    void setFont(Font *);
 
     void updateSurface(void *sur);
 
-    const ProgramFragment * getFragment() {return mFragment.get();}
-    const ProgramFragmentStore * getFragmentStore() {return mFragmentStore.get();}
-    const ProgramRaster * getRaster() {return mRaster.get();}
-    const ProgramVertex * getVertex() {return mVertex.get();}
+    ProgramFragment * getProgramFragment() {return mFragment.get();}
+    ProgramStore * getProgramStore() {return mFragmentStore.get();}
+    ProgramRaster * getProgramRaster() {return mRaster.get();}
+    ProgramVertex * getProgramVertex() {return mVertex.get();}
+    Font * getFont() {return mFont.get();}
 
     bool setupCheck();
-    bool checkDriver() const {return mEGL.mSurface != 0;}
+    void setupProgramStore();
 
     void pause();
     void resume();
-    void setSurface(uint32_t w, uint32_t h, ANativeWindow *sur);
+    void setSurface(uint32_t w, uint32_t h, RsNativeWindow sur);
     void setPriority(int32_t p);
+    void destroyWorkerThreadResources();
 
     void assignName(ObjectBase *obj, const char *name, uint32_t len);
     void removeName(ObjectBase *obj);
-    ObjectBase * lookupName(const char *name) const;
-    void appendNameDefines(String8 *str) const;
 
-    uint32_t getMessageToClient(void *data, size_t *receiveLen, size_t bufferLen, bool wait);
-    bool sendMessageToClient(void *data, uint32_t cmdID, size_t len, bool waitForSpace);
-    uint32_t runScript(Script *s, uint32_t launchID);
+    RsMessageToClientType peekMessageToClient(size_t *receiveLen, uint32_t *subID);
+    RsMessageToClientType getMessageToClient(void *data, size_t *receiveLen, uint32_t *subID, size_t bufferLen);
+    bool sendMessageToClient(const void *data, RsMessageToClientType cmdID, uint32_t subID, size_t len, bool waitForSpace) const;
+    uint32_t runScript(Script *s);
 
     void initToClient();
     void deinitToClient();
@@ -119,19 +151,20 @@ public:
     ProgramVertex * getDefaultProgramVertex() const {
         return mStateVertex.mDefault.get();
     }
-    ProgramFragmentStore * getDefaultProgramFragmentStore() const {
+    ProgramStore * getDefaultProgramStore() const {
         return mStateFragmentStore.mDefault.get();
     }
     ProgramRaster * getDefaultProgramRaster() const {
         return mStateRaster.mDefault.get();
     }
+    Font* getDefaultFont() const {
+        return mStateFont.mDefault.get();
+    }
 
-    uint32_t getWidth() const {return mEGL.mWidth;}
-    uint32_t getHeight() const {return mEGL.mHeight;}
+    uint32_t getWidth() const {return mWidth;}
+    uint32_t getHeight() const {return mHeight;}
 
-
-    ThreadIO mIO;
-    void objDestroyAdd(ObjectBase *);
+    mutable ThreadIO mIO;
 
     // Timers
     enum Timers {
@@ -148,64 +181,45 @@ public:
     void timerPrint();
     void timerFrame();
 
-    bool checkVersion1_1() const {return (mGL.mMajorVersion > 1) || (mGL.mMinorVersion >= 1); }
-    bool checkVersion2_0() const {return mGL.mMajorVersion >= 2; }
-
     struct {
         bool mLogTimes;
         bool mLogScripts;
         bool mLogObjects;
         bool mLogShaders;
+        bool mLogShadersAttr;
+        bool mLogShadersUniforms;
+        bool mLogVisual;
     } props;
 
+    mutable struct {
+        bool inRoot;
+        const char *command;
+        const char *file;
+        uint32_t line;
+    } watchdog;
+    static void printWatchdogInfo(void *ctx);
+    void setWatchdogGL(const char *cmd, uint32_t line, const char *file) const {
+        watchdog.command = cmd;
+        watchdog.file = file;
+        watchdog.line = line;
+    }
+
     void dumpDebug() const;
-    void checkError(const char *) const;
-    const char * getError(RsError *);
-    void setError(RsError e, const char *msg);
+    void setError(RsError e, const char *msg = NULL) const;
 
     mutable const ObjectBase * mObjHead;
 
-    bool ext_OES_texture_npot() const {return mGL.OES_texture_npot;}
-    bool ext_GL_IMG_texture_npot() const {return mGL.GL_IMG_texture_npot;}
+    uint32_t getDPI() const {return mDPI;}
+    void setDPI(uint32_t dpi) {mDPI = dpi;}
 
-protected:
+    uint32_t getTargetSdkVersion() const {return mTargetSdkVersion;}
+    void setTargetSdkVersion(uint32_t sdkVer) {mTargetSdkVersion = sdkVer;}
+
     Device *mDev;
+protected:
 
-    struct {
-        EGLint mNumConfigs;
-        EGLint mMajorVersion;
-        EGLint mMinorVersion;
-        EGLConfig mConfig;
-        EGLContext mContext;
-        EGLSurface mSurface;
-        EGLint mWidth;
-        EGLint mHeight;
-        EGLDisplay mDisplay;
-    } mEGL;
-
-    struct {
-        const uint8_t * mVendor;
-        const uint8_t * mRenderer;
-        const uint8_t * mVersion;
-        const uint8_t * mExtensions;
-
-        uint32_t mMajorVersion;
-        uint32_t mMinorVersion;
-
-        int32_t mMaxVaryingVectors;
-        int32_t mMaxTextureImageUnits;
-
-        int32_t mMaxFragmentTextureImageUnits;
-        int32_t mMaxFragmentUniformVectors;
-
-        int32_t mMaxVertexAttribs;
-        int32_t mMaxVertexUniformVectors;
-        int32_t mMaxVertexTextureUnits;
-
-        bool OES_texture_npot;
-        bool GL_IMG_texture_npot;
-    } mGL;
-
+    uint32_t mTargetSdkVersion;
+    uint32_t mDPI;
     uint32_t mWidth;
     uint32_t mHeight;
     int32_t mThreadPriority;
@@ -213,10 +227,8 @@ protected:
 
     bool mRunning;
     bool mExit;
-    bool mUseDepth;
     bool mPaused;
-    RsError mError;
-    const char *mErrorMsg;
+    mutable RsError mError;
 
     pthread_t mThreadId;
     pid_t mNativeThreadId;
@@ -224,31 +236,27 @@ protected:
     ObjectBaseRef<Script> mRootScript;
     ObjectBaseRef<ProgramFragment> mFragment;
     ObjectBaseRef<ProgramVertex> mVertex;
-    ObjectBaseRef<ProgramFragmentStore> mFragmentStore;
+    ObjectBaseRef<ProgramStore> mFragmentStore;
     ObjectBaseRef<ProgramRaster> mRaster;
+    ObjectBaseRef<Font> mFont;
 
-
-    struct ObjDestroyOOB {
-        pthread_mutex_t mMutex;
-        Vector<ObjectBase *> mDestroyList;
-        bool mNeedToEmpty;
-    };
-    ObjDestroyOOB mObjDestroy;
-    bool objDestroyOOBInit();
-    void objDestroyOOBRun();
-    void objDestroyOOBDestroy();
+    void displayDebugStats();
 
 private:
     Context();
+    bool initContext(Device *, const RsSurfaceConfig *sc);
 
-    void initEGL(bool useGL2);
+
+    bool initGLThread();
     void deinitEGL();
 
     uint32_t runRootScript();
 
     static void * threadProc(void *);
+    static void * helperThreadProc(void *);
 
-    ANativeWindow *mWndSurface;
+    bool mHasSurface;
+    bool mIsContextLite;
 
     Vector<ObjectBase *> mNames;
 
@@ -260,8 +268,11 @@ private:
     uint32_t mTimeMSLastFrame;
     uint32_t mTimeMSLastScript;
     uint32_t mTimeMSLastSwap;
+    uint32_t mAverageFPSFrameCount;
+    uint64_t mAverageFPSStartTime;
+    uint32_t mAverageFPS;
 };
 
-}
-}
+} // renderscript
+} // android
 #endif

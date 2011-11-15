@@ -20,11 +20,14 @@
 #include <utils/RefBase.h>
 #include <binder/IInterface.h>
 #include <binder/Parcel.h>
+#include <utils/KeyedVector.h>
 
 namespace android {
 
 class Parcel;
-class ISurface;
+class Surface;
+class IStreamSource;
+class ISurfaceTexture;
 
 class IMediaPlayer: public IInterface
 {
@@ -33,7 +36,13 @@ public:
 
     virtual void            disconnect() = 0;
 
-    virtual status_t        setVideoSurface(const sp<ISurface>& surface) = 0;
+    virtual status_t        setDataSource(const char *url,
+                                    const KeyedVector<String8, String8>* headers) = 0;
+    virtual status_t        setDataSource(int fd, int64_t offset, int64_t length) = 0;
+    virtual status_t        setDataSource(const sp<IStreamSource>& source) = 0;
+    virtual status_t        setVideoSurface(const sp<Surface>& surface) = 0;
+    virtual status_t        setVideoSurfaceTexture(
+                                    const sp<ISurfaceTexture>& surfaceTexture) = 0;
     virtual status_t        prepareAsync() = 0;
     virtual status_t        start() = 0;
     virtual status_t        stop() = 0;
@@ -46,10 +55,10 @@ public:
     virtual status_t        setAudioStreamType(int type) = 0;
     virtual status_t        setLooping(int loop) = 0;
     virtual status_t        setVolume(float leftVolume, float rightVolume) = 0;
-    virtual status_t        suspend() = 0;
-    virtual status_t        resume() = 0;
     virtual status_t        setAuxEffectSendLevel(float level) = 0;
     virtual status_t        attachAuxEffect(int effectId) = 0;
+    virtual status_t        setParameter(int key, const Parcel& request) = 0;
+    virtual status_t        getParameter(int key, Parcel* reply) = 0;
 
     // Invoke a generic method on the player by using opaque parcels
     // for the request and reply.

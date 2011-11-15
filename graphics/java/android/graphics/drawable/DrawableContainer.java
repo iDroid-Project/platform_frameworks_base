@@ -17,9 +17,20 @@
 package android.graphics.drawable;
 
 import android.content.res.Resources;
-import android.graphics.*;
+import android.graphics.Canvas;
+import android.graphics.ColorFilter;
+import android.graphics.PixelFormat;
+import android.graphics.Rect;
+import android.os.SystemClock;
 
+/**
+ * A helper class that contains several {@link Drawable}s and selects which one to use.
+ *
+ * You can subclass it to create your own DrawableContainers or directly use one its child classes.
+ */
 public class DrawableContainer extends Drawable implements Drawable.Callback {
+    private static final boolean DEBUG = false;
+    private static final String TAG = "DrawableContainer";
 
     /**
      * To be proper, we should have a getter for dither (and alpha, etc.)
@@ -40,12 +51,21 @@ public class DrawableContainer extends Drawable implements Drawable.Callback {
     private int mCurIndex = -1;
     private boolean mMutated;
 
+    // Animations.
+    private Runnable mAnimationRunnable;
+    private long mEnterAnimationEnd;
+    private long mExitAnimationEnd;
+    private Drawable mLastDrawable;
+
     // overrides from Drawable
 
     @Override
     public void draw(Canvas canvas) {
         if (mCurrDrawable != null) {
             mCurrDrawable.draw(canvas);
+        }
+        if (mLastDrawable != null) {
+            mLastDrawable.draw(canvas);
         }
     }
 
@@ -75,7 +95,11 @@ public class DrawableContainer extends Drawable implements Drawable.Callback {
         if (mAlpha != alpha) {
             mAlpha = alpha;
             if (mCurrDrawable != null) {
-                mCurrDrawable.setAlpha(alpha);
+                if (mEnterAnimationEnd == 0) {
+                    mCurrDrawable.setAlpha(alpha);
+                } else {
+                    animate(false);
+                }
             }
         }
     }
@@ -100,8 +124,29 @@ public class DrawableContainer extends Drawable implements Drawable.Callback {
         }
     }
     
+    /**
+     * Change the global fade duration when a new drawable is entering
+     * the scene.
+     * @param ms The amount of time to fade in milliseconds.
+     */
+    public void setEnterFadeDuration(int ms) {
+        mDrawableContainerState.mEnterFadeDuration = ms;
+    }
+    
+    /**
+     * Change the global fade duration when a new drawable is leaving
+     * the scene.
+     * @param ms The amount of time to fade in milliseconds.
+     */
+    public void setExitFadeDuration(int ms) {
+        mDrawableContainerState.mExitFadeDuration = ms;
+    }
+    
     @Override
     protected void onBoundsChange(Rect bounds) {
+        if (mLastDrawable != null) {
+            mLastDrawable.setBounds(bounds);
+        }
         if (mCurrDrawable != null) {
             mCurrDrawable.setBounds(bounds);
         }
@@ -113,7 +158,35 @@ public class DrawableContainer extends Drawable implements Drawable.Callback {
     }
     
     @Override
+    public void jumpToCurrentState() {
+        boolean changed = false;
+        if (mLastDrawable != null) {
+            mLastDrawable.jumpToCurrentState();
+            mLastDrawable = null;
+            changed = true;
+        }
+        if (mCurrDrawable != null) {
+            mCurrDrawable.jumpToCurrentState();
+            mCurrDrawable.setAlpha(mAlpha);
+        }
+        if (mExitAnimationEnd != 0) {
+            mExitAnimationEnd = 0;
+            changed = true;
+        }
+        if (mEnterAnimationEnd != 0) {
+            mEnterAnimationEnd = 0;
+            changed = true;
+        }
+        if (changed) {
+            invalidateSelf();
+        }
+    }
+
+    @Override
     protected boolean onStateChange(int[] state) {
+        if (mLastDrawable != null) {
+            return mLastDrawable.setState(state);
+        }
         if (mCurrDrawable != null) {
             return mCurrDrawable.setState(state);
         }
@@ -122,6 +195,9 @@ public class DrawableContainer extends Drawable implements Drawable.Callback {
 
     @Override
     protected boolean onLevelChange(int level) {
+        if (mLastDrawable != null) {
+            return mLastDrawable.setLevel(level);
+        }
         if (mCurrDrawable != null) {
             return mCurrDrawable.setLevel(level);
         }
@@ -160,30 +236,30 @@ public class DrawableContainer extends Drawable implements Drawable.Callback {
         return mCurrDrawable != null ? mCurrDrawable.getMinimumHeight() : 0;
     }
 
-    public void invalidateDrawable(Drawable who)
-    {
-        if (who == mCurrDrawable && mCallback != null) {
-            mCallback.invalidateDrawable(this);
+    public void invalidateDrawable(Drawable who) {
+        if (who == mCurrDrawable && getCallback() != null) {
+            getCallback().invalidateDrawable(this);
         }
     }
 
-    public void scheduleDrawable(Drawable who, Runnable what, long when)
-    {
-        if (who == mCurrDrawable && mCallback != null) {
-            mCallback.scheduleDrawable(this, what, when);
+    public void scheduleDrawable(Drawable who, Runnable what, long when) {
+        if (who == mCurrDrawable && getCallback() != null) {
+            getCallback().scheduleDrawable(this, what, when);
         }
     }
 
-    public void unscheduleDrawable(Drawable who, Runnable what)
-    {
-        if (who == mCurrDrawable && mCallback != null) {
-            mCallback.unscheduleDrawable(this, what);
+    public void unscheduleDrawable(Drawable who, Runnable what) {
+        if (who == mCurrDrawable && getCallback() != null) {
+            getCallback().unscheduleDrawable(this, what);
         }
     }
 
     @Override
     public boolean setVisible(boolean visible, boolean restart) {
         boolean changed = super.setVisible(visible, restart);
+        if (mLastDrawable != null) {
+            mLastDrawable.setVisible(visible, restart);
+        }
         if (mCurrDrawable != null) {
             mCurrDrawable.setVisible(visible, restart);
         }
@@ -196,21 +272,43 @@ public class DrawableContainer extends Drawable implements Drawable.Callback {
                 mDrawableContainerState.getOpacity();
     }
 
-    public boolean selectDrawable(int idx)
-    {
+    public boolean selectDrawable(int idx) {
         if (idx == mCurIndex) {
             return false;
         }
+
+        final long now = SystemClock.uptimeMillis();
+
+        if (DEBUG) android.util.Log.i(TAG, toString() + " from " + mCurIndex + " to " + idx
+                + ": exit=" + mDrawableContainerState.mExitFadeDuration
+                + " enter=" + mDrawableContainerState.mEnterFadeDuration);
+
+        if (mDrawableContainerState.mExitFadeDuration > 0) {
+            if (mLastDrawable != null) {
+                mLastDrawable.setVisible(false, false);
+            }
+            if (mCurrDrawable != null) {
+                mLastDrawable = mCurrDrawable;
+                mExitAnimationEnd = now + mDrawableContainerState.mExitFadeDuration;
+            } else {
+                mLastDrawable = null;
+                mExitAnimationEnd = 0;
+            }
+        } else if (mCurrDrawable != null) {
+            mCurrDrawable.setVisible(false, false);
+        }
+
         if (idx >= 0 && idx < mDrawableContainerState.mNumChildren) {
             Drawable d = mDrawableContainerState.mDrawables[idx];
-            if (mCurrDrawable != null) {
-                mCurrDrawable.setVisible(false, false);
-            }
             mCurrDrawable = d;
             mCurIndex = idx;
             if (d != null) {
+                if (mDrawableContainerState.mEnterFadeDuration > 0) {
+                    mEnterAnimationEnd = now + mDrawableContainerState.mEnterFadeDuration;
+                } else {
+                    d.setAlpha(mAlpha);
+                }
                 d.setVisible(isVisible(), true);
-                d.setAlpha(mAlpha);
                 d.setDither(mDrawableContainerState.mDither);
                 d.setColorFilter(mColorFilter);
                 d.setState(getState());
@@ -218,16 +316,72 @@ public class DrawableContainer extends Drawable implements Drawable.Callback {
                 d.setBounds(getBounds());
             }
         } else {
-            if (mCurrDrawable != null) {
-                mCurrDrawable.setVisible(false, false);
-            }
             mCurrDrawable = null;
             mCurIndex = -1;
         }
+
+        if (mEnterAnimationEnd != 0 || mExitAnimationEnd != 0) {
+            if (mAnimationRunnable == null) {
+                mAnimationRunnable = new Runnable() {
+                    @Override public void run() {
+                        animate(true);
+                        invalidateSelf();
+                    }
+                };
+            } else {
+                unscheduleSelf(mAnimationRunnable);
+            }
+            // Compute first frame and schedule next animation.
+            animate(true);
+        }
+
         invalidateSelf();
+
         return true;
     }
     
+    void animate(boolean schedule) {
+        final long now = SystemClock.uptimeMillis();
+        boolean animating = false;
+        if (mCurrDrawable != null) {
+            if (mEnterAnimationEnd != 0) {
+                if (mEnterAnimationEnd <= now) {
+                    mCurrDrawable.setAlpha(mAlpha);
+                    mEnterAnimationEnd = 0;
+                } else {
+                    int animAlpha = (int)((mEnterAnimationEnd-now)*255)
+                            / mDrawableContainerState.mEnterFadeDuration;
+                    if (DEBUG) android.util.Log.i(TAG, toString() + " cur alpha " + animAlpha);
+                    mCurrDrawable.setAlpha(((255-animAlpha)*mAlpha)/255);
+                    animating = true;
+                }
+            }
+        } else {
+            mEnterAnimationEnd = 0;
+        }
+        if (mLastDrawable != null) {
+            if (mExitAnimationEnd != 0) {
+                if (mExitAnimationEnd <= now) {
+                    mLastDrawable.setVisible(false, false);
+                    mLastDrawable = null;
+                    mExitAnimationEnd = 0;
+                } else {
+                    int animAlpha = (int)((mExitAnimationEnd-now)*255)
+                            / mDrawableContainerState.mExitFadeDuration;
+                    if (DEBUG) android.util.Log.i(TAG, toString() + " last alpha " + animAlpha);
+                    mLastDrawable.setAlpha((animAlpha*mAlpha)/255);
+                    animating = true;
+                }
+            }
+        } else {
+            mExitAnimationEnd = 0;
+        }
+
+        if (schedule && animating) {
+            scheduleSelf(mAnimationRunnable, now + 1000/60);
+        }
+    }
+
     @Override
     public Drawable getCurrent() {
         return mCurrDrawable;
@@ -236,7 +390,7 @@ public class DrawableContainer extends Drawable implements Drawable.Callback {
     @Override
     public ConstantState getConstantState() {
         if (mDrawableContainerState.canConstantState()) {
-            mDrawableContainerState.mChangingConfigurations = super.getChangingConfigurations();
+            mDrawableContainerState.mChangingConfigurations = getChangingConfigurations();
             return mDrawableContainerState;
         }
         return null;
@@ -255,6 +409,12 @@ public class DrawableContainer extends Drawable implements Drawable.Callback {
         return this;
     }
 
+    /**
+     * A ConstantState that can contain several {@link Drawable}s.
+     *
+     * This class was made public to enable testing, and its visibility may change in a future
+     * release.
+     */
     public abstract static class DrawableContainerState extends ConstantState {
         final DrawableContainer mOwner;
 
@@ -286,6 +446,9 @@ public class DrawableContainer extends Drawable implements Drawable.Callback {
         boolean     mPaddingChecked = false;
         
         boolean     mDither = DEFAULT_DITHER;        
+
+        int         mEnterFadeDuration;
+        int         mExitFadeDuration;
 
         DrawableContainerState(DrawableContainerState orig, DrawableContainer owner,
                 Resources res) {
@@ -326,6 +489,9 @@ public class DrawableContainer extends Drawable implements Drawable.Callback {
                 mStateful = orig.mStateful;
                 
                 mDither = orig.mDither;
+
+                mEnterFadeDuration = orig.mEnterFadeDuration;
+                mExitFadeDuration = orig.mExitFadeDuration;
 
             } else {
                 mDrawables = new Drawable[10];
@@ -443,12 +609,12 @@ public class DrawableContainer extends Drawable implements Drawable.Callback {
             return mConstantMinimumHeight;
         }
 
-        private void computeConstantSize() {
+        protected void computeConstantSize() {
             mComputedConstantSize = true;
 
             final int N = getChildCount();
             final Drawable[] drawables = mDrawables;
-            mConstantWidth = mConstantHeight = 0;
+            mConstantWidth = mConstantHeight = -1;
             mConstantMinimumWidth = mConstantMinimumHeight = 0;
             for (int i = 0; i < N; i++) {
                 Drawable dr = drawables[i];
@@ -461,6 +627,22 @@ public class DrawableContainer extends Drawable implements Drawable.Callback {
                 s = dr.getMinimumHeight();
                 if (s > mConstantMinimumHeight) mConstantMinimumHeight = s;
             }
+        }
+
+        public final void setEnterFadeDuration(int duration) {
+            mEnterFadeDuration = duration;
+        }
+
+        public final int getEnterFadeDuration() {
+            return mEnterFadeDuration;
+        }
+
+        public final void setExitFadeDuration(int duration) {
+            mExitFadeDuration = duration;
+        }
+
+        public final int getExitFadeDuration() {
+            return mExitFadeDuration;
         }
 
         public final int getOpacity() {

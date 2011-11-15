@@ -20,11 +20,20 @@
 #include <android/native_window_jni.h>
 #include <surfaceflinger/Surface.h>
 #include <android_runtime/android_view_Surface.h>
+#include <android_runtime/android_graphics_SurfaceTexture.h>
 
 using namespace android;
 
 ANativeWindow* ANativeWindow_fromSurface(JNIEnv* env, jobject surface) {
     sp<ANativeWindow> win = android_Surface_getNativeWindow(env, surface);
+    if (win != NULL) {
+        win->incStrong((void*)ANativeWindow_acquire);
+    }
+    return win.get();
+}
+
+ANativeWindow* ANativeWindow_fromSurfaceTexture(JNIEnv* env, jobject surfaceTexture) {
+    sp<ANativeWindow> win = android_SurfaceTexture_getNativeWindow(env, surfaceTexture);
     if (win != NULL) {
         win->incStrong((void*)ANativeWindow_acquire);
     }
@@ -59,39 +68,22 @@ int32_t ANativeWindow_getFormat(ANativeWindow* window) {
 
 int32_t ANativeWindow_setBuffersGeometry(ANativeWindow* window, int32_t width,
         int32_t height, int32_t format) {
-    native_window_set_buffers_geometry(window, width, height, format);
-    return 0;
+    int32_t err = native_window_set_buffers_geometry(window, width, height, format);
+    if (!err) {
+        int mode = NATIVE_WINDOW_SCALING_MODE_FREEZE;
+        if (width && height) {
+            mode = NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW;
+        }
+        err = native_window_set_scaling_mode(window, mode);
+    }
+    return err;
 }
 
 int32_t ANativeWindow_lock(ANativeWindow* window, ANativeWindow_Buffer* outBuffer,
         ARect* inOutDirtyBounds) {
-    Region dirtyRegion;
-    Region* dirtyParam = NULL;
-    if (inOutDirtyBounds != NULL) {
-        dirtyRegion.set(*(Rect*)inOutDirtyBounds);
-        dirtyParam = &dirtyRegion;
-    }
-    
-    Surface::SurfaceInfo info;
-    status_t res = static_cast<Surface*>(window)->lock(&info, dirtyParam);
-    if (res != OK) {
-        return -1;
-    }
-    
-    outBuffer->width = (int32_t)info.w;
-    outBuffer->height = (int32_t)info.h;
-    outBuffer->stride = (int32_t)info.s;
-    outBuffer->format = (int32_t)info.format;
-    outBuffer->bits = info.bits;
-    
-    if (inOutDirtyBounds != NULL) {
-        *inOutDirtyBounds = dirtyRegion.getBounds();
-    }
-    
-    return 0;
+    return window->perform(window, NATIVE_WINDOW_LOCK, outBuffer, inOutDirtyBounds);
 }
 
 int32_t ANativeWindow_unlockAndPost(ANativeWindow* window) {
-    status_t res = static_cast<Surface*>(window)->unlockAndPost();
-    return res == android::OK ? 0 : -1;
+    return window->perform(window, NATIVE_WINDOW_UNLOCK_AND_POST);
 }

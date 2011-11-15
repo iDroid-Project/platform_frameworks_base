@@ -77,6 +77,10 @@ import java.io.IOException;
                 // Store this in the tag object
                 mTag.setConnectedTechnology(mSelectedTechnology);
                 mIsConnected = true;
+            } else if (errorCode == ErrorCodes.ERROR_NOT_SUPPORTED) {
+                throw new UnsupportedOperationException("Connecting to " +
+                        "this technology is not supported by the NFC " +
+                        "adapter.");
             } else {
                 throw new IOException();
             }
@@ -115,6 +119,7 @@ import java.io.IOException;
             /* Note that we don't want to physically disconnect the tag,
              * but just reconnect to it to reset its state
              */
+            mTag.getTagService().resetTimeouts();
             mTag.getTagService().reconnect(mTag.getServiceHandle());
         } catch (RemoteException e) {
             Log.e(TAG, "NFC service dead", e);
@@ -124,6 +129,15 @@ import java.io.IOException;
         }
     }
 
+    /** Internal getMaxTransceiveLength() */
+    int getMaxTransceiveLengthInternal() {
+        try {
+            return mTag.getTagService().getMaxTransceiveLength(mSelectedTechnology);
+        } catch (RemoteException e) {
+            Log.e(TAG, "NFC service dead", e);
+            return 0;
+        }
+    }
     /** Internal transceive */
     /*package*/ byte[] transceive(byte[] data, boolean raw) throws IOException {
         checkConnected();
@@ -134,16 +148,7 @@ import java.io.IOException;
             if (result == null) {
                 throw new IOException("transceive failed");
             } else {
-                if (result.isSuccessful()) {
-                    return result.getResponseData();
-                } else {
-                    if (result.isTagLost()) {
-                        throw new TagLostException("Tag was lost.");
-                    }
-                    else {
-                        throw new IOException("transceive failed");
-                    }
-                }
+                return result.getResponseOrThrow();
             }
         } catch (RemoteException e) {
             Log.e(TAG, "NFC service dead", e);

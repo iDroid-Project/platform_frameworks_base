@@ -2,8 +2,6 @@
 # OpenGL ES JNI sample
 # This makefile builds both an activity and a shared library.
 #########################################################################
-ifneq ($(TARGET_SIMULATOR),true) # not 64 bit clean
-
 TOP_LOCAL_PATH:= $(call my-dir)
 
 # Build activity
@@ -44,8 +42,6 @@ LOCAL_SHARED_LIBRARIES := \
 
 LOCAL_MODULE := libgl2jni
 
-LOCAL_PRELINK_MODULE := false
+
 
 include $(BUILD_SHARED_LIBRARY)
-
-endif # TARGET_SIMULATOR

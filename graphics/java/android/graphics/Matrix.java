@@ -37,7 +37,192 @@ public class Matrix {
     public static final int MPERSP_1 = 7;   //!< use with getValues/setValues
     public static final int MPERSP_2 = 8;   //!< use with getValues/setValues
 
-    /* package */ int native_instance;
+    /** @hide */
+    public static Matrix IDENTITY_MATRIX = new Matrix() {
+        void oops() {
+            throw new IllegalStateException("Matrix can not be modified");
+        }
+
+        @Override
+        public void set(Matrix src) {
+            oops();
+        }
+
+        @Override
+        public void reset() {
+            oops();
+        }
+
+        @Override
+        public void setTranslate(float dx, float dy) {
+            oops();
+        }
+
+        @Override
+        public void setScale(float sx, float sy, float px, float py) {
+            oops();
+        }
+
+        @Override
+        public void setScale(float sx, float sy) {
+            oops();
+        }
+
+        @Override
+        public void setRotate(float degrees, float px, float py) {
+            oops();
+        }
+
+        @Override
+        public void setRotate(float degrees) {
+            oops();
+        }
+
+        @Override
+        public void setSinCos(float sinValue, float cosValue, float px, float py) {
+            oops();
+        }
+
+        @Override
+        public void setSinCos(float sinValue, float cosValue) {
+            oops();
+        }
+
+        @Override
+        public void setSkew(float kx, float ky, float px, float py) {
+            oops();
+        }
+
+        @Override
+        public void setSkew(float kx, float ky) {
+            oops();
+        }
+
+        @Override
+        public boolean setConcat(Matrix a, Matrix b) {
+            oops();
+            return false;
+        }
+
+        @Override
+        public boolean preTranslate(float dx, float dy) {
+            oops();
+            return false;
+        }
+
+        @Override
+        public boolean preScale(float sx, float sy, float px, float py) {
+            oops();
+            return false;
+        }
+
+        @Override
+        public boolean preScale(float sx, float sy) {
+            oops();
+            return false;
+        }
+
+        @Override
+        public boolean preRotate(float degrees, float px, float py) {
+            oops();
+            return false;
+        }
+
+        @Override
+        public boolean preRotate(float degrees) {
+            oops();
+            return false;
+        }
+
+        @Override
+        public boolean preSkew(float kx, float ky, float px, float py) {
+            oops();
+            return false;
+        }
+
+        @Override
+        public boolean preSkew(float kx, float ky) {
+            oops();
+            return false;
+        }
+
+        @Override
+        public boolean preConcat(Matrix other) {
+            oops();
+            return false;
+        }
+
+        @Override
+        public boolean postTranslate(float dx, float dy) {
+            oops();
+            return false;
+        }
+
+        @Override
+        public boolean postScale(float sx, float sy, float px, float py) {
+            oops();
+            return false;
+        }
+
+        @Override
+        public boolean postScale(float sx, float sy) {
+            oops();
+            return false;
+        }
+
+        @Override
+        public boolean postRotate(float degrees, float px, float py) {
+            oops();
+            return false;
+        }
+
+        @Override
+        public boolean postRotate(float degrees) {
+            oops();
+            return false;
+        }
+
+        @Override
+        public boolean postSkew(float kx, float ky, float px, float py) {
+            oops();
+            return false;
+        }
+
+        @Override
+        public boolean postSkew(float kx, float ky) {
+            oops();
+            return false;
+        }
+
+        @Override
+        public boolean postConcat(Matrix other) {
+            oops();
+            return false;
+        }
+
+        @Override
+        public boolean setRectToRect(RectF src, RectF dst, ScaleToFit stf) {
+            oops();
+            return false;
+        }
+
+        @Override
+        public boolean setPolyToPoly(float[] src, int srcIndex, float[] dst, int dstIndex,
+                int pointCount) {
+            oops();
+            return false;
+        }
+
+        @Override
+        public void setValues(float[] values) {
+            oops();
+        }
+    };
+
+    /**
+     * @hide
+     */
+    public int native_instance;
 
     /**
      * Create an identity matrix
@@ -419,6 +604,10 @@ public class Matrix {
      * the transformed vectors into the array of vectors specified by dst. The
      * two arrays represent their "vectors" as pairs of floats [x, y].
      *
+     * Note: this method does not apply the translation associated with the matrix. Use
+     * {@link Matrix#mapPoints(float[], int, float[], int, int)} if you want the translation
+     * to be applied.
+     *
      * @param dst   The array of dst vectors (x,y pairs)
      * @param dstIndex The index of the first [x,y] pair of dst floats
      * @param src   The array of src vectors (x,y pairs)
@@ -452,6 +641,9 @@ public class Matrix {
      * the transformed vectors into the array of vectors specified by dst. The
      * two arrays represent their "vectors" as pairs of floats [x, y].
      *
+     * Note: this method does not apply the translation associated with the matrix. Use
+     * {@link Matrix#mapPoints(float[], float[])} if you want the translation to be applied.
+     *
      * @param dst   The array of dst vectors (x,y pairs)
      * @param src   The array of src vectors (x,y pairs)
      */
@@ -475,6 +667,10 @@ public class Matrix {
     /**
      * Apply this matrix to the array of 2D vectors, and write the transformed
      * vectors back into the array.
+     *
+     * Note: this method does not apply the translation associated with the matrix. Use
+     * {@link Matrix#mapPoints(float[])} if you want the translation to be applied.
+     *
      * @param vecs The array [x0, y0, x1, y1, ...] of vectors to transform.
      */
     public void mapVectors(float[] vecs) {

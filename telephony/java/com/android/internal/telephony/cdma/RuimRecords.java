@@ -16,10 +16,13 @@
 
 package com.android.internal.telephony.cdma;
 
+import static com.android.internal.telephony.TelephonyProperties.PROPERTY_ICC_OPERATOR_ISO_COUNTRY;
+import static com.android.internal.telephony.TelephonyProperties.PROPERTY_ICC_OPERATOR_NUMERIC;
 import android.os.AsyncResult;
 import android.os.Handler;
 import android.os.Message;
 import android.os.Registrant;
+import android.os.SystemProperties;
 import android.util.Log;
 
 import com.android.internal.telephony.AdnRecord;
@@ -59,6 +62,7 @@ public final class RuimRecords extends IccRecords {
 
     private static final int EVENT_RUIM_READY = 1;
     private static final int EVENT_RADIO_OFF_OR_NOT_AVAILABLE = 2;
+    private static final int EVENT_GET_IMSI_DONE = 3;
     private static final int EVENT_GET_DEVICE_IDENTITY_DONE = 4;
     private static final int EVENT_GET_ICCID_DONE = 5;
     private static final int EVENT_GET_CDMA_SUBSCRIPTION_DONE = 10;
@@ -87,18 +91,19 @@ public final class RuimRecords extends IccRecords {
         p.mCM.registerForRUIMReady(this, EVENT_RUIM_READY, null);
         p.mCM.registerForOffOrNotAvailable(this, EVENT_RADIO_OFF_OR_NOT_AVAILABLE, null);
         // NOTE the EVENT_SMS_ON_RUIM is not registered
-        p.mCM.setOnIccRefresh(this, EVENT_RUIM_REFRESH, null);
+        p.mCM.registerForIccRefresh(this, EVENT_RUIM_REFRESH, null);
 
         // Start off by setting empty state
         onRadioOffOrNotAvailable();
 
     }
 
+    @Override
     public void dispose() {
         //Unregister for all events
         phone.mCM.unregisterForRUIMReady(this);
         phone.mCM.unregisterForOffOrNotAvailable( this);
-        phone.mCM.unSetOnIccRefresh(this);
+        phone.mCM.unregisterForIccRefresh(this);
     }
 
     @Override
@@ -113,6 +118,12 @@ public final class RuimRecords extends IccRecords {
         iccid = null;
 
         adnCache.reset();
+
+        // Don't clean up PROPERTY_ICC_OPERATOR_ISO_COUNTRY and
+        // PROPERTY_ICC_OPERATOR_NUMERIC here. Since not all CDMA
+        // devices have RUIM, these properties should keep the original
+        // values, e.g. build time settings, when there is no RUIM but
+        // set new values when RUIM is available and loaded.
 
         // recordsRequested is set to false indicating that the SIM
         // read requests made so far are not valid. This is set to
@@ -201,6 +212,33 @@ public final class RuimRecords extends IccRecords {
             break;
 
             /* IO events */
+            case EVENT_GET_IMSI_DONE:
+                isRecordLoadResponse = true;
+
+                ar = (AsyncResult)msg.obj;
+                if (ar.exception != null) {
+                    Log.e(LOG_TAG, "Exception querying IMSI, Exception:" + ar.exception);
+                    break;
+                }
+
+                mImsi = (String) ar.result;
+
+                // IMSI (MCC+MNC+MSIN) is at least 6 digits, but not more
+                // than 15 (and usually 15).
+                if (mImsi != null && (mImsi.length() < 6 || mImsi.length() > 15)) {
+                    Log.e(LOG_TAG, "invalid IMSI " + mImsi);
+                    mImsi = null;
+                }
+
+                Log.d(LOG_TAG, "IMSI: " + mImsi.substring(0, 6) + "xxxxxxxxx");
+
+                String operatorNumeric = getRUIMOperatorNumeric();
+                if (operatorNumeric != null) {
+                    if(operatorNumeric.length() <= 6){
+                        MccTable.updateMccMncConfiguration(phone, operatorNumeric);
+                    }
+                }
+            break;
 
             case EVENT_GET_CDMA_SUBSCRIPTION_DONE:
                 ar = (AsyncResult)msg.obj;
@@ -291,9 +329,16 @@ public final class RuimRecords extends IccRecords {
 
         // Further records that can be inserted are Operator/OEM dependent
 
+        String operator = getRUIMOperatorNumeric();
+        SystemProperties.set(PROPERTY_ICC_OPERATOR_NUMERIC, operator);
+
+        if (mImsi != null) {
+            SystemProperties.set(PROPERTY_ICC_OPERATOR_ISO_COUNTRY,
+                    MccTable.countryCodeForMcc(Integer.parseInt(mImsi.substring(0,3))));
+        }
         recordsLoadedRegistrants.notifyRegistrants(
             new AsyncResult(null, null, null));
-        ((CDMAPhone) phone).mRuimCard.broadcastIccStateChangedIntent(
+        phone.mIccCard.broadcastIccStateChangedIntent(
                 RuimCard.INTENT_VALUE_ICC_LOADED, null);
     }
 
@@ -302,7 +347,7 @@ public final class RuimRecords extends IccRecords {
           READY is sent before IMSI ready
         */
 
-        ((CDMAPhone) phone).mRuimCard.broadcastIccStateChangedIntent(
+        phone.mIccCard.broadcastIccStateChangedIntent(
                 RuimCard.INTENT_VALUE_ICC_READY, null);
 
         fetchRuimRecords();
@@ -317,6 +362,9 @@ public final class RuimRecords extends IccRecords {
 
         Log.v(LOG_TAG, "RuimRecords:fetchRuimRecords " + recordsToLoad);
 
+        phone.mCM.getIMSI(obtainMessage(EVENT_GET_IMSI_DONE));
+        recordsToLoad++;
+
         phone.getIccFileHandler().loadEFTransparent(EF_ICCID,
                 obtainMessage(EVENT_GET_ICCID_DONE));
         recordsToLoad++;
@@ -324,8 +372,13 @@ public final class RuimRecords extends IccRecords {
         // Further records that can be inserted are Operator/OEM dependent
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * No Display rule for RUIMs yet.
+     */
     @Override
-    protected int getDisplayRule(String plmn) {
+    public int getDisplayRule(String plmn) {
         // TODO together with spn
         return 0;
     }
@@ -390,4 +443,8 @@ public final class RuimRecords extends IccRecords {
         Log.d(LOG_TAG, "[RuimRecords] " + s);
     }
 
+    @Override
+    protected void loge(String s) {
+        Log.e(LOG_TAG, "[RuimRecords] " + s);
+    }
 }

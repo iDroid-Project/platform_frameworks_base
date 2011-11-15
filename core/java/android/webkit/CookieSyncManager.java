@@ -77,11 +77,7 @@ public final class CookieSyncManager extends WebSyncManager {
      * @return CookieSyncManager
      */
     public static synchronized CookieSyncManager getInstance() {
-        if (sRef == null) {
-            throw new IllegalStateException(
-                    "CookieSyncManager::createInstance() needs to be called "
-                            + "before CookieSyncManager::getInstance()");
-        }
+        checkInstanceIsCreated();
         return sRef;
     }
 
@@ -92,8 +88,14 @@ public final class CookieSyncManager extends WebSyncManager {
      */
     public static synchronized CookieSyncManager createInstance(
             Context context) {
+        if (context == null) {
+            throw new IllegalArgumentException("Invalid context argument");
+        }
+
+        JniUtil.setContext(context);
+        Context appContext = context.getApplicationContext();
         if (sRef == null) {
-            sRef = new CookieSyncManager(context.getApplicationContext());
+            sRef = new CookieSyncManager(appContext);
         }
         return sRef;
     }
@@ -174,18 +176,22 @@ public final class CookieSyncManager extends WebSyncManager {
             Log.v(LOGTAG, "CookieSyncManager::syncFromRamToFlash STARTS");
         }
 
-        if (!CookieManager.getInstance().acceptCookie()) {
+        CookieManager manager = CookieManager.getInstance();
+
+        if (!manager.acceptCookie()) {
             return;
         }
 
-        ArrayList<Cookie> cookieList = CookieManager.getInstance()
-                .getUpdatedCookiesSince(mLastUpdate);
-        mLastUpdate = System.currentTimeMillis();
-        syncFromRamToFlash(cookieList);
+        if (JniUtil.useChromiumHttpStack()) {
+            manager.flushCookieStore();
+        } else {
+            ArrayList<Cookie> cookieList = manager.getUpdatedCookiesSince(mLastUpdate);
+            mLastUpdate = System.currentTimeMillis();
+            syncFromRamToFlash(cookieList);
 
-        ArrayList<Cookie> lruList =
-                CookieManager.getInstance().deleteLRUDomain();
-        syncFromRamToFlash(lruList);
+            ArrayList<Cookie> lruList = manager.deleteLRUDomain();
+            syncFromRamToFlash(lruList);
+        }
 
         if (DebugFlags.COOKIE_SYNC_MANAGER) {
             Log.v(LOGTAG, "CookieSyncManager::syncFromRamToFlash DONE");
@@ -208,6 +214,14 @@ public final class CookieSyncManager extends WebSyncManager {
                     CookieManager.getInstance().deleteACookie(cookie);
                 }
             }
+        }
+    }
+
+    private static void checkInstanceIsCreated() {
+        if (sRef == null) {
+            throw new IllegalStateException(
+                    "CookieSyncManager::createInstance() needs to be called "
+                            + "before CookieSyncManager::getInstance()");
         }
     }
 }

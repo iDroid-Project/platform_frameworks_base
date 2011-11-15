@@ -23,11 +23,23 @@ import android.graphics.Paint;
  * data used during text measuring and drawing.
  */
 public class TextPaint extends Paint {
+
+    // Special value 0 means no background paint
     public int bgColor;
     public int baselineShift;
     public int linkColor;
     public int[] drawableState;
     public float density = 1.0f;
+    /**
+     * Special value 0 means no custom underline
+     * @hide
+     */
+    public int underlineColor = 0;
+    /**
+     * Defined as a multiplier of the default underline thickness. Use 1.0f for default thickness.
+     * @hide
+     */
+    public float underlineThickness;
 
     public TextPaint() {
         super();
@@ -53,5 +65,18 @@ public class TextPaint extends Paint {
         linkColor = tp.linkColor;
         drawableState = tp.drawableState;
         density = tp.density;
+        underlineColor = tp.underlineColor;
+        underlineThickness = tp.underlineThickness;
+    }
+
+    /**
+     * Defines a custom underline for this Paint.
+     * @param color underline solid color
+     * @param thickness underline thickness
+     * @hide
+     */
+    public void setUnderlineText(int color, float thickness) {
+        underlineColor = color;
+        underlineThickness = thickness;
     }
 }

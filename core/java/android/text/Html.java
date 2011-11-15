@@ -449,11 +449,11 @@ class HtmlToSpannedConverter implements ContentHandler {
             handleP(mSpannableStringBuilder);
         } else if (tag.equalsIgnoreCase("div")) {
             handleP(mSpannableStringBuilder);
-        } else if (tag.equalsIgnoreCase("em")) {
+        } else if (tag.equalsIgnoreCase("strong")) {
             start(mSpannableStringBuilder, new Bold());
         } else if (tag.equalsIgnoreCase("b")) {
             start(mSpannableStringBuilder, new Bold());
-        } else if (tag.equalsIgnoreCase("strong")) {
+        } else if (tag.equalsIgnoreCase("em")) {
             start(mSpannableStringBuilder, new Italic());
         } else if (tag.equalsIgnoreCase("cite")) {
             start(mSpannableStringBuilder, new Italic());
@@ -499,11 +499,11 @@ class HtmlToSpannedConverter implements ContentHandler {
             handleP(mSpannableStringBuilder);
         } else if (tag.equalsIgnoreCase("div")) {
             handleP(mSpannableStringBuilder);
-        } else if (tag.equalsIgnoreCase("em")) {
+        } else if (tag.equalsIgnoreCase("strong")) {
             end(mSpannableStringBuilder, Bold.class, new StyleSpan(Typeface.BOLD));
         } else if (tag.equalsIgnoreCase("b")) {
             end(mSpannableStringBuilder, Bold.class, new StyleSpan(Typeface.BOLD));
-        } else if (tag.equalsIgnoreCase("strong")) {
+        } else if (tag.equalsIgnoreCase("em")) {
             end(mSpannableStringBuilder, Italic.class, new StyleSpan(Typeface.ITALIC));
         } else if (tag.equalsIgnoreCase("cite")) {
             end(mSpannableStringBuilder, Italic.class, new StyleSpan(Typeface.ITALIC));

@@ -56,7 +56,7 @@ public abstract class ColorFilter_Delegate {
     // ---- native methods ----
 
     @LayoutlibDelegate
-    /*package*/ static void finalizer(int native_instance) {
+    /*package*/ static void finalizer(int native_instance, int nativeColorFilter) {
         sManager.removeJavaReferenceFor(native_instance);
     }
 

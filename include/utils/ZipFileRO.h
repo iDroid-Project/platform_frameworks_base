@@ -30,6 +30,7 @@
 #ifndef __LIBS_ZIPFILERO_H
 #define __LIBS_ZIPFILERO_H
 
+#include <utils/Compat.h>
 #include <utils/Errors.h>
 #include <utils/FileMap.h>
 #include <utils/threads.h>
@@ -37,6 +38,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <time.h>
 
 namespace android {
 
@@ -128,7 +130,7 @@ public:
      * appears to be bad.
      */
     bool getEntryInfo(ZipEntryRO entry, int* pMethod, size_t* pUncompLen,
-        size_t* pCompLen, off_t* pOffset, long* pModWhen, long* pCrc32) const;
+        size_t* pCompLen, off64_t* pOffset, long* pModWhen, long* pCrc32) const;
 
     /*
      * Create a new FileMap object that maps a subset of the archive.  For
@@ -171,6 +173,20 @@ public:
      */
     static bool inflateBuffer(int fd, const void* inBuf,
         size_t uncompLen, size_t compLen);
+
+    /*
+     * Utility function to convert ZIP's time format to a timespec struct.
+     */
+    static inline void zipTimeToTimespec(long when, struct tm* timespec) {
+        const long date = when >> 16;
+        timespec->tm_year = ((date >> 9) & 0x7F) + 80; // Zip is years since 1980
+        timespec->tm_mon = (date >> 5) & 0x0F;
+        timespec->tm_mday = date & 0x1F;
+
+        timespec->tm_hour = (when >> 11) & 0x1F;
+        timespec->tm_min = (when >> 5) & 0x3F;
+        timespec->tm_sec = (when & 0x1F) << 1;
+    }
 
     /*
      * Some basic functions for raw data manipulation.  "LE" means
@@ -231,7 +247,7 @@ private:
     int         mNumEntries;
 
     /* CD directory offset in the Zip archive */
-    off_t       mDirectoryOffset;
+    off64_t     mDirectoryOffset;
 
     /*
      * We know how many entries are in the Zip archive, so we have a

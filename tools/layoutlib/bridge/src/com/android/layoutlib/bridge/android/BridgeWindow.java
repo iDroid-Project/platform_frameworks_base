@@ -22,13 +22,13 @@ import android.os.Bundle;
 import android.os.IBinder;
 import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
+import android.view.DragEvent;
 import android.view.IWindow;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
-import android.view.View.AttachInfo;
 
 /**
- * Implementation of {@link IWindow} to pass to the {@link AttachInfo}.
+ * Implementation of {@link IWindow} to pass to the AttachInfo.
  */
 public final class BridgeWindow implements IWindow {
 
@@ -81,7 +81,12 @@ public final class BridgeWindow implements IWindow {
         // pass for now.
     }
 
-    public void dispatchSystemUiVisibilityChanged(int visibility) {
+    public void dispatchDragEvent(DragEvent event) {
+        // pass for now.
+    }
+
+    public void dispatchSystemUiVisibilityChanged(int seq, int globalUi,
+            int localValue, int localChanges) {
         // pass for now.
     }
 

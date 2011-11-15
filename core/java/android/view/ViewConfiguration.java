@@ -16,7 +16,12 @@
 
 package android.view;
 
+import android.app.AppGlobals;
 import android.content.Context;
+import android.content.res.Configuration;
+import android.content.res.Resources;
+import android.os.RemoteException;
+import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.util.SparseArray;
 
@@ -24,6 +29,24 @@ import android.util.SparseArray;
  * Contains methods to standard constants used in the UI for timeouts, sizes, and distances.
  */
 public class ViewConfiguration {
+    /**
+     * Expected bit depth of the display panel.
+     * 
+     * @hide
+     */
+    public static final float PANEL_BIT_DEPTH = 24;
+
+    /**
+     * Minimum alpha required for a view to draw.
+     * 
+     * @hide
+     */
+    public static final float ALPHA_THRESHOLD = 0.5f / PANEL_BIT_DEPTH;
+    /**
+     * @hide
+     */
+    public static final float ALPHA_THRESHOLD_INT = 0x7f / PANEL_BIT_DEPTH;
+
     /**
      * Defines the width of the horizontal scrollbar and the height of the vertical scrollbar in
      * pixels
@@ -52,11 +75,16 @@ public class ViewConfiguration {
     private static final int PRESSED_STATE_DURATION = 125;
     
     /**
-     * Defines the duration in milliseconds before a press turns into
+     * Defines the default duration in milliseconds before a press turns into
      * a long press
      */
-    private static final int LONG_PRESS_TIMEOUT = 500;
-    
+    private static final int DEFAULT_LONG_PRESS_TIMEOUT = 500;
+
+    /**
+     * Defines the time between successive key repeats in milliseconds.
+     */
+    private static final int KEY_REPEAT_DELAY = 50;
+
     /**
      * Defines the duration in milliseconds a user needs to hold down the
      * appropriate button to bring up the global actions dialog (power off,
@@ -69,7 +97,7 @@ public class ViewConfiguration {
      * is a tap or a scroll. If the user does not move within this interval, it is
      * considered to be a tap. 
      */
-    private static final int TAP_TIMEOUT = 115;
+    private static final int TAP_TIMEOUT = 180;
     
     /**
      * Defines the duration in milliseconds we will wait to see if a touch event 
@@ -84,7 +112,21 @@ public class ViewConfiguration {
      * double-tap.
      */
     private static final int DOUBLE_TAP_TIMEOUT = 300;
-    
+
+    /**
+     * Defines the maximum duration in milliseconds between a touch pad
+     * touch and release for a given touch to be considered a tap (click) as
+     * opposed to a hover movement gesture.
+     */
+    private static final int HOVER_TAP_TIMEOUT = 150;
+
+    /**
+     * Defines the maximum distance in pixels that a touch pad touch can move
+     * before being released for it to be considered a tap (click) as opposed
+     * to a hover movement gesture.
+     */
+    private static final int HOVER_TAP_SLOP = 20;
+
     /**
      * Defines the duration in milliseconds we want to display zoom controls in response 
      * to a user panning within an application.
@@ -126,19 +168,34 @@ public class ViewConfiguration {
     /**
      * Maximum velocity to initiate a fling, as measured in pixels per second
      */
-    private static final int MAXIMUM_FLING_VELOCITY = 4000;
+    private static final int MAXIMUM_FLING_VELOCITY = 8000;
+
+    /**
+     * Distance between a touch up event denoting the end of a touch exploration
+     * gesture and the touch up event of a subsequent tap for the latter tap to be
+     * considered as a tap i.e. to perform a click.
+     */
+    private static final int TOUCH_EXPLORATION_TAP_SLOP = 80;
+
+    /**
+     * Delay before dispatching a recurring accessibility event in milliseconds.
+     * This delay guarantees that a recurring event will be send at most once
+     * during the {@link #SEND_RECURRING_ACCESSIBILITY_EVENTS_INTERVAL_MILLIS} time
+     * frame.
+     */
+    private static final long SEND_RECURRING_ACCESSIBILITY_EVENTS_INTERVAL_MILLIS = 400;
 
     /**
      * The maximum size of View's drawing cache, expressed in bytes. This size
      * should be at least equal to the size of the screen in ARGB888 format.
      */
     @Deprecated
-    private static final int MAXIMUM_DRAWING_CACHE_SIZE = 320 * 480 * 4; // HVGA screen, ARGB8888
+    private static final int MAXIMUM_DRAWING_CACHE_SIZE = 480 * 800 * 4; // ARGB8888
 
     /**
      * The coefficient of friction applied to flings/scrolls.
      */
-    private static float SCROLL_FRICTION = 0.015f;
+    private static final float SCROLL_FRICTION = 0.015f;
 
     /**
      * Max distance to overscroll for edge effects
@@ -148,7 +205,7 @@ public class ViewConfiguration {
     /**
      * Max distance to overfling for edge effects
      */
-    private static final int OVERFLING_DISTANCE = 4;
+    private static final int OVERFLING_DISTANCE = 6;
 
     private final int mEdgeSlop;
     private final int mFadingEdgeLength;
@@ -158,12 +215,17 @@ public class ViewConfiguration {
     private final int mTouchSlop;
     private final int mPagingTouchSlop;
     private final int mDoubleTapSlop;
+    private final int mScaledTouchExplorationTapSlop;
     private final int mWindowTouchSlop;
     private final int mMaximumDrawingCacheSize;
     private final int mOverscrollDistance;
     private final int mOverflingDistance;
+    private final boolean mFadingMarqueeEnabled;
 
-    private static final SparseArray<ViewConfiguration> sConfigurations =
+    private boolean sHasPermanentMenuKey;
+    private boolean sHasPermanentMenuKeySet;
+
+    static final SparseArray<ViewConfiguration> sConfigurations =
             new SparseArray<ViewConfiguration>(2);
 
     /**
@@ -179,11 +241,13 @@ public class ViewConfiguration {
         mTouchSlop = TOUCH_SLOP;
         mPagingTouchSlop = PAGING_TOUCH_SLOP;
         mDoubleTapSlop = DOUBLE_TAP_SLOP;
+        mScaledTouchExplorationTapSlop = TOUCH_EXPLORATION_TAP_SLOP;
         mWindowTouchSlop = WINDOW_TOUCH_SLOP;
         //noinspection deprecation
         mMaximumDrawingCacheSize = MAXIMUM_DRAWING_CACHE_SIZE;
         mOverscrollDistance = OVERSCROLL_DISTANCE;
         mOverflingDistance = OVERFLING_DISTANCE;
+        mFadingMarqueeEnabled = true;
     }
 
     /**
@@ -197,24 +261,46 @@ public class ViewConfiguration {
      * @see android.util.DisplayMetrics
      */
     private ViewConfiguration(Context context) {
-        final DisplayMetrics metrics = context.getResources().getDisplayMetrics();
+        final Resources res = context.getResources();
+        final DisplayMetrics metrics = res.getDisplayMetrics();
+        final Configuration config = res.getConfiguration();
         final float density = metrics.density;
+        final float sizeAndDensity;
+        if (config.isLayoutSizeAtLeast(Configuration.SCREENLAYOUT_SIZE_XLARGE)) {
+            sizeAndDensity = density * 1.5f;
+        } else {
+            sizeAndDensity = density;
+        }
 
-        mEdgeSlop = (int) (density * EDGE_SLOP + 0.5f);
-        mFadingEdgeLength = (int) (density * FADING_EDGE_LENGTH + 0.5f);
+        mEdgeSlop = (int) (sizeAndDensity * EDGE_SLOP + 0.5f);
+        mFadingEdgeLength = (int) (sizeAndDensity * FADING_EDGE_LENGTH + 0.5f);
         mMinimumFlingVelocity = (int) (density * MINIMUM_FLING_VELOCITY + 0.5f);
         mMaximumFlingVelocity = (int) (density * MAXIMUM_FLING_VELOCITY + 0.5f);
         mScrollbarSize = (int) (density * SCROLL_BAR_SIZE + 0.5f);
-        mTouchSlop = (int) (density * TOUCH_SLOP + 0.5f);
-        mPagingTouchSlop = (int) (density * PAGING_TOUCH_SLOP + 0.5f);
-        mDoubleTapSlop = (int) (density * DOUBLE_TAP_SLOP + 0.5f);
-        mWindowTouchSlop = (int) (density * WINDOW_TOUCH_SLOP + 0.5f);
+        mTouchSlop = (int) (sizeAndDensity * TOUCH_SLOP + 0.5f);
+        mPagingTouchSlop = (int) (sizeAndDensity * PAGING_TOUCH_SLOP + 0.5f);
+        mDoubleTapSlop = (int) (sizeAndDensity * DOUBLE_TAP_SLOP + 0.5f);
+        mScaledTouchExplorationTapSlop = (int) (density * TOUCH_EXPLORATION_TAP_SLOP + 0.5f);
+        mWindowTouchSlop = (int) (sizeAndDensity * WINDOW_TOUCH_SLOP + 0.5f);
 
         // Size of the screen in bytes, in ARGB_8888 format
         mMaximumDrawingCacheSize = 4 * metrics.widthPixels * metrics.heightPixels;
 
-        mOverscrollDistance = (int) (density * OVERSCROLL_DISTANCE + 0.5f);
-        mOverflingDistance = (int) (density * OVERFLING_DISTANCE + 0.5f);
+        mOverscrollDistance = (int) (sizeAndDensity * OVERSCROLL_DISTANCE + 0.5f);
+        mOverflingDistance = (int) (sizeAndDensity * OVERFLING_DISTANCE + 0.5f);
+
+        if (!sHasPermanentMenuKeySet) {
+            IWindowManager wm = Display.getWindowManager();
+            try {
+                sHasPermanentMenuKey = wm.canStatusBarHide() && !wm.hasNavigationBar();
+                sHasPermanentMenuKeySet = true;
+            } catch (RemoteException ex) {
+                sHasPermanentMenuKey = false;
+            }
+        }
+
+        mFadingMarqueeEnabled = res.getBoolean(
+                com.android.internal.R.bool.config_ui_enableFadingMarquee);
     }
 
     /**
@@ -294,15 +380,30 @@ public class ViewConfiguration {
     public static int getPressedStateDuration() {
         return PRESSED_STATE_DURATION;
     }
-    
+
     /**
      * @return the duration in milliseconds before a press turns into
      * a long press
      */
     public static int getLongPressTimeout() {
-        return LONG_PRESS_TIMEOUT;
+        return AppGlobals.getIntCoreSetting(Settings.Secure.LONG_PRESS_TIMEOUT,
+                DEFAULT_LONG_PRESS_TIMEOUT);
     }
-    
+
+    /**
+     * @return the time before the first key repeat in milliseconds.
+     */
+    public static int getKeyRepeatTimeout() {
+        return getLongPressTimeout();
+    }
+
+    /**
+     * @return the time between successive key repeats in milliseconds.
+     */
+    public static int getKeyRepeatDelay() {
+        return KEY_REPEAT_DELAY;
+    }
+
     /**
      * @return the duration in milliseconds we will wait to see if a touch event
      * is a tap or a scroll. If the user does not move within this interval, it is
@@ -311,7 +412,7 @@ public class ViewConfiguration {
     public static int getTapTimeout() {
         return TAP_TIMEOUT;
     }
-    
+
     /**
      * @return the duration in milliseconds we will wait to see if a touch event
      * is a jump tap. If the user does not move within this interval, it is
@@ -329,7 +430,27 @@ public class ViewConfiguration {
     public static int getDoubleTapTimeout() {
         return DOUBLE_TAP_TIMEOUT;
     }
-    
+
+    /**
+     * @return the maximum duration in milliseconds between a touch pad
+     * touch and release for a given touch to be considered a tap (click) as
+     * opposed to a hover movement gesture.
+     * @hide
+     */
+    public static int getHoverTapTimeout() {
+        return HOVER_TAP_TIMEOUT;
+    }
+
+    /**
+     * @return the maximum distance in pixels that a touch pad touch can move
+     * before being released for it to be considered a tap (click) as opposed
+     * to a hover movement gesture.
+     * @hide
+     */
+    public static int getHoverTapSlop() {
+        return HOVER_TAP_SLOP;
+    }
+
     /**
      * @return Inset in pixels to look for touchable content when the user touches the edge of the
      *         screen
@@ -392,6 +513,30 @@ public class ViewConfiguration {
      */
     public int getScaledDoubleTapSlop() {
         return mDoubleTapSlop;
+    }
+
+    /**
+     * @return Distance between a touch up event denoting the end of a touch exploration
+     * gesture and the touch up event of a subsequent tap for the latter tap to be
+     * considered as a tap i.e. to perform a click.
+     *
+     * @hide
+     */
+    public int getScaledTouchExplorationTapSlop() {
+        return mScaledTouchExplorationTapSlop;
+    }
+
+    /**
+     * Interval for dispatching a recurring accessibility event in milliseconds.
+     * This interval guarantees that a recurring event will be send at most once
+     * during the {@link #getSendRecurringAccessibilityEventsInterval()} time frame.
+     *
+     * @return The delay in milliseconds.
+     *
+     * @hide
+     */
+    public static long getSendRecurringAccessibilityEventsInterval() {
+        return SEND_RECURRING_ACCESSIBILITY_EVENTS_INTERVAL_MILLIS;
     }
 
     /**
@@ -515,5 +660,29 @@ public class ViewConfiguration {
      */
     public static float getScrollFriction() {
         return SCROLL_FRICTION;
+    }
+
+    /**
+     * Report if the device has a permanent menu key available to the user.
+     *
+     * <p>As of Android 3.0, devices may not have a permanent menu key available.
+     * Apps should use the action bar to present menu options to users.
+     * However, there are some apps where the action bar is inappropriate
+     * or undesirable. This method may be used to detect if a menu key is present.
+     * If not, applications should provide another on-screen affordance to access
+     * functionality.
+     *
+     * @return true if a permanent menu key is present, false otherwise.
+     */
+    public boolean hasPermanentMenuKey() {
+        return sHasPermanentMenuKey;
+    }
+
+    /**
+     * @hide
+     * @return Whether or not marquee should use fading edges.
+     */
+    public boolean isFadingMarqueeEnabled() {
+        return mFadingMarqueeEnabled;
     }
 }

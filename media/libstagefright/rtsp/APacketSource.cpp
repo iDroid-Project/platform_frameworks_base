@@ -20,6 +20,7 @@
 
 #include "APacketSource.h"
 
+#include "ARawAudioAssembler.h"
 #include "ASessionDescription.h"
 
 #include "avc_utils.h"
@@ -328,7 +329,7 @@ static uint8_t *EncodeSize(uint8_t *dst, size_t x) {
     return dst;
 }
 
-static bool ExtractDimensionsFromVOLHeader(
+static bool ExtractDimensionsMPEG4Config(
         const sp<ABuffer> &config, int32_t *width, int32_t *height) {
     *width = 0;
     *height = 0;
@@ -351,77 +352,11 @@ static bool ExtractDimensionsFromVOLHeader(
         return false;
     }
 
-    ABitReader br(&ptr[offset + 4], config->size() - offset - 4);
-    br.skipBits(1);  // random_accessible_vol
-    unsigned video_object_type_indication = br.getBits(8);
-
-    CHECK_NE(video_object_type_indication,
-             0x21u /* Fine Granularity Scalable */);
-
-    unsigned video_object_layer_verid;
-    unsigned video_object_layer_priority;
-    if (br.getBits(1)) {
-        video_object_layer_verid = br.getBits(4);
-        video_object_layer_priority = br.getBits(3);
-    }
-    unsigned aspect_ratio_info = br.getBits(4);
-    if (aspect_ratio_info == 0x0f /* extended PAR */) {
-        br.skipBits(8);  // par_width
-        br.skipBits(8);  // par_height
-    }
-    if (br.getBits(1)) {  // vol_control_parameters
-        br.skipBits(2);  // chroma_format
-        br.skipBits(1);  // low_delay
-        if (br.getBits(1)) {  // vbv_parameters
-            TRESPASS();
-        }
-    }
-    unsigned video_object_layer_shape = br.getBits(2);
-    CHECK_EQ(video_object_layer_shape, 0x00u /* rectangular */);
-
-    CHECK(br.getBits(1));  // marker_bit
-    unsigned vop_time_increment_resolution = br.getBits(16);
-    CHECK(br.getBits(1));  // marker_bit
-
-    if (br.getBits(1)) {  // fixed_vop_rate
-        // range [0..vop_time_increment_resolution)
-
-        // vop_time_increment_resolution
-        // 2 => 0..1, 1 bit
-        // 3 => 0..2, 2 bits
-        // 4 => 0..3, 2 bits
-        // 5 => 0..4, 3 bits
-        // ...
-
-        CHECK_GT(vop_time_increment_resolution, 0u);
-        --vop_time_increment_resolution;
-
-        unsigned numBits = 0;
-        while (vop_time_increment_resolution > 0) {
-            ++numBits;
-            vop_time_increment_resolution >>= 1;
-        }
-
-        br.skipBits(numBits);  // fixed_vop_time_increment
-    }
-
-    CHECK(br.getBits(1));  // marker_bit
-    unsigned video_object_layer_width = br.getBits(13);
-    CHECK(br.getBits(1));  // marker_bit
-    unsigned video_object_layer_height = br.getBits(13);
-    CHECK(br.getBits(1));  // marker_bit
-
-    unsigned interlaced = br.getBits(1);
-
-    *width = video_object_layer_width;
-    *height = video_object_layer_height;
-
-    LOGI("VOL dimensions = %dx%d", *width, *height);
-
-    return true;
+    return ExtractDimensionsFromVOLHeader(
+            &ptr[offset], config->size() - offset, width, height);
 }
 
-sp<ABuffer> MakeMPEG4VideoCodecSpecificData(
+static sp<ABuffer> MakeMPEG4VideoCodecSpecificData(
         const char *params, int32_t *width, int32_t *height) {
     *width = 0;
     *height = 0;
@@ -432,9 +367,11 @@ sp<ABuffer> MakeMPEG4VideoCodecSpecificData(
     sp<ABuffer> config = decodeHex(val);
     CHECK(config != NULL);
 
-    if (!ExtractDimensionsFromVOLHeader(config, width, height)) {
+    if (!ExtractDimensionsMPEG4Config(config, width, height)) {
         return NULL;
     }
+
+    LOGI("VOL dimensions = %dx%d", *width, *height);
 
     size_t len1 = config->size() + GetSizeWidth(config->size()) + 1;
     size_t len2 = len1 + GetSizeWidth(len1) + 1 + 13;
@@ -651,6 +588,8 @@ APacketSource::APacketSource(
         mFormat->setData(
                 kKeyESDS, 0,
                 codecSpecificData->data(), codecSpecificData->size());
+    } else if (ARawAudioAssembler::Supports(desc.c_str())) {
+        ARawAudioAssembler::MakeFormat(desc.c_str(), mFormat);
     } else {
         mInitCheck = ERROR_UNSUPPORTED;
     }
@@ -689,14 +628,12 @@ status_t APacketSource::read(
 
         updateNormalPlayTime_l(buffer);
 
-        MediaBuffer *mediaBuffer = new MediaBuffer(buffer->size());
-
         int64_t timeUs;
         CHECK(buffer->meta()->findInt64("timeUs", &timeUs));
 
+        MediaBuffer *mediaBuffer = new MediaBuffer(buffer);
         mediaBuffer->meta_data()->setInt64(kKeyTime, timeUs);
 
-        memcpy(mediaBuffer->data(), buffer->data(), buffer->size());
         *out = mediaBuffer;
 
         mBuffers.erase(mBuffers.begin());

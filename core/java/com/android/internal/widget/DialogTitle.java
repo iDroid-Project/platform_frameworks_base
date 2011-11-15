@@ -53,17 +53,19 @@ public class DialogTitle extends TextView {
                 final int ellipsisCount = layout.getEllipsisCount(lineCount - 1);
                 if (ellipsisCount > 0) {
                     setSingleLine(false);
-                    
-                    TypedArray a = mContext.obtainStyledAttributes(
-                            android.R.style.TextAppearance_Medium,
-                            android.R.styleable.TextAppearance);
-                    final int textSize = a.getDimensionPixelSize(
-                            android.R.styleable.TextAppearance_textSize,
-                            (int) (20 * getResources().getDisplayMetrics().density));
-
-                    // textSize is already expressed in pixels
-                    setTextSize(TypedValue.COMPLEX_UNIT_PX, textSize);
                     setMaxLines(2);
+
+                    final TypedArray a = mContext.obtainStyledAttributes(null,
+                            android.R.styleable.TextAppearance, android.R.attr.textAppearanceMedium,
+                            android.R.style.TextAppearance_Medium);
+                    final int textSize = a.getDimensionPixelSize(
+                            android.R.styleable.TextAppearance_textSize, 0);
+                    if (textSize != 0) {
+                        // textSize is already expressed in pixels
+                        setTextSize(TypedValue.COMPLEX_UNIT_PX, textSize);
+                    }
+                    a.recycle();
+
                     super.onMeasure(widthMeasureSpec, heightMeasureSpec);      
                 }
             }

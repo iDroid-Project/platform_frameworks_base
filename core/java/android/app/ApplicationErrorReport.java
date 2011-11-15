@@ -37,14 +37,17 @@ import java.io.StringWriter;
  *
  * A report has a type, which is one of
  * <ul>
+ * <li> {@link #TYPE_NONE} uninitialized instance of {@link ApplicationErrorReport}.
  * <li> {@link #TYPE_CRASH} application crash. Information about the crash
  * is stored in {@link #crashInfo}.
  * <li> {@link #TYPE_ANR} application not responding. Information about the
  * ANR is stored in {@link #anrInfo}.
- * <li> {@link #TYPE_NONE} uninitialized instance of {@link ApplicationErrorReport}.
+ * <li> {@link #TYPE_BATTERY} user reported application is using too much
+ * battery. Information about the battery use is stored in {@link #batteryInfo}.
+ * <li> {@link #TYPE_RUNNING_SERVICE} user reported application is leaving an
+ * unneeded serive running. Information about the battery use is stored in
+ * {@link #runningServiceInfo}.
  * </ul>
- *
- * @hide
  */
 
 public class ApplicationErrorReport implements Parcelable {
@@ -184,11 +187,11 @@ public class ApplicationErrorReport implements Parcelable {
         candidate = SystemProperties.get(DEFAULT_ERROR_RECEIVER_PROPERTY);
         return getErrorReportReceiver(pm, packageName, candidate);
     }
-    
+
     /**
      * Return activity in receiverPackage that handles ACTION_APP_ERROR.
      *
-     * @param pm PackageManager isntance
+     * @param pm PackageManager instance
      * @param errorPackage package which caused the error
      * @param receiverPackage candidate package to receive the error
      * @return activity component within receiverPackage which handles
@@ -329,20 +332,31 @@ public class ApplicationErrorReport implements Parcelable {
             exceptionMessage = tr.getMessage();
 
             // Populate fields with the "root cause" exception
+            Throwable rootTr = tr;
             while (tr.getCause() != null) {
                 tr = tr.getCause();
+                if (tr.getStackTrace() != null && tr.getStackTrace().length > 0) {
+                    rootTr = tr;
+                }
                 String msg = tr.getMessage();
                 if (msg != null && msg.length() > 0) {
                     exceptionMessage = msg;
                 }
             }
 
-            exceptionClassName = tr.getClass().getName();
-            StackTraceElement trace = tr.getStackTrace()[0];
-            throwFileName = trace.getFileName();
-            throwClassName = trace.getClassName();
-            throwMethodName = trace.getMethodName();
-            throwLineNumber = trace.getLineNumber();
+            exceptionClassName = rootTr.getClass().getName();
+            if (rootTr.getStackTrace().length > 0) {
+                StackTraceElement trace = rootTr.getStackTrace()[0];
+                throwFileName = trace.getFileName();
+                throwClassName = trace.getClassName();
+                throwMethodName = trace.getMethodName();
+                throwLineNumber = trace.getLineNumber();
+            } else {
+                throwFileName = "unknown";
+                throwClassName = "unknown";
+                throwMethodName = "unknown";
+                throwLineNumber = 0;
+            }
         }
 
         /**
@@ -580,6 +594,9 @@ public class ApplicationErrorReport implements Parcelable {
                 break;
             case TYPE_BATTERY:
                 batteryInfo.dump(pw, prefix);
+                break;
+            case TYPE_RUNNING_SERVICE:
+                runningServiceInfo.dump(pw, prefix);
                 break;
         }
     }

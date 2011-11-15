@@ -16,27 +16,20 @@
 
 package android.text;
 
-import android.graphics.Paint;
+import com.google.android.collect.Lists;
+
+import android.test.MoreAsserts;
+import android.os.Parcel;
 import android.test.suitebuilder.annotation.LargeTest;
 import android.test.suitebuilder.annotation.SmallTest;
-import android.text.Spannable;
-import android.text.SpannableString;
-import android.text.Spanned;
-import android.text.SpannedString;
-import android.text.TextPaint;
-import android.text.TextUtils;
 import android.text.style.StyleSpan;
 import android.text.util.Rfc822Token;
 import android.text.util.Rfc822Tokenizer;
-import android.test.MoreAsserts;
 
-import com.google.android.collect.Lists;
-import com.google.android.collect.Maps;
+import java.util.ArrayList;
+import java.util.List;
 
 import junit.framework.TestCase;
-
-import java.util.List;
-import java.util.Map;
 
 /**
  * TextUtilsTest tests {@link TextUtils}.
@@ -255,6 +248,23 @@ public class TextUtilsTest extends TestCase {
         assertEquals("Foo Bar", tokens[0].getAddress());
     }
 
+    @SmallTest
+    public void testRfc822FindToken() {
+        Rfc822Tokenizer tokenizer = new Rfc822Tokenizer();
+        //                0           1         2           3         4
+        //                0 1234 56789012345678901234 5678 90123456789012345
+        String address = "\"Foo\" <foo@google.com>, \"Bar\" <bar@google.com>";
+        assertEquals(0, tokenizer.findTokenStart(address, 21));
+        assertEquals(22, tokenizer.findTokenEnd(address, 21));
+        assertEquals(24, tokenizer.findTokenStart(address, 25));
+        assertEquals(46, tokenizer.findTokenEnd(address, 25));
+    }
+
+    @SmallTest
+    public void testRfc822FindTokenWithError() {
+        assertEquals(9, new Rfc822Tokenizer().findTokenEnd("\"Foo Bar\\", 0));
+    }
+
     @LargeTest
     public void testEllipsize() {
         CharSequence s1 = "The quick brown fox jumps over \u00FEhe lazy dog.";
@@ -335,6 +345,51 @@ public class TextUtilsTest extends TestCase {
         assertFalse(TextUtils.delimitedStringContains("network,mock,gpsx", ',', "gps"));
     }
 
+    @SmallTest
+    public void testCharSequenceCreator() {
+        Parcel p = Parcel.obtain();
+        TextUtils.writeToParcel(null, p, 0);
+        CharSequence text = TextUtils.CHAR_SEQUENCE_CREATOR.createFromParcel(p);
+        assertNull("null CharSequence should generate null from parcel", text);
+        p = Parcel.obtain();
+        TextUtils.writeToParcel("test", p, 0);
+        text = TextUtils.CHAR_SEQUENCE_CREATOR.createFromParcel(p);
+        assertEquals("conversion to/from parcel failed", "test", text);
+    }
+
+    @SmallTest
+    public void testCharSequenceCreatorNull() {
+        Parcel p;
+        CharSequence text;
+        p = Parcel.obtain();
+        TextUtils.writeToParcel(null, p, 0);
+        p.setDataPosition(0);
+        text = TextUtils.CHAR_SEQUENCE_CREATOR.createFromParcel(p);
+        assertNull("null CharSequence should generate null from parcel", text);
+    }
+
+    @SmallTest
+    public void testCharSequenceCreatorSpannable() {
+        Parcel p;
+        CharSequence text;
+        p = Parcel.obtain();
+        TextUtils.writeToParcel(new SpannableString("test"), p, 0);
+        p.setDataPosition(0);
+        text = TextUtils.CHAR_SEQUENCE_CREATOR.createFromParcel(p);
+        assertEquals("conversion to/from parcel failed", "test", text.toString());
+    }
+
+    @SmallTest
+    public void testCharSequenceCreatorString() {
+        Parcel p;
+        CharSequence text;
+        p = Parcel.obtain();
+        TextUtils.writeToParcel("test", p, 0);
+        p.setDataPosition(0);
+        text = TextUtils.CHAR_SEQUENCE_CREATOR.createFromParcel(p);
+        assertEquals("conversion to/from parcel failed", "test", text.toString());
+    }
+
     /**
      * CharSequence wrapper for testing the cases where text is copied into
      * a char array instead of working from a String or a Spanned.
@@ -354,12 +409,113 @@ public class TextUtilsTest extends TestCase {
             return mString.charAt(off);
         }
 
+        @Override
         public String toString() {
             return mString.toString();
         }
 
         public CharSequence subSequence(int start, int end) {
             return new Wrapper(mString.subSequence(start, end));
+        }
+    }
+
+    @LargeTest
+    public void testRemoveEmptySpans() {
+        MockSpanned spanned = new MockSpanned();
+
+        spanned.test();
+        spanned.addSpan().test();
+        spanned.addSpan().test();
+        spanned.addSpan().test();
+        spanned.addEmptySpan().test();
+        spanned.addSpan().test();
+        spanned.addEmptySpan().test();
+        spanned.addEmptySpan().test();
+        spanned.addSpan().test();
+
+        spanned.clear();
+        spanned.addEmptySpan().test();
+        spanned.addEmptySpan().test();
+        spanned.addEmptySpan().test();
+        spanned.addSpan().test();
+        spanned.addEmptySpan().test();
+        spanned.addSpan().test();
+
+        spanned.clear();
+        spanned.addSpan().test();
+        spanned.addEmptySpan().test();
+        spanned.addSpan().test();
+        spanned.addEmptySpan().test();
+        spanned.addSpan().test();
+        spanned.addSpan().test();
+    }
+
+    protected static class MockSpanned implements Spanned {
+
+        private List<Object> allSpans = new ArrayList<Object>();
+        private List<Object> nonEmptySpans = new ArrayList<Object>();
+
+        public void clear() {
+            allSpans.clear();
+            nonEmptySpans.clear();
+        }
+
+        public MockSpanned addSpan() {
+            Object o = new Object();
+            allSpans.add(o);
+            nonEmptySpans.add(o);
+            return this;
+        }
+
+        public MockSpanned addEmptySpan() {
+            Object o = new Object();
+            allSpans.add(o);
+            return this;
+        }
+
+        public void test() {
+            Object[] nonEmpty = TextUtils.removeEmptySpans(allSpans.toArray(), this, Object.class);
+            assertEquals("Mismatched array size", nonEmptySpans.size(), nonEmpty.length);
+            for (int i=0; i<nonEmpty.length; i++) {
+                assertEquals("Span differ", nonEmptySpans.get(i), nonEmpty[i]);
+            }
+        }
+
+        public char charAt(int arg0) {
+            return 0;
+        }
+
+        public int length() {
+            return 0;
+        }
+
+        public CharSequence subSequence(int arg0, int arg1) {
+            return null;
+        }
+
+        @Override
+        public <T> T[] getSpans(int start, int end, Class<T> type) {
+            return null;
+        }
+
+        @Override
+        public int getSpanStart(Object tag) {
+            return 0;
+        }
+
+        @Override
+        public int getSpanEnd(Object tag) {
+            return nonEmptySpans.contains(tag) ? 1 : 0;
+        }
+
+        @Override
+        public int getSpanFlags(Object tag) {
+            return 0;
+        }
+
+        @Override
+        public int nextSpanTransition(int start, int limit, Class type) {
+            return 0;
         }
     }
 }

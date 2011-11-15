@@ -16,7 +16,10 @@
 
 package android.app.backup;
 
+import android.app.backup.IFullBackupRestoreObserver;
 import android.app.backup.IRestoreSession;
+import android.os.ParcelFileDescriptor;
+import android.content.Intent;
 
 /**
  * Direct interface to the Backup Manager Service that applications invoke on.  The only
@@ -108,6 +111,23 @@ interface IBackupManager {
     boolean isBackupEnabled();
 
     /**
+     * Set the device's backup password.  Returns {@code true} if the password was set
+     * successfully, {@code false} otherwise.  Typically a failure means that an incorrect
+     * current password was supplied.
+     *
+     * <p>Callers must hold the android.permission.BACKUP permission to use this method.
+     */
+    boolean setBackupPassword(in String currentPw, in String newPw);
+
+    /**
+     * Reports whether a backup password is currently set.  If not, then a null or empty
+     * "current password" argument should be passed to setBackupPassword().
+     *
+     * <p>Callers must hold the android.permission.BACKUP permission to use this method.
+     */
+    boolean hasBackupPassword();
+
+    /**
      * Schedule an immediate backup attempt for all pending updates.  This is
      * primarily intended for transports to use when they detect a suitable
      * opportunity for doing a backup pass.  If there are no pending updates to
@@ -118,6 +138,60 @@ interface IBackupManager {
      * <p>Callers must hold the android.permission.BACKUP permission to use this method.
      */
     void backupNow();
+
+    /**
+     * Write a full backup of the given package to the supplied file descriptor.
+     * The fd may be a socket or other non-seekable destination.  If no package names
+     * are supplied, then every application on the device will be backed up to the output.
+     *
+     * <p>This method is <i>synchronous</i> -- it does not return until the backup has
+     * completed.
+     *
+     * <p>Callers must hold the android.permission.BACKUP permission to use this method.
+     *
+     * @param fd The file descriptor to which a 'tar' file stream is to be written
+     * @param includeApks If <code>true</code>, the resulting tar stream will include the
+     *     application .apk files themselves as well as their data.
+     * @param includeShared If <code>true</code>, the resulting tar stream will include
+     *     the contents of the device's shared storage (SD card or equivalent).
+     * @param allApps If <code>true</code>, the resulting tar stream will include all
+     *     installed applications' data, not just those named in the <code>packageNames</code>
+     *     parameter.
+     * @param allIncludesSystem If {@code true}, then {@code allApps} will be interpreted
+     *     as including packages pre-installed as part of the system. If {@code false},
+     *     then setting {@code allApps} to {@code true} will mean only that all 3rd-party
+     *     applications will be included in the dataset.
+     * @param packageNames The package names of the apps whose data (and optionally .apk files)
+     *     are to be backed up.  The <code>allApps</code> parameter supersedes this.
+     */
+    void fullBackup(in ParcelFileDescriptor fd, boolean includeApks, boolean includeShared,
+            boolean allApps, boolean allIncludesSystem, in String[] packageNames);
+
+    /**
+     * Restore device content from the data stream passed through the given socket.  The
+     * data stream must be in the format emitted by fullBackup().
+     *
+     * <p>Callers must hold the android.permission.BACKUP permission to use this method.
+     */
+    void fullRestore(in ParcelFileDescriptor fd);
+
+    /**
+     * Confirm that the requested full backup/restore operation can proceed.  The system will
+     * not actually perform the operation described to fullBackup() / fullRestore() unless the
+     * UI calls back into the Backup Manager to confirm, passing the correct token.  At
+     * the same time, the UI supplies a callback Binder for progress notifications during
+     * the operation.
+     *
+     * <p>The password passed by the confirming entity must match the saved backup or
+     * full-device encryption password in order to perform a backup.  If a password is
+     * supplied for restore, it must match the password used when creating the full
+     * backup dataset being used for restore.
+     *
+     * <p>Callers must hold the android.permission.BACKUP permission to use this method.
+     */
+    void acknowledgeFullBackupOrRestore(int token, boolean allow,
+            in String curPassword, in String encryptionPassword,
+            IFullBackupRestoreObserver observer);
 
     /**
      * Identify the currently selected transport.  Callers must hold the
@@ -142,6 +216,27 @@ interface IBackupManager {
      *   the current transport setting and the method returns null.
      */
     String selectBackupTransport(String transport);
+
+    /**
+     * Get the configuration Intent, if any, from the given transport.  Callers must
+     * hold the android.permission.BACKUP permission in order to use this method.
+     *
+     * @param transport The name of the transport to query.
+     * @return An Intent to use with Activity#startActivity() to bring up the configuration
+     *   UI supplied by the transport.  If the transport has no configuration UI, it should
+     *   return {@code null} here.
+     */
+    Intent getConfigurationIntent(String transport);
+
+    /**
+     * Get the destination string supplied by the given transport.  Callers must
+     * hold the android.permission.BACKUP permission in order to use this method.
+     *
+     * @param transport The name of the transport to query.
+     * @return A string describing the current backup destination.  This string is used
+     *   verbatim by the Settings UI as the summary text of the "configure..." item.
+     */
+    String getDestinationString(String transport);
 
     /**
      * Begin a restore session.  Either or both of packageName and transportID

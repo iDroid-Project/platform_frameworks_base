@@ -22,6 +22,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
     <application>    
         <uses-library android:name="android.test.runner" />
         <activity android:label="@string/app_name"
@@ -54,6 +56,11 @@
      </instrumentation>
 
       <instrumentation android:name=".MediaFrameworkPowerTestRunner"
+         android:targetPackage="com.android.mediaframeworktest"
+         android:label="Media Power tests InstrumentationRunner">
+     </instrumentation>
+
+     <instrumentation android:name=".MediaPlayerStressTestRunner"
          android:targetPackage="com.android.mediaframeworktest"
          android:label="Media Power tests InstrumentationRunner">
      </instrumentation>

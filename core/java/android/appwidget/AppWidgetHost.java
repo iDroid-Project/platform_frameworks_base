@@ -16,6 +16,9 @@
 
 package android.appwidget;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+
 import android.content.Context;
 import android.os.Handler;
 import android.os.IBinder;
@@ -23,10 +26,9 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.RemoteException;
 import android.os.ServiceManager;
+import android.util.DisplayMetrics;
+import android.util.TypedValue;
 import android.widget.RemoteViews;
-
-import java.util.ArrayList;
-import java.util.HashMap;
 
 import com.android.internal.appwidget.IAppWidgetHost;
 import com.android.internal.appwidget.IAppWidgetService;
@@ -39,9 +41,11 @@ public class AppWidgetHost {
 
     static final int HANDLE_UPDATE = 1;
     static final int HANDLE_PROVIDER_CHANGED = 2;
+    static final int HANDLE_VIEW_DATA_CHANGED = 3;
 
     final static Object sServiceLock = new Object();
     static IAppWidgetService sService;
+    private DisplayMetrics mDisplayMetrics;
 
     Context mContext;
     String mPackageName;
@@ -58,6 +62,13 @@ public class AppWidgetHost {
             Message msg = mHandler.obtainMessage(HANDLE_PROVIDER_CHANGED);
             msg.arg1 = appWidgetId;
             msg.obj = info;
+            msg.sendToTarget();
+        }
+
+        public void viewDataChanged(int appWidgetId, int viewId) {
+            Message msg = mHandler.obtainMessage(HANDLE_VIEW_DATA_CHANGED);
+            msg.arg1 = appWidgetId;
+            msg.arg2 = viewId;
             msg.sendToTarget();
         }
     }
@@ -77,6 +88,10 @@ public class AppWidgetHost {
                     onProviderChanged(msg.arg1, (AppWidgetProviderInfo)msg.obj);
                     break;
                 }
+                case HANDLE_VIEW_DATA_CHANGED: {
+                    viewDataChanged(msg.arg1, msg.arg2);
+                    break;
+                }
             }
         }
     }
@@ -91,6 +106,7 @@ public class AppWidgetHost {
         mContext = context;
         mHostId = hostId;
         mHandler = new UpdateHandler(context.getMainLooper());
+        mDisplayMetrics = context.getResources().getDisplayMetrics();
         synchronized (sServiceLock) {
             if (sService == null) {
                 IBinder b = ServiceManager.getService(Context.APPWIDGET_SERVICE);
@@ -202,6 +218,10 @@ public class AppWidgetHost {
         }
     }
 
+    /**
+     * Create the AppWidgetHostView for the given widget.
+     * The AppWidgetHost retains a pointer to the newly-created View.
+     */
     public final AppWidgetHostView createView(Context context, int appWidgetId,
             AppWidgetProviderInfo appWidget) {
         AppWidgetHostView view = onCreateView(context, appWidgetId, appWidget);
@@ -227,12 +247,25 @@ public class AppWidgetHost {
             AppWidgetProviderInfo appWidget) {
         return new AppWidgetHostView(context);
     }
-    
+
     /**
      * Called when the AppWidget provider for a AppWidget has been upgraded to a new apk.
      */
     protected void onProviderChanged(int appWidgetId, AppWidgetProviderInfo appWidget) {
         AppWidgetHostView v;
+
+        // Convert complex to dp -- we are getting the AppWidgetProviderInfo from the
+        // AppWidgetService, which doesn't have our context, hence we need to do the 
+        // conversion here.
+        appWidget.minWidth =
+            TypedValue.complexToDimensionPixelSize(appWidget.minWidth, mDisplayMetrics);
+        appWidget.minHeight =
+            TypedValue.complexToDimensionPixelSize(appWidget.minHeight, mDisplayMetrics);
+        appWidget.minResizeWidth =
+            TypedValue.complexToDimensionPixelSize(appWidget.minResizeWidth, mDisplayMetrics);
+        appWidget.minResizeHeight =
+            TypedValue.complexToDimensionPixelSize(appWidget.minResizeHeight, mDisplayMetrics);
+
         synchronized (mViews) {
             v = mViews.get(appWidgetId);
         }
@@ -249,6 +282,23 @@ public class AppWidgetHost {
         if (v != null) {
             v.updateAppWidget(views);
         }
+    }
+
+    void viewDataChanged(int appWidgetId, int viewId) {
+        AppWidgetHostView v;
+        synchronized (mViews) {
+            v = mViews.get(appWidgetId);
+        }
+        if (v != null) {
+            v.viewDataChanged(viewId);
+        }
+    }
+
+    /**
+     * Clear the list of Views that have been created by this AppWidgetHost.
+     */
+    protected void clearViews() {
+        mViews.clear();
     }
 }
 

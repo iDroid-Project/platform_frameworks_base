@@ -22,13 +22,23 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.hardware.usb.UsbAccessory;
+import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 
 // This class is used to close UsbPermissionsActivity and UsbResolverActivity
-// if their accessory is disconnected while the dialog is still open
+// if their device/accessory is disconnected while the dialog is still open
 class UsbDisconnectedReceiver extends BroadcastReceiver {
     private final Activity mActivity;
+    private UsbDevice mDevice;
     private UsbAccessory mAccessory;
+
+    public UsbDisconnectedReceiver(Activity activity, UsbDevice device) {
+       mActivity = activity;
+        mDevice = device;
+
+        IntentFilter filter = new IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED);
+        activity.registerReceiver(this, filter);
+    }
 
     public UsbDisconnectedReceiver(Activity activity, UsbAccessory accessory) {
         mActivity = activity;
@@ -41,7 +51,12 @@ class UsbDisconnectedReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         String action = intent.getAction();
-        if (UsbManager.ACTION_USB_ACCESSORY_DETACHED.equals(action)) {
+        if (UsbManager.ACTION_USB_DEVICE_DETACHED.equals(action)) {
+            UsbDevice device = (UsbDevice)intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+            if (device != null && device.equals(mDevice)) {
+                mActivity.finish();
+            }
+        } else if (UsbManager.ACTION_USB_ACCESSORY_DETACHED.equals(action)) {
             UsbAccessory accessory =
                     (UsbAccessory)intent.getParcelableExtra(UsbManager.EXTRA_ACCESSORY);
             if (accessory != null && accessory.equals(mAccessory)) {

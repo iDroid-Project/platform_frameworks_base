@@ -16,7 +16,6 @@
 
 package android.view;
 
-import com.android.layoutlib.bridge.android.BridgeInflater;
 import com.android.tools.layoutlib.annotations.LayoutlibDelegate;
 
 import org.xmlpull.v1.XmlPullParser;
@@ -35,18 +34,48 @@ import java.io.IOException;
  * Through the layoutlib_create tool, the original  methods of LayoutInflater have been replaced
  * by calls to methods of the same name in this delegate class.
  *
- * Generally we don't want to copy-paste a huge method like that just for one small features,
- * but because this is done after this platform is final and the next version (Honeycomb) has a
- * better mechanism (or slightly less copy-paste), maintenance of this duplicated code is not
- * a problem.
- *
  */
 public class LayoutInflater_Delegate {
 
+    private static final String TAG_MERGE = "merge";
+
     public static boolean sIsInInclude = false;
 
+    /**
+     * Recursive method used to descend down the xml hierarchy and instantiate
+     * views, instantiate their children, and then call onFinishInflate().
+     *
+     * This implementation just records the merge status before calling the default implementation.
+     */
     @LayoutlibDelegate
-    /*package*/ static void parseInclude(LayoutInflater thisInflater,
+    /*package*/ static void rInflate(LayoutInflater thisInflater,
+            XmlPullParser parser, View parent, final AttributeSet attrs,
+            boolean finishInflate) throws XmlPullParserException, IOException {
+
+        if (finishInflate == false) {
+            // this is a merge rInflate!
+            if (thisInflater instanceof BridgeInflater) {
+                ((BridgeInflater) thisInflater).setIsInMerge(true);
+            }
+        }
+
+        // ---- START DEFAULT IMPLEMENTATION.
+
+        thisInflater.rInflate_Original(parser, parent, attrs, finishInflate);
+
+        // ---- END DEFAULT IMPLEMENTATION.
+
+        if (finishInflate == false) {
+            // this is a merge rInflate!
+            if (thisInflater instanceof BridgeInflater) {
+                ((BridgeInflater) thisInflater).setIsInMerge(false);
+            }
+        }
+    }
+
+    @LayoutlibDelegate
+    public static void parseInclude(
+            LayoutInflater thisInflater,
             XmlPullParser parser, View parent, AttributeSet attrs)
             throws XmlPullParserException, IOException {
 
@@ -82,23 +111,11 @@ public class LayoutInflater_Delegate {
 
                     final String childName = childParser.getName();
 
-                    if (LayoutInflater.TAG_MERGE.equals(childName)) {
-                        // ---- START MODIFICATIONS ----
-                        if (thisInflater instanceof BridgeInflater) {
-                            ((BridgeInflater) thisInflater).setIsInMerge(true);
-                        }
-                        // ---- END MODIFICATIONS ----
-
+                    if (TAG_MERGE.equals(childName)) {
                         // Inflate all children.
-                        thisInflater.rInflate(childParser, parent, childAttrs);
-
-                        // ---- START MODIFICATIONS ----
-                        if (thisInflater instanceof BridgeInflater) {
-                            ((BridgeInflater) thisInflater).setIsInMerge(false);
-                        }
-                        // ---- END MODIFICATIONS ----
+                        thisInflater.rInflate(childParser, parent, childAttrs, false);
                     } else {
-                        final View view = thisInflater.createViewFromTag(childName, childAttrs);
+                        final View view = thisInflater.createViewFromTag(parent, childName, childAttrs);
                         final ViewGroup group = (ViewGroup) parent;
 
                         // We try to load the layout params set in the <include /> tag. If
@@ -116,6 +133,7 @@ public class LayoutInflater_Delegate {
                             // ---- END CHANGES
 
                             params = group.generateLayoutParams(attrs);
+
                         } catch (RuntimeException e) {
                             // ---- START CHANGES
                             sIsInInclude = false;
@@ -133,7 +151,7 @@ public class LayoutInflater_Delegate {
                         }
 
                         // Inflate all children.
-                        thisInflater.rInflate(childParser, view, childAttrs);
+                        thisInflater.rInflate(childParser, view, childAttrs, true);
 
                         // Attempt to override the included layout's android:id with the
                         // one set on the <include /> tag itself.
@@ -176,4 +194,6 @@ public class LayoutInflater_Delegate {
             // Empty
         }
     }
+
+
 }

@@ -22,15 +22,17 @@ import android.content.res.TypedArray;
 import android.graphics.drawable.Drawable;
 import android.net.LocalServerSocket;
 import android.os.Debug;
+import android.os.FileUtils;
+import android.os.Process;
 import android.os.SystemClock;
 import android.os.SystemProperties;
-import android.util.Config;
 import android.util.EventLog;
 import android.util.Log;
 
 import dalvik.system.VMRuntime;
 import dalvik.system.Zygote;
-import dalvik.system.SamplingProfiler;
+
+import libcore.io.IoUtils;
 
 import java.io.BufferedReader;
 import java.io.FileDescriptor;
@@ -46,7 +48,7 @@ import java.util.ArrayList;
  * Startup class for the zygote process.
  *
  * Pre-initializes some classes, and then waits for commands on a UNIX domain
- * socket. Based on these commands, forks of child processes that inherit
+ * socket. Based on these commands, forks off child processes that inherit
  * the initial state of the VM.
  *
  * Please see {@link ZygoteConnection.Arguments} for documentation on the
@@ -67,7 +69,7 @@ public class ZygoteInit {
     private static final int PRELOAD_GC_THRESHOLD = 50000;
 
     public static final String USAGE_STRING =
-            " <\"true\"|\"false\" for startSystemServer>";
+            " <\"start-system-server\"|\"\" for startSystemServer>";
 
     private static LocalServerSocket sServerSocket;
 
@@ -96,25 +98,6 @@ public class ZygoteInit {
 
     /** Controls whether we should preload resources during zygote init. */
     private static final boolean PRELOAD_RESOURCES = true;
-
-    /**
-     * List of methods we "warm up" in the register map cache.  These were
-     * chosen because they appeared on the stack in GCs in multiple
-     * applications.
-     *
-     * This is in a VM-ready format, to minimize string processing.  If a
-     * class is not already loaded, or a method is not found, the entry
-     * will be skipped.
-     *
-     * This doesn't really merit a separately-generated input file at this
-     * time.  The list is fairly short, and the consequences of failure
-     * are minor.
-     */
-    private static final String[] REGISTER_MAP_METHODS = {
-        // (currently not doing any)
-        //"Landroid/app/Activity;.setContentView:(I)V",
-    };
-
 
     /**
      * Invokes a static "main(argv[]) method on class "className".
@@ -245,6 +228,11 @@ public class ZygoteInit {
         }
     }
 
+    static void preload() {
+        preloadClasses();
+        preloadResources();
+    }
+
     /**
      * Performs Zygote process initialization. Loads and initializes
      * commonly used classes.
@@ -273,7 +261,7 @@ public class ZygoteInit {
             runtime.setTargetHeapUtilization(0.8f);
 
             // Start with a clean slate.
-            runtime.gcSoftReferences();
+            System.gc();
             runtime.runFinalizationSync();
             Debug.startAllocCounting();
 
@@ -291,16 +279,16 @@ public class ZygoteInit {
                     }
 
                     try {
-                        if (Config.LOGV) {
+                        if (false) {
                             Log.v(TAG, "Preloading " + line + "...");
                         }
                         Class.forName(line);
                         if (Debug.getGlobalAllocSize() > PRELOAD_GC_THRESHOLD) {
-                            if (Config.LOGV) {
+                            if (false) {
                                 Log.v(TAG,
                                     " GC at " + Debug.getGlobalAllocSize());
                             }
-                            runtime.gcSoftReferences();
+                            System.gc();
                             runtime.runFinalizationSync();
                             Debug.resetGlobalAllocSize();
                         }
@@ -324,6 +312,7 @@ public class ZygoteInit {
             } catch (IOException e) {
                 Log.e(TAG, "Error reading " + PRELOADED_CLASSES + ".", e);
             } finally {
+                IoUtils.closeQuietly(is);
                 // Restore default.
                 runtime.setTargetHeapUtilization(defaultUtilization);
 
@@ -333,45 +322,6 @@ public class ZygoteInit {
                 setEffectiveUser(ROOT_UID);
                 setEffectiveGroup(ROOT_GID);
             }
-        }
-    }
-
-    /**
-     * Pre-caches register maps for methods that are commonly used.
-     */
-    private static void cacheRegisterMaps() {
-        String failed = null;
-        int failure;
-        long startTime = System.nanoTime();
-
-        failure = 0;
-
-        for (int i = 0; i < REGISTER_MAP_METHODS.length; i++) {
-            String str = REGISTER_MAP_METHODS[i];
-
-            if (!Debug.cacheRegisterMap(str)) {
-                if (failed == null)
-                    failed = str;
-                failure++;
-            }
-        }
-
-        long delta = System.nanoTime() - startTime;
-
-        if (failure == REGISTER_MAP_METHODS.length) {
-            if (REGISTER_MAP_METHODS.length > 0) {
-                Log.i(TAG,
-                    "Register map caching failed (precise GC not enabled?)");
-            }
-            return;
-        }
-
-        Log.i(TAG, "Register map cache: found " +
-            (REGISTER_MAP_METHODS.length - failure) + " of " +
-            REGISTER_MAP_METHODS.length + " methods in " +
-            (delta / 1000000L) + "ms");
-        if (failure > 0) {
-            Log.i(TAG, "  First failure: " + failed);
         }
     }
 
@@ -387,7 +337,7 @@ public class ZygoteInit {
 
         Debug.startAllocCounting();
         try {
-            runtime.gcSoftReferences();
+            System.gc();
             runtime.runFinalizationSync();
             mResources = Resources.getSystem();
             mResources.startPreloading();
@@ -420,15 +370,15 @@ public class ZygoteInit {
         int N = ar.length();
         for (int i=0; i<N; i++) {
             if (Debug.getGlobalAllocSize() > PRELOAD_GC_THRESHOLD) {
-                if (Config.LOGV) {
+                if (false) {
                     Log.v(TAG, " GC at " + Debug.getGlobalAllocSize());
                 }
-                runtime.gcSoftReferences();
+                System.gc();
                 runtime.runFinalizationSync();
                 Debug.resetGlobalAllocSize();
             }
             int id = ar.getResourceId(i, 0);
-            if (Config.LOGV) {
+            if (false) {
                 Log.v(TAG, "Preloading resource #" + Integer.toHexString(id));
             }
             if (id != 0) {
@@ -443,15 +393,15 @@ public class ZygoteInit {
         int N = ar.length();
         for (int i=0; i<N; i++) {
             if (Debug.getGlobalAllocSize() > PRELOAD_GC_THRESHOLD) {
-                if (Config.LOGV) {
+                if (false) {
                     Log.v(TAG, " GC at " + Debug.getGlobalAllocSize());
                 }
-                runtime.gcSoftReferences();
+                System.gc();
                 runtime.runFinalizationSync();
                 Debug.resetGlobalAllocSize();
             }
             int id = ar.getResourceId(i, 0);
-            if (Config.LOGV) {
+            if (false) {
                 Log.v(TAG, "Preloading resource #" + Integer.toHexString(id));
             }
             if (id != 0) {
@@ -477,11 +427,11 @@ public class ZygoteInit {
         /* runFinalizationSync() lets finalizers be called in Zygote,
          * which doesn't have a HeapWorker thread.
          */
-        runtime.gcSoftReferences();
+        System.gc();
         runtime.runFinalizationSync();
-        runtime.gcSoftReferences();
+        System.gc();
         runtime.runFinalizationSync();
-        runtime.gcSoftReferences();
+        System.gc();
         runtime.runFinalizationSync();
     }
 
@@ -494,11 +444,24 @@ public class ZygoteInit {
 
         closeServerSocket();
 
-        /*
-         * Pass the remaining arguments to SystemServer.
-         * "--nice-name=system_server com.android.server.SystemServer"
-         */
-        RuntimeInit.zygoteInit(parsedArgs.remainingArgs);
+        // set umask to 0077 so new files and directories will default to owner-only permissions.
+        FileUtils.setUMask(FileUtils.S_IRWXG | FileUtils.S_IRWXO);
+
+        if (parsedArgs.niceName != null) {
+            Process.setArgV0(parsedArgs.niceName);
+        }
+
+        if (parsedArgs.invokeWith != null) {
+            WrapperInit.execApplication(parsedArgs.invokeWith,
+                    parsedArgs.niceName, parsedArgs.targetSdkVersion,
+                    null, parsedArgs.remainingArgs);
+        } else {
+            /*
+             * Pass the remaining arguments to SystemServer.
+             */
+            RuntimeInit.zygoteInit(parsedArgs.targetSdkVersion, parsedArgs.remainingArgs);
+        }
+
         /* should never reach here */
     }
 
@@ -511,7 +474,7 @@ public class ZygoteInit {
         String args[] = {
             "--setuid=1000",
             "--setgid=1000",
-            "--setgroups=1001,1002,1003,1004,1005,1006,1007,1008,1009,1010,1018,3001,3002,3003",
+            "--setgroups=1001,1002,1003,1004,1005,1006,1007,1008,1009,1010,1018,3001,3002,3003,3006,3007",
             "--capabilities=130104352,130104352",
             "--runtime-init",
             "--nice-name=system_server",
@@ -523,20 +486,15 @@ public class ZygoteInit {
 
         try {
             parsedArgs = new ZygoteConnection.Arguments(args);
-
-            /*
-             * Enable debugging of the system process if *either* the command line flags
-             * indicate it should be debuggable or the ro.debuggable system property
-             * is set to "1"
-             */
-            int debugFlags = parsedArgs.debugFlags;
-            if ("1".equals(SystemProperties.get("ro.debuggable")))
-                debugFlags |= Zygote.DEBUG_ENABLE_DEBUGGER;
+            ZygoteConnection.applyDebuggerSystemProperty(parsedArgs);
+            ZygoteConnection.applyInvokeWithSystemProperty(parsedArgs);
 
             /* Request to fork the system server process */
             pid = Zygote.forkSystemServer(
                     parsedArgs.uid, parsedArgs.gid,
-                    parsedArgs.gids, debugFlags, null,
+                    parsedArgs.gids,
+                    parsedArgs.debugFlags,
+                    null,
                     parsedArgs.permittedCapabilities,
                     parsedArgs.effectiveCapabilities);
         } catch (IllegalArgumentException ex) {
@@ -553,17 +511,13 @@ public class ZygoteInit {
 
     public static void main(String argv[]) {
         try {
-            VMRuntime.getRuntime().setMinimumHeapSize(5 * 1024 * 1024);
-
             // Start profiling the zygote initialization.
             SamplingProfilerIntegration.start();
 
             registerZygoteSocket();
             EventLog.writeEvent(LOG_BOOT_PROGRESS_PRELOAD_START,
                 SystemClock.uptimeMillis());
-            preloadClasses();
-            //cacheRegisterMaps();
-            preloadResources();
+            preload();
             EventLog.writeEvent(LOG_BOOT_PROGRESS_PRELOAD_END,
                 SystemClock.uptimeMillis());
 
@@ -578,9 +532,9 @@ public class ZygoteInit {
                 throw new RuntimeException(argv[0] + USAGE_STRING);
             }
 
-            if (argv[1].equals("true")) {
+            if (argv[1].equals("start-system-server")) {
                 startSystemServer();
-            } else if (!argv[1].equals("false")) {
+            } else if (!argv[1].equals("")) {
                 throw new RuntimeException(argv[0] + USAGE_STRING);
             }
 
@@ -750,15 +704,6 @@ public class ZygoteInit {
      */
     static native void reopenStdio(FileDescriptor in,
             FileDescriptor out, FileDescriptor err) throws IOException;
-
-    /**
-     * Calls close() on a file descriptor
-     *
-     * @param fd descriptor to close
-     * @throws IOException
-     */
-    static native void closeDescriptor(FileDescriptor fd)
-            throws IOException;
 
     /**
      * Toggles the close-on-exec flag for the specified file descriptor.

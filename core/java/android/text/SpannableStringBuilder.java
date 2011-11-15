@@ -16,19 +16,18 @@
 
 package android.text;
 
-import com.android.internal.util.ArrayUtils;
-import android.graphics.Paint;
 import android.graphics.Canvas;
+import android.graphics.Paint;
+
+import com.android.internal.util.ArrayUtils;
 
 import java.lang.reflect.Array;
 
 /**
  * This is the class for text whose content and markup can both be changed.
  */
-public class SpannableStringBuilder
-implements CharSequence, GetChars, Spannable, Editable, Appendable,
-           GraphicsOperations
-{
+public class SpannableStringBuilder implements CharSequence, GetChars, Spannable, Editable,
+        Appendable, GraphicsOperations {
     /**
      * Create a new SpannableStringBuilder with empty contents
      */
@@ -109,8 +108,7 @@ implements CharSequence, GetChars, Spannable, Editable, Appendable,
         if (where < 0) {
             throw new IndexOutOfBoundsException("charAt: " + where + " < 0");
         } else if (where >= len) {
-            throw new IndexOutOfBoundsException("charAt: " + where +
-                                                " >= length " + len);
+            throw new IndexOutOfBoundsException("charAt: " + where + " >= length " + len);
         }
 
         if (where >= mGapStart)
@@ -264,8 +262,7 @@ implements CharSequence, GetChars, Spannable, Editable, Appendable,
         return append(String.valueOf(text));
     }
 
-    private int change(int start, int end,
-                       CharSequence tb, int tbstart, int tbend) {
+    private int change(int start, int end, CharSequence tb, int tbstart, int tbend) {
         return change(true, start, end, tb, tbstart, tbend);
     }
 
@@ -275,9 +272,9 @@ implements CharSequence, GetChars, Spannable, Editable, Appendable,
         int ret = tbend - tbstart;
         TextWatcher[] recipients = null;
 
-        if (notify)
-            recipients = sendTextWillChange(start, end - start,
-                                            tbend - tbstart);
+        if (notify) {
+            recipients = sendTextWillChange(start, end - start, tbend - tbstart);
+        }
 
         for (int i = mSpanCount - 1; i >= 0; i--) {
             if ((mSpanFlags[i] & SPAN_PARAGRAPH) == SPAN_PARAGRAPH) {
@@ -312,12 +309,15 @@ implements CharSequence, GetChars, Spannable, Editable, Appendable,
 
         moveGapTo(end);
 
-        if (tbend - tbstart >= mGapLength + (end - start))
-            resizeFor(mText.length - mGapLength +
-                      tbend - tbstart - (end - start));
+        // Can be negative
+        final int nbNewChars = (tbend - tbstart) - (end - start);
 
-        mGapStart += tbend - tbstart - (end - start);
-        mGapLength -= tbend - tbstart - (end - start);
+        if (nbNewChars >= mGapLength) {
+            resizeFor(mText.length + nbNewChars - mGapLength);
+        }
+
+        mGapStart += nbNewChars;
+        mGapLength -= nbNewChars;
 
         if (mGapLength < 1)
             new Exception("mGapLength < 1").printStackTrace();
@@ -380,19 +380,8 @@ implements CharSequence, GetChars, Spannable, Editable, Appendable,
             }
 
             // remove 0-length SPAN_EXCLUSIVE_EXCLUSIVE
-            // XXX send notification on removal
-
             if (mSpanEnds[i] < mSpanStarts[i]) {
-                System.arraycopy(mSpans, i + 1,
-                                 mSpans, i, mSpanCount - (i + 1));
-                System.arraycopy(mSpanStarts, i + 1,
-                                 mSpanStarts, i, mSpanCount - (i + 1));
-                System.arraycopy(mSpanEnds, i + 1,
-                                 mSpanEnds, i, mSpanCount - (i + 1));
-                System.arraycopy(mSpanFlags, i + 1,
-                                 mSpanFlags, i, mSpanCount - (i + 1));
-
-                mSpanCount--;
+                removeSpan(i);
             }
         }
 
@@ -402,6 +391,28 @@ implements CharSequence, GetChars, Spannable, Editable, Appendable,
         }
 
         return ret;
+    }
+
+    private void removeSpan(int i) {
+        Object object = mSpans[i];
+
+        int start = mSpanStarts[i];
+        int end = mSpanEnds[i];
+
+        if (start > mGapStart) start -= mGapLength;
+        if (end > mGapStart) end -= mGapLength;
+
+        int count = mSpanCount - (i + 1);
+        System.arraycopy(mSpans, i + 1, mSpans, i, count);
+        System.arraycopy(mSpanStarts, i + 1, mSpanStarts, i, count);
+        System.arraycopy(mSpanEnds, i + 1, mSpanEnds, i, count);
+        System.arraycopy(mSpanFlags, i + 1, mSpanFlags, i, count);
+
+        mSpanCount--;
+
+        mSpans[mSpanCount] = null;
+
+        sendSpanRemoved(object, start, end);
     }
 
     // Documentation from interface
@@ -441,10 +452,9 @@ implements CharSequence, GetChars, Spannable, Editable, Appendable,
             moveGapTo(end);
             TextWatcher[] recipients;
 
-            recipients = sendTextWillChange(start, end - start,
-                                            tbend - tbstart);
-
             int origlen = end - start;
+
+            recipients = sendTextWillChange(start, origlen, tbend - tbstart);
 
             if (mGapLength < 2)
                 resizeFor(length() + 1);
@@ -461,16 +471,13 @@ implements CharSequence, GetChars, Spannable, Editable, Appendable,
             mGapStart++;
             mGapLength--;
 
-            if (mGapLength < 1)
+            if (mGapLength < 1) {
                 new Exception("mGapLength < 1").printStackTrace();
+            }
 
-            int oldlen = (end + 1) - start;
-
-            int inserted = change(false, start + 1, start + 1,
-                                  tb, tbstart, tbend);
+            int inserted = change(false, start + 1, start + 1, tb, tbstart, tbend);
             change(false, start, start + 1, "", 0, 0);
-            change(false, start + inserted, start + inserted + oldlen - 1,
-                   "", 0, 0);
+            change(false, start + inserted, start + inserted + origlen, "", 0, 0);
 
             /*
              * Special case to keep the cursor in the same position
@@ -495,13 +502,12 @@ implements CharSequence, GetChars, Spannable, Editable, Appendable,
                 off = off * inserted / (end - start);
                 selend = (int) off + start;
 
-                setSpan(false, Selection.SELECTION_END, selend, selend,
-                        Spanned.SPAN_POINT_POINT);
+                setSpan(false, Selection.SELECTION_END, selend, selend, Spanned.SPAN_POINT_POINT);
             }
-
             sendTextChange(recipients, start, origlen, inserted);
             sendTextHasChanged(recipients);
         }
+
         return this; 
     }
 
@@ -514,8 +520,7 @@ implements CharSequence, GetChars, Spannable, Editable, Appendable,
         setSpan(true, what, start, end, flags);
     }
 
-    private void setSpan(boolean send,
-                         Object what, int start, int end, int flags) {
+    private void setSpan(boolean send, Object what, int start, int end, int flags) {
         int nstart = start;
         int nend = end;
 
@@ -526,8 +531,7 @@ implements CharSequence, GetChars, Spannable, Editable, Appendable,
                 char c = charAt(start - 1);
 
                 if (c != '\n')
-                    throw new RuntimeException(
-                            "PARAGRAPH span must start at paragraph boundary");
+                    throw new RuntimeException("PARAGRAPH span must start at paragraph boundary");
             }
         }
 
@@ -536,23 +540,22 @@ implements CharSequence, GetChars, Spannable, Editable, Appendable,
                 char c = charAt(end - 1);
 
                 if (c != '\n')
-                    throw new RuntimeException(
-                            "PARAGRAPH span must end at paragraph boundary");
+                    throw new RuntimeException("PARAGRAPH span must end at paragraph boundary");
             }
         }
 
-        if (start > mGapStart)
+        if (start > mGapStart) {
             start += mGapLength;
-        else if (start == mGapStart) {
+        } else if (start == mGapStart) {
             int flag = (flags & START_MASK) >> START_SHIFT;
 
             if (flag == POINT || (flag == PARAGRAPH && start == length()))
                 start += mGapLength;
         }
 
-        if (end > mGapStart)
+        if (end > mGapStart) {
             end += mGapLength;
-        else if (end == mGapStart) {
+        } else if (end == mGapStart) {
             int flag = (flags & END_MASK);
 
             if (flag == POINT || (flag == PARAGRAPH && end == length()))
@@ -617,25 +620,7 @@ implements CharSequence, GetChars, Spannable, Editable, Appendable,
     public void removeSpan(Object what) {
         for (int i = mSpanCount - 1; i >= 0; i--) {
             if (mSpans[i] == what) {
-                int ostart = mSpanStarts[i];
-                int oend = mSpanEnds[i];
-
-                if (ostart > mGapStart)
-                    ostart -= mGapLength;
-                if (oend > mGapStart)
-                    oend -= mGapLength;
-
-                int count = mSpanCount - (i + 1);
-
-                System.arraycopy(mSpans, i + 1, mSpans, i, count);
-                System.arraycopy(mSpanStarts, i + 1, mSpanStarts, i, count);
-                System.arraycopy(mSpanEnds, i + 1, mSpanEnds, i, count);
-                System.arraycopy(mSpanFlags, i + 1, mSpanFlags, i, count);
-
-                mSpanCount--;
-                mSpans[mSpanCount] = null;
-
-                sendSpanRemoved(what, ostart, oend);
+                removeSpan(i);
                 return;
             }
         }
@@ -707,7 +692,10 @@ implements CharSequence, GetChars, Spannable, Editable, Appendable,
      * the specified range of the buffer.  The kind may be Object.class to get
      * a list of all the spans regardless of type.
      */
+    @SuppressWarnings("unchecked")
     public <T> T[] getSpans(int queryStart, int queryEnd, Class<T> kind) {
+        if (kind == null) return ArrayUtils.emptyArray(kind);
+
         int spanCount = mSpanCount;
         Object[] spans = mSpans;
         int[] starts = mSpanStarts;
@@ -717,22 +705,21 @@ implements CharSequence, GetChars, Spannable, Editable, Appendable,
         int gaplen = mGapLength;
 
         int count = 0;
-        Object[] ret = null;
-        Object ret1 = null;
+        T[] ret = null;
+        T ret1 = null;
 
         for (int i = 0; i < spanCount; i++) {
             int spanStart = starts[i];
-            int spanEnd = ends[i];
-
             if (spanStart > gapstart) {
                 spanStart -= gaplen;
             }
-            if (spanEnd > gapstart) {
-                spanEnd -= gaplen;
-            }
-
             if (spanStart > queryEnd) {
                 continue;
+            }
+
+            int spanEnd = ends[i];
+            if (spanEnd > gapstart) {
+                spanEnd -= gaplen;
             }
             if (spanEnd < queryStart) {
                 continue;
@@ -745,16 +732,17 @@ implements CharSequence, GetChars, Spannable, Editable, Appendable,
                     continue;
             }
 
-            if (kind != null && !kind.isInstance(spans[i])) {
-                continue;
-            }
+            // Expensive test, should be performed after the previous tests
+            if (!kind.isInstance(spans[i])) continue;
 
             if (count == 0) {
-                ret1 = spans[i];
+                // Safe conversion thanks to the isInstance test above
+                ret1 = (T) spans[i];
                 count++;
             } else {
                 if (count == 1) {
-                    ret = (Object[]) Array.newInstance(kind, spanCount - i + 1);
+                    // Safe conversion, but requires a suppressWarning
+                    ret = (T[]) Array.newInstance(kind, spanCount - i + 1);
                     ret[0] = ret1;
                 }
 
@@ -771,29 +759,33 @@ implements CharSequence, GetChars, Spannable, Editable, Appendable,
                     }
 
                     System.arraycopy(ret, j, ret, j + 1, count - j);
-                    ret[j] = spans[i];
+                    // Safe conversion thanks to the isInstance test above
+                    ret[j] = (T) spans[i];
                     count++;
                 } else {
-                    ret[count++] = spans[i];
+                    // Safe conversion thanks to the isInstance test above
+                    ret[count++] = (T) spans[i];
                 }
             }
         }
 
         if (count == 0) {
-            return (T[]) ArrayUtils.emptyArray(kind);
+            return ArrayUtils.emptyArray(kind);
         }
         if (count == 1) {
-            ret = (Object[]) Array.newInstance(kind, 1);
+            // Safe conversion, but requires a suppressWarning
+            ret = (T[]) Array.newInstance(kind, 1);
             ret[0] = ret1;
-            return (T[]) ret;
+            return ret;
         }
         if (count == ret.length) {
-            return (T[]) ret;
+            return ret;
         }
 
-        Object[] nret = (Object[]) Array.newInstance(kind, count);
+        // Safe conversion, but requires a suppressWarning
+        T[] nret = (T[]) Array.newInstance(kind, count);
         System.arraycopy(ret, 0, nret, 0, count);
-        return (T[]) nret;
+        return nret;
     }
 
     /**
@@ -862,6 +854,7 @@ implements CharSequence, GetChars, Spannable, Editable, Appendable,
     /**
      * Return a String containing a copy of the chars in this buffer.
      */
+    @Override
     public String toString() {
         int len = length();
         char[] buf = new char[len];
@@ -881,8 +874,7 @@ implements CharSequence, GetChars, Spannable, Editable, Appendable,
         return recip;
     }
 
-    private void sendTextChange(TextWatcher[] recip, int start, int before,
-                                int after) {
+    private void sendTextChange(TextWatcher[] recip, int start, int before, int after) {
         int n = recip.length;
 
         for (int i = 0; i < n; i++) {
@@ -917,8 +909,7 @@ implements CharSequence, GetChars, Spannable, Editable, Appendable,
     }
 
     private void sendSpanChanged(Object what, int s, int e, int st, int en) {
-        SpanWatcher[] recip = getSpans(Math.min(s, st), Math.max(e, en),
-                                  SpanWatcher.class);
+        SpanWatcher[] recip = getSpans(Math.min(s, st), Math.max(e, en), SpanWatcher.class);
         int n = recip.length;
 
         for (int i = 0; i < n; i++) {
@@ -952,6 +943,7 @@ implements CharSequence, GetChars, Spannable, Editable, Appendable,
         }
     }
 
+/*
     private boolean isprint(char c) { // XXX
         if (c >= ' ' && c <= '~')
             return true;
@@ -959,7 +951,6 @@ implements CharSequence, GetChars, Spannable, Editable, Appendable,
             return false;
     }
 
-/*
     private static final int startFlag(int flag) {
         return (flag >> 4) & 0x0F;
     }
@@ -1054,7 +1045,32 @@ implements CharSequence, GetChars, Spannable, Editable, Appendable,
         }
     }
 
+
     /**
+     * Don't call this yourself -- exists for Canvas to use internally.
+     * {@hide}
+     */
+    public void drawTextRun(Canvas c, int start, int end,
+            int contextStart, int contextEnd,
+            float x, float y, int flags, Paint p) {
+        checkRange("drawTextRun", start, end);
+
+        int contextLen = contextEnd - contextStart;
+        int len = end - start;
+        if (contextEnd <= mGapStart) {
+            c.drawTextRun(mText, start, len, contextStart, contextLen, x, y, flags, p);
+        } else if (contextStart >= mGapStart) {
+            c.drawTextRun(mText, start + mGapLength, len, contextStart + mGapLength,
+                    contextLen, x, y, flags, p);
+        } else {
+            char[] buf = TextUtils.obtain(contextLen);
+            getChars(contextStart, contextEnd, buf, 0);
+            c.drawTextRun(buf, start - contextStart, len, 0, contextLen, x, y, flags, p);
+            TextUtils.recycle(buf);
+        }
+    }
+
+   /**
      * Don't call this yourself -- exists for Paint to use internally.
      * {@hide}
      */
@@ -1103,6 +1119,113 @@ implements CharSequence, GetChars, Spannable, Editable, Appendable,
         return ret;
     }
 
+    /**
+     * Don't call this yourself -- exists for Paint to use internally.
+     * {@hide}
+     */
+    public float getTextRunAdvances(int start, int end, int contextStart, int contextEnd, int flags,
+            float[] advances, int advancesPos, Paint p) {
+
+        float ret;
+
+        int contextLen = contextEnd - contextStart;
+        int len = end - start;
+
+        if (end <= mGapStart) {
+            ret = p.getTextRunAdvances(mText, start, len, contextStart, contextLen,
+                    flags, advances, advancesPos);
+        } else if (start >= mGapStart) {
+            ret = p.getTextRunAdvances(mText, start + mGapLength, len,
+                    contextStart + mGapLength, contextLen, flags, advances, advancesPos);
+        } else {
+            char[] buf = TextUtils.obtain(contextLen);
+            getChars(contextStart, contextEnd, buf, 0);
+            ret = p.getTextRunAdvances(buf, start - contextStart, len,
+                    0, contextLen, flags, advances, advancesPos);
+            TextUtils.recycle(buf);
+        }
+
+        return ret;
+    }
+
+    /**
+     * Don't call this yourself -- exists for Paint to use internally.
+     * {@hide}
+     */
+    public float getTextRunAdvances(int start, int end, int contextStart, int contextEnd, int flags,
+            float[] advances, int advancesPos, Paint p, int reserved) {
+
+        float ret;
+
+        int contextLen = contextEnd - contextStart;
+        int len = end - start;
+
+        if (end <= mGapStart) {
+            ret = p.getTextRunAdvances(mText, start, len, contextStart, contextLen,
+                    flags, advances, advancesPos, reserved);
+        } else if (start >= mGapStart) {
+            ret = p.getTextRunAdvances(mText, start + mGapLength, len,
+                    contextStart + mGapLength, contextLen, flags, advances, advancesPos, reserved);
+        } else {
+            char[] buf = TextUtils.obtain(contextLen);
+            getChars(contextStart, contextEnd, buf, 0);
+            ret = p.getTextRunAdvances(buf, start - contextStart, len,
+                    0, contextLen, flags, advances, advancesPos, reserved);
+            TextUtils.recycle(buf);
+        }
+
+        return ret;
+    }
+
+    /**
+     * Returns the next cursor position in the run.  This avoids placing the cursor between
+     * surrogates, between characters that form conjuncts, between base characters and combining
+     * marks, or within a reordering cluster.
+     *
+     * <p>The context is the shaping context for cursor movement, generally the bounds of the metric
+     * span enclosing the cursor in the direction of movement.
+     * <code>contextStart</code>, <code>contextEnd</code> and <code>offset</code> are relative to
+     * the start of the string.</p>
+     *
+     * <p>If cursorOpt is CURSOR_AT and the offset is not a valid cursor position,
+     * this returns -1.  Otherwise this will never return a value before contextStart or after
+     * contextEnd.</p>
+     *
+     * @param contextStart the start index of the context
+     * @param contextEnd the (non-inclusive) end index of the context
+     * @param flags either DIRECTION_RTL or DIRECTION_LTR
+     * @param offset the cursor position to move from
+     * @param cursorOpt how to move the cursor, one of CURSOR_AFTER,
+     * CURSOR_AT_OR_AFTER, CURSOR_BEFORE,
+     * CURSOR_AT_OR_BEFORE, or CURSOR_AT
+     * @param p the Paint object that is requesting this information
+     * @return the offset of the next position, or -1
+     * @deprecated This is an internal method, refrain from using it in your code
+     */
+    @Deprecated
+    public int getTextRunCursor(int contextStart, int contextEnd, int flags, int offset,
+            int cursorOpt, Paint p) {
+
+        int ret;
+
+        int contextLen = contextEnd - contextStart;
+        if (contextEnd <= mGapStart) {
+            ret = p.getTextRunCursor(mText, contextStart, contextLen,
+                    flags, offset, cursorOpt);
+        } else if (contextStart >= mGapStart) {
+            ret = p.getTextRunCursor(mText, contextStart + mGapLength, contextLen,
+                    flags, offset + mGapLength, cursorOpt) - mGapLength;
+        } else {
+            char[] buf = TextUtils.obtain(contextLen);
+            getChars(contextStart, contextEnd, buf, 0);
+            ret = p.getTextRunCursor(buf, 0, contextLen,
+                    flags, offset - contextStart, cursorOpt) + contextStart;
+            TextUtils.recycle(buf);
+        }
+
+        return ret;
+    }
+
     // Documentation from interface
     public void setFilters(InputFilter[] filters) {
         if (filters == null) {
@@ -1130,7 +1253,6 @@ implements CharSequence, GetChars, Spannable, Editable, Appendable,
     private int[] mSpanFlags;
     private int mSpanCount;
 
-    private static final int MARK = 1;
     private static final int POINT = 2;
     private static final int PARAGRAPH = 3;
 

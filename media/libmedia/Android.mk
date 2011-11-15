@@ -1,4 +1,14 @@
 LOCAL_PATH:= $(call my-dir)
+
+include $(CLEAR_VARS)
+
+LOCAL_SRC_FILES:= \
+    AudioParameter.cpp
+LOCAL_MODULE:= libmedia_helper
+LOCAL_MODULE_TAGS := optional
+
+include $(BUILD_STATIC_LIBRARY)
+
 include $(CLEAR_VARS)
 
 LOCAL_SRC_FILES:= \
@@ -15,6 +25,7 @@ LOCAL_SRC_FILES:= \
     IMediaRecorderClient.cpp \
     IMediaPlayer.cpp \
     IMediaRecorder.cpp \
+    IStreamSource.cpp \
     Metadata.cpp \
     mediarecorder.cpp \
     IMediaMetadataRetriever.cpp \
@@ -32,26 +43,24 @@ LOCAL_SRC_FILES:= \
     IEffectClient.cpp \
     AudioEffect.cpp \
     Visualizer.cpp \
+    MemoryLeakTrackUtil.cpp \
     fixedfft.cpp.arm
 
 LOCAL_SHARED_LIBRARIES := \
-	libui libcutils libutils libbinder libsonivox libicuuc libexpat libsurfaceflinger_client libcamera_client
+	libui libcutils libutils libbinder libsonivox libicuuc libexpat \
+        libcamera_client libstagefright_foundation \
+        libgui libdl
+
+LOCAL_WHOLE_STATIC_LIBRARY := libmedia_helper
 
 LOCAL_MODULE:= libmedia
-
-ifeq ($(TARGET_OS)-$(TARGET_SIMULATOR),linux-true)
-LOCAL_LDLIBS += -ldl -lpthread
-endif
-
-ifneq ($(TARGET_SIMULATOR),true)
-LOCAL_SHARED_LIBRARIES += libdl
-endif
 
 LOCAL_C_INCLUDES := \
     $(JNI_H_INCLUDE) \
     $(call include-path-for, graphics corecg) \
     $(TOP)/frameworks/base/include/media/stagefright/openmax \
     external/icu4c/common \
-    external/expat/lib
+    external/expat/lib \
+    system/media/audio_effects/include
 
 include $(BUILD_SHARED_LIBRARY)

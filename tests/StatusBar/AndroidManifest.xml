@@ -5,6 +5,7 @@
     <uses-permission android:name="android.permission.STATUS_BAR" />
     <uses-permission android:name="android.permission.EXPAND_STATUS_BAR" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.CHANGE_COMPONENT_ENABLED_STATE" />
 
     <application>
         <activity android:name="StatusBarTest" android:label="_StatusBar">
@@ -15,6 +16,17 @@
             </intent-filter>
         </activity>
         <activity android:name="NotificationTestList" android:label="_Notifications">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity android:name="NotificationBuilderTest"
+                android:label="_Notify Builder"
+                android:theme="@android:style/Theme.Holo"
+                android:hardwareAccelerated="true"
+                >
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -34,6 +46,8 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+        </activity>
+        <activity android:name="ConfirmationActivity" android:theme="@android:style/Theme.Dialog">
         </activity>
         <activity android:name="TestAlertActivity" android:theme="@android:style/Theme.Dialog">
         </activity>

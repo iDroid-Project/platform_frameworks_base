@@ -112,6 +112,10 @@ public final class IconMenuItemView extends TextView implements MenuView.ItemVie
         setEnabled(itemData.isEnabled());
     }
 
+    public void setItemData(MenuItemImpl data) {
+        mItemData = data;
+    }
+
     @Override
     public boolean performClick() {
         // Let the view's click listener have top priority (the More button relies on this)
@@ -277,8 +281,10 @@ public final class IconMenuItemView extends TextView implements MenuView.ItemVie
         Rect tmpRect = mPositionIconOutput;
         getLineBounds(0, tmpRect);
         mPositionIconAvailable.set(0, 0, getWidth(), tmpRect.top);
+        final int layoutDirection = getResolvedLayoutDirection();
         Gravity.apply(Gravity.CENTER_VERTICAL | Gravity.LEFT, mIcon.getIntrinsicWidth(), mIcon
-                .getIntrinsicHeight(), mPositionIconAvailable, mPositionIconOutput);
+                .getIntrinsicHeight(), mPositionIconAvailable, mPositionIconOutput,
+                layoutDirection);
         mIcon.setBounds(mPositionIconOutput);
     }
 

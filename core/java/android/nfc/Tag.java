@@ -30,7 +30,9 @@ import android.nfc.tech.TagTechnology;
 import android.os.Bundle;
 import android.os.Parcel;
 import android.os.Parcelable;
+import android.os.RemoteException;
 
+import java.io.IOException;
 import java.util.Arrays;
 
 /**
@@ -233,6 +235,50 @@ public final class Tag implements Parcelable {
         return mTechStringList;
     }
 
+    /**
+     * Rediscover the technologies available on this tag.
+     * <p>
+     * The technologies that are available on a tag may change due to
+     * operations being performed on a tag. For example, formatting a
+     * tag as NDEF adds the {@link Ndef} technology. The {@link rediscover}
+     * method reenumerates the available technologies on the tag
+     * and returns a new {@link Tag} object containing these technologies.
+     * <p>
+     * You may not be connected to any of this {@link Tag}'s technologies
+     * when calling this method.
+     * This method guarantees that you will be returned the same Tag
+     * if it is still in the field.
+     * <p>May cause RF activity and may block. Must not be called
+     * from the main application thread. A blocked call will be canceled with
+     * {@link IOException} by calling {@link #close} from another thread.
+     * <p>Does not remove power from the RF field, so a tag having a random
+     * ID should not change its ID.
+     * @return the rediscovered tag object.
+     * @throws IOException if the tag cannot be rediscovered
+     * @hide
+     */
+    // TODO See if we need TagLostException
+    // TODO Unhide for ICS
+    // TODO Update documentation to make sure it matches with the final
+    //      implementation.
+    public Tag rediscover() throws IOException {
+        if (getConnectedTechnology() != -1) {
+            throw new IllegalStateException("Close connection to the technology first!");
+        }
+
+        try {
+            Tag newTag = mTagService.rediscover(getServiceHandle());
+            if (newTag != null) {
+                return newTag;
+            } else {
+                throw new IOException("Failed to rediscover tag");
+            }
+        } catch (RemoteException e) {
+            throw new IOException("NFC service dead");
+        }
+    }
+
+
     /** @hide */
     public boolean hasTech(int techType) {
         for (int tech : mTechList) {
@@ -267,14 +313,16 @@ public final class Tag implements Parcelable {
      */
     @Override
     public String toString() {
-        StringBuilder sb = new StringBuilder("TAG ")
-            .append("uid = ")
-            .append(mId)
-            .append(" Tech [");
-        for (int i : mTechList) {
-            sb.append(i)
-            .append(", ");
+        StringBuilder sb = new StringBuilder("TAG: Tech [");
+        String[] techList = getTechList();
+        int length = techList.length;
+        for (int i = 0; i < length; i++) {
+            sb.append(techList[i]);
+            if (i < length - 1) {
+                sb.append(", ");
+            }
         }
+        sb.append("]");
         return sb.toString();
     }
 

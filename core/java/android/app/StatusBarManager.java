@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- 
+
 package android.app;
 
 import android.content.Context;
@@ -22,6 +22,8 @@ import android.os.Binder;
 import android.os.RemoteException;
 import android.os.IBinder;
 import android.os.ServiceManager;
+import android.util.Slog;
+import android.view.View;
 
 import com.android.internal.statusbar.IStatusBarService;
 
@@ -31,33 +33,28 @@ import com.android.internal.statusbar.IStatusBarService;
  * @hide
  */
 public class StatusBarManager {
-    /**
-     * Flag for {@link #disable} to make the status bar not expandable.  Unless you also
-     * set {@link #DISABLE_NOTIFICATION_ICONS}, new notifications will continue to show.
-     */
-    public static final int DISABLE_EXPAND = 0x00000001;
 
-    /**
-     * Flag for {@link #disable} to hide notification icons and scrolling ticker text.
-     */
-    public static final int DISABLE_NOTIFICATION_ICONS = 0x00000002;
+    public static final int DISABLE_EXPAND = View.STATUS_BAR_DISABLE_EXPAND;
+    public static final int DISABLE_NOTIFICATION_ICONS = View.STATUS_BAR_DISABLE_NOTIFICATION_ICONS;
+    public static final int DISABLE_NOTIFICATION_ALERTS
+            = View.STATUS_BAR_DISABLE_NOTIFICATION_ALERTS;
+    public static final int DISABLE_NOTIFICATION_TICKER
+            = View.STATUS_BAR_DISABLE_NOTIFICATION_TICKER;
+    public static final int DISABLE_SYSTEM_INFO = View.STATUS_BAR_DISABLE_SYSTEM_INFO;
+    public static final int DISABLE_HOME = View.STATUS_BAR_DISABLE_HOME;
+    public static final int DISABLE_RECENT = View.STATUS_BAR_DISABLE_RECENT;
+    public static final int DISABLE_BACK = View.STATUS_BAR_DISABLE_BACK;
+    public static final int DISABLE_CLOCK = View.STATUS_BAR_DISABLE_CLOCK;
 
-    /**
-     * Flag for {@link #disable} to disable incoming notification alerts.  This will not block
-     * icons, but it will block sound, vibrating and other visual or aural notifications.
-     */
-    public static final int DISABLE_NOTIFICATION_ALERTS = 0x00000004;
+    @Deprecated
+    public static final int DISABLE_NAVIGATION = 
+            View.STATUS_BAR_DISABLE_HOME | View.STATUS_BAR_DISABLE_RECENT;
 
-    /**
-     * Flag for {@link #disable} to hide only the scrolling ticker.  Note that
-     * {@link #DISABLE_NOTIFICATION_ICONS} implies {@link #DISABLE_NOTIFICATION_TICKER}.
-     */
-    public static final int DISABLE_NOTIFICATION_TICKER = 0x00000008;
-
-    /**
-     * Re-enable all of the status bar features that you've disabled.
-     */
     public static final int DISABLE_NONE = 0x00000000;
+
+    public static final int DISABLE_MASK = DISABLE_EXPAND | DISABLE_NOTIFICATION_ICONS
+            | DISABLE_NOTIFICATION_ALERTS | DISABLE_NOTIFICATION_TICKER
+            | DISABLE_SYSTEM_INFO | DISABLE_RECENT | DISABLE_HOME | DISABLE_BACK | DISABLE_CLOCK;
 
     private Context mContext;
     private IStatusBarService mService;
@@ -65,8 +62,17 @@ public class StatusBarManager {
 
     StatusBarManager(Context context) {
         mContext = context;
-        mService = IStatusBarService.Stub.asInterface(
-                ServiceManager.getService(Context.STATUS_BAR_SERVICE));
+    }
+
+    private synchronized IStatusBarService getService() {
+        if (mService == null) {
+            mService = IStatusBarService.Stub.asInterface(
+                    ServiceManager.getService(Context.STATUS_BAR_SERVICE));
+            if (mService == null) {
+                Slog.w("StatusBarManager", "warning: no STATUS_BAR_SERVICE");
+            }
+        }
+        return mService;
     }
 
     /**
@@ -75,7 +81,10 @@ public class StatusBarManager {
      */
     public void disable(int what) {
         try {
-            mService.disable(what, mToken, mContext.getPackageName());
+            final IStatusBarService svc = getService();
+            if (svc != null) {
+                svc.disable(what, mToken, mContext.getPackageName());
+            }
         } catch (RemoteException ex) {
             // system process is dead anyway.
             throw new RuntimeException(ex);
@@ -87,7 +96,10 @@ public class StatusBarManager {
      */
     public void expand() {
         try {
-            mService.expand();
+            final IStatusBarService svc = getService();
+            if (svc != null) {
+                svc.expand();
+            }
         } catch (RemoteException ex) {
             // system process is dead anyway.
             throw new RuntimeException(ex);
@@ -99,16 +111,23 @@ public class StatusBarManager {
      */
     public void collapse() {
         try {
-            mService.collapse();
+            final IStatusBarService svc = getService();
+            if (svc != null) {
+                svc.collapse();
+            }
         } catch (RemoteException ex) {
             // system process is dead anyway.
             throw new RuntimeException(ex);
         }
     }
 
-    public void setIcon(String slot, int iconId, int iconLevel) {
+    public void setIcon(String slot, int iconId, int iconLevel, String contentDescription) {
         try {
-            mService.setIcon(slot, mContext.getPackageName(), iconId, iconLevel);
+            final IStatusBarService svc = getService();
+            if (svc != null) {
+                svc.setIcon(slot, mContext.getPackageName(), iconId, iconLevel,
+                    contentDescription);
+            }
         } catch (RemoteException ex) {
             // system process is dead anyway.
             throw new RuntimeException(ex);
@@ -117,7 +136,10 @@ public class StatusBarManager {
 
     public void removeIcon(String slot) {
         try {
-            mService.removeIcon(slot);
+            final IStatusBarService svc = getService();
+            if (svc != null) {
+                svc.removeIcon(slot);
+            }
         } catch (RemoteException ex) {
             // system process is dead anyway.
             throw new RuntimeException(ex);
@@ -126,7 +148,10 @@ public class StatusBarManager {
 
     public void setIconVisibility(String slot, boolean visible) {
         try {
-            mService.setIconVisibility(slot, visible);
+            final IStatusBarService svc = getService();
+            if (svc != null) {
+                svc.setIconVisibility(slot, visible);
+            }
         } catch (RemoteException ex) {
             // system process is dead anyway.
             throw new RuntimeException(ex);

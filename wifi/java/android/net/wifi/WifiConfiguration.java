@@ -16,6 +16,7 @@
 
 package android.net.wifi;
 
+import android.net.LinkProperties;
 import android.os.Parcelable;
 import android.os.Parcel;
 
@@ -42,6 +43,8 @@ public class WifiConfiguration implements Parcelable {
     public static final String priorityVarName = "priority";
     /** {@hide} */
     public static final String hiddenSSIDVarName = "scan_ssid";
+    /** {@hide} */
+    public static final int INVALID_NETWORK_ID = -1;
 
     /** {@hide} */
     public class EnterpriseField {
@@ -104,9 +107,16 @@ public class WifiConfiguration implements Parcelable {
          * generated WEP keys. */
         public static final int IEEE8021X = 3;
 
+        /** WPA2 pre-shared key for use with soft access point
+          * (requires {@code preSharedKey} to be specified).
+          * @hide
+          */
+        public static final int WPA2_PSK = 4;
+
         public static final String varName = "key_mgmt";
 
-        public static final String[] strings = { "NONE", "WPA_PSK", "WPA_EAP", "IEEE8021X" };
+        public static final String[] strings = { "NONE", "WPA_PSK", "WPA_EAP", "IEEE8021X",
+                "WPA2_PSK" };
     }
 
     /**
@@ -201,6 +211,15 @@ public class WifiConfiguration implements Parcelable {
         public static final String[] strings = { "current", "disabled", "enabled" };
     }
 
+    /** @hide */
+    public static final int DISABLED_UNKNOWN_REASON                         = 0;
+    /** @hide */
+    public static final int DISABLED_DNS_FAILURE                            = 1;
+    /** @hide */
+    public static final int DISABLED_DHCP_FAILURE                           = 2;
+    /** @hide */
+    public static final int DISABLED_AUTH_FAILURE                           = 3;
+
     /**
      * The ID number that the supplicant uses to identify this
      * network configuration entry. This must be passed as an argument
@@ -213,10 +232,18 @@ public class WifiConfiguration implements Parcelable {
      * @see Status
      */
     public int status;
+
+    /**
+     * The code referring to a reason for disabling the network
+     * Valid when {@link #status} == Status.DISABLED
+     * @hide
+     */
+    public int disableReason;
+
     /**
      * The network's SSID. Can either be an ASCII string,
      * which must be enclosed in double quotation marks
-     * (e.g., {@code &quot;MyNetwork&quot;}, or a string of
+     * (e.g., {@code "MyNetwork"}, or a string of
      * hex digits,which are not enclosed in quotes
      * (e.g., {@code 01a243f405}).
      */
@@ -239,7 +266,7 @@ public class WifiConfiguration implements Parcelable {
     public String preSharedKey;
     /**
      * Up to four WEP keys. Either an ASCII string enclosed in double
-     * quotation marks (e.g., {@code &quot;abcdef&quot;} or a string
+     * quotation marks (e.g., {@code "abcdef"} or a string
      * of hex digits (e.g., {@code 0102030405}).
      * <p/>
      * When the value of one of these keys is read, the actual key is
@@ -294,13 +321,54 @@ public class WifiConfiguration implements Parcelable {
      */
     public BitSet allowedGroupCiphers;
 
+    /**
+     * @hide
+     */
+    public enum IpAssignment {
+        /* Use statically configured IP settings. Configuration can be accessed
+         * with linkProperties */
+        STATIC,
+        /* Use dynamically configured IP settigns */
+        DHCP,
+        /* no IP details are assigned, this is used to indicate
+         * that any existing IP settings should be retained */
+        UNASSIGNED
+    }
+    /**
+     * @hide
+     */
+    public IpAssignment ipAssignment;
+
+    /**
+     * @hide
+     */
+    public enum ProxySettings {
+        /* No proxy is to be used. Any existing proxy settings
+         * should be cleared. */
+        NONE,
+        /* Use statically configured proxy. Configuration can be accessed
+         * with linkProperties */
+        STATIC,
+        /* no proxy details are assigned, this is used to indicate
+         * that any existing proxy settings should be retained */
+        UNASSIGNED
+    }
+    /**
+     * @hide
+     */
+    public ProxySettings proxySettings;
+    /**
+     * @hide
+     */
+    public LinkProperties linkProperties;
 
     public WifiConfiguration() {
-        networkId = -1;
+        networkId = INVALID_NETWORK_ID;
         SSID = null;
         BSSID = null;
         priority = 0;
         hiddenSSID = false;
+        disableReason = DISABLED_UNKNOWN_REASON;
         allowedKeyManagement = new BitSet();
         allowedProtocols = new BitSet();
         allowedAuthAlgorithms = new BitSet();
@@ -312,14 +380,18 @@ public class WifiConfiguration implements Parcelable {
         for (EnterpriseField field : enterpriseFields) {
             field.setValue(null);
         }
+        ipAssignment = IpAssignment.UNASSIGNED;
+        proxySettings = ProxySettings.UNASSIGNED;
+        linkProperties = new LinkProperties();
     }
 
+    @Override
     public String toString() {
-        StringBuffer sbuf = new StringBuffer();
+        StringBuilder sbuf = new StringBuilder();
         if (this.status == WifiConfiguration.Status.CURRENT) {
             sbuf.append("* ");
         } else if (this.status == WifiConfiguration.Status.DISABLED) {
-            sbuf.append("- ");
+            sbuf.append("- DSBLE: ").append(this.disableReason).append(" ");
         }
         sbuf.append("ID: ").append(this.networkId).append(" SSID: ").append(this.SSID).
                 append(" BSSID: ").append(this.BSSID).append(" PRIO: ").append(this.priority).
@@ -393,6 +465,13 @@ public class WifiConfiguration implements Parcelable {
             if (value != null) sbuf.append(value);
         }
         sbuf.append('\n');
+        sbuf.append("IP assignment: " + ipAssignment.toString());
+        sbuf.append("\n");
+        sbuf.append("Proxy settings: " + proxySettings.toString());
+        sbuf.append("\n");
+        sbuf.append(linkProperties.toString());
+        sbuf.append("\n");
+
         return sbuf.toString();
     }
 
@@ -427,15 +506,62 @@ public class WifiConfiguration implements Parcelable {
             dest.writeInt(nextSetBit);
     }
 
+    /** @hide */
+    public int getAuthType() {
+        if (allowedKeyManagement.get(KeyMgmt.WPA_PSK)) {
+            return KeyMgmt.WPA_PSK;
+        } else if (allowedKeyManagement.get(KeyMgmt.WPA2_PSK)) {
+            return KeyMgmt.WPA2_PSK;
+        } else if (allowedKeyManagement.get(KeyMgmt.WPA_EAP)) {
+            return KeyMgmt.WPA_EAP;
+        } else if (allowedKeyManagement.get(KeyMgmt.IEEE8021X)) {
+            return KeyMgmt.IEEE8021X;
+        }
+        return KeyMgmt.NONE;
+    }
+
     /** Implement the Parcelable interface {@hide} */
     public int describeContents() {
         return 0;
+    }
+
+    /** copy constructor {@hide} */
+    public WifiConfiguration(WifiConfiguration source) {
+        if (source != null) {
+            networkId = source.networkId;
+            status = source.status;
+            disableReason = source.disableReason;
+            SSID = source.SSID;
+            BSSID = source.BSSID;
+            preSharedKey = source.preSharedKey;
+
+            wepKeys = new String[4];
+            for (int i = 0; i < wepKeys.length; i++)
+                wepKeys[i] = source.wepKeys[i];
+
+            wepTxKeyIndex = source.wepTxKeyIndex;
+            priority = source.priority;
+            hiddenSSID = source.hiddenSSID;
+            allowedKeyManagement   = (BitSet) source.allowedKeyManagement.clone();
+            allowedProtocols       = (BitSet) source.allowedProtocols.clone();
+            allowedAuthAlgorithms  = (BitSet) source.allowedAuthAlgorithms.clone();
+            allowedPairwiseCiphers = (BitSet) source.allowedPairwiseCiphers.clone();
+            allowedGroupCiphers    = (BitSet) source.allowedGroupCiphers.clone();
+
+            for (int i = 0; i < source.enterpriseFields.length; i++) {
+                enterpriseFields[i].setValue(source.enterpriseFields[i].value());
+            }
+            ipAssignment = source.ipAssignment;
+            proxySettings = source.proxySettings;
+            linkProperties = new LinkProperties(source.linkProperties);
+        }
     }
 
     /** Implement the Parcelable interface {@hide} */
     public void writeToParcel(Parcel dest, int flags) {
         dest.writeInt(networkId);
         dest.writeInt(status);
+        dest.writeInt(disableReason);
         dest.writeString(SSID);
         dest.writeString(BSSID);
         dest.writeString(preSharedKey);
@@ -454,6 +580,9 @@ public class WifiConfiguration implements Parcelable {
         for (EnterpriseField field : enterpriseFields) {
             dest.writeString(field.value());
         }
+        dest.writeString(ipAssignment.name());
+        dest.writeString(proxySettings.name());
+        dest.writeParcelable(linkProperties, flags);
     }
 
     /** Implement the Parcelable interface {@hide} */
@@ -463,6 +592,7 @@ public class WifiConfiguration implements Parcelable {
                 WifiConfiguration config = new WifiConfiguration();
                 config.networkId = in.readInt();
                 config.status = in.readInt();
+                config.disableReason = in.readInt();
                 config.SSID = in.readString();
                 config.BSSID = in.readString();
                 config.preSharedKey = in.readString();
@@ -480,6 +610,10 @@ public class WifiConfiguration implements Parcelable {
                 for (EnterpriseField field : config.enterpriseFields) {
                     field.setValue(in.readString());
                 }
+
+                config.ipAssignment = IpAssignment.valueOf(in.readString());
+                config.proxySettings = ProxySettings.valueOf(in.readString());
+                config.linkProperties = in.readParcelable(null);
                 return config;
             }
 

@@ -17,10 +17,6 @@
 package android.app;
 
 import com.android.internal.policy.PolicyManager;
-import com.android.internal.util.XmlUtils;
-import com.google.android.collect.Maps;
-
-import org.xmlpull.v1.XmlPullParserException;
 
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
@@ -35,29 +31,13 @@ import android.content.IntentSender;
 import android.content.ReceiverCallNotAllowedException;
 import android.content.ServiceConnection;
 import android.content.SharedPreferences;
-import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
-import android.content.pm.ComponentInfo;
-import android.content.pm.FeatureInfo;
-import android.content.pm.IPackageDataObserver;
-import android.content.pm.IPackageDeleteObserver;
-import android.content.pm.IPackageInstallObserver;
-import android.content.pm.IPackageMoveObserver;
 import android.content.pm.IPackageManager;
-import android.content.pm.IPackageStatsObserver;
-import android.content.pm.InstrumentationInfo;
-import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
-import android.content.pm.ParceledListSlice;
-import android.content.pm.PermissionGroupInfo;
-import android.content.pm.PermissionInfo;
-import android.content.pm.ProviderInfo;
-import android.content.pm.ResolveInfo;
-import android.content.pm.ServiceInfo;
-import android.content.pm.PackageParser.Package;
 import android.content.res.AssetManager;
+import android.content.res.CompatibilityInfo;
 import android.content.res.Resources;
-import android.content.res.XmlResourceParser;
+import android.database.DatabaseErrorHandler;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteDatabase.CursorFactory;
 import android.graphics.Bitmap;
@@ -65,16 +45,22 @@ import android.graphics.drawable.Drawable;
 import android.hardware.SensorManager;
 import android.hardware.usb.IUsbManager;
 import android.hardware.usb.UsbManager;
+import android.location.CountryDetector;
+import android.location.ICountryDetector;
 import android.location.ILocationManager;
 import android.location.LocationManager;
 import android.media.AudioManager;
 import android.net.ConnectivityManager;
 import android.net.IConnectivityManager;
+import android.net.INetworkPolicyManager;
+import android.net.NetworkPolicyManager;
 import android.net.ThrottleManager;
 import android.net.IThrottleManager;
 import android.net.Uri;
 import android.net.wifi.IWifiManager;
 import android.net.wifi.WifiManager;
+import android.net.wifi.p2p.IWifiP2pManager;
+import android.net.wifi.p2p.WifiP2pManager;
 import android.nfc.NfcManager;
 import android.os.Binder;
 import android.os.Bundle;
@@ -85,25 +71,21 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.IPowerManager;
 import android.os.Looper;
-import android.os.Parcel;
 import android.os.PowerManager;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.ServiceManager;
-import android.os.StatFs;
 import android.os.Vibrator;
-import android.os.FileUtils.FileStatus;
 import android.os.storage.StorageManager;
-import android.provider.Settings;
 import android.telephony.TelephonyManager;
-import android.text.ClipboardManager;
+import android.content.ClipboardManager;
 import android.util.AndroidRuntimeException;
 import android.util.Log;
 import android.view.ContextThemeWrapper;
-import android.view.LayoutInflater;
 import android.view.WindowManagerImpl;
 import android.view.accessibility.AccessibilityManager;
 import android.view.inputmethod.InputMethodManager;
+import android.view.textservice.TextServicesManager;
 import android.accounts.AccountManager;
 import android.accounts.IAccountManager;
 import android.app.admin.DevicePolicyManager;
@@ -115,18 +97,8 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-import java.util.Set;
-import java.util.WeakHashMap;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
 
 class ReceiverRestrictedContext extends ContextWrapper {
     ReceiverRestrictedContext(Context base) {
@@ -166,20 +138,12 @@ class ReceiverRestrictedContext extends ContextWrapper {
 class ContextImpl extends Context {
     private final static String TAG = "ApplicationContext";
     private final static boolean DEBUG = false;
-    private final static boolean DEBUG_ICONS = false;
 
-    private static final Object sSync = new Object();
-    private static AlarmManager sAlarmManager;
-    private static PowerManager sPowerManager;
-    private static ConnectivityManager sConnectivityManager;
-    private static ThrottleManager sThrottleManager;
-    private static WifiManager sWifiManager;
-    private static LocationManager sLocationManager;
     private static final HashMap<String, SharedPreferencesImpl> sSharedPrefs =
             new HashMap<String, SharedPreferencesImpl>();
 
-    private AudioManager mAudioManager;
     /*package*/ LoadedApk mPackageInfo;
+    private String mBasePackageName;
     private Resources mResources;
     /*package*/ ActivityThread mMainThread;
     private Context mOuterContext;
@@ -188,26 +152,8 @@ class ContextImpl extends Context {
     private int mThemeResource = 0;
     private Resources.Theme mTheme = null;
     private PackageManager mPackageManager;
-    private NotificationManager mNotificationManager = null;
-    private ActivityManager mActivityManager = null;
-    private WallpaperManager mWallpaperManager = null;
     private Context mReceiverRestrictedContext = null;
-    private SearchManager mSearchManager = null;
-    private SensorManager mSensorManager = null;
-    private StorageManager mStorageManager = null;
-    private UsbManager mUsbManager = null;
-    private Vibrator mVibrator = null;
-    private LayoutInflater mLayoutInflater = null;
-    private StatusBarManager mStatusBarManager = null;
-    private TelephonyManager mTelephonyManager = null;
-    private ClipboardManager mClipboardManager = null;
     private boolean mRestricted;
-    private AccountManager mAccountManager; // protected by mSync
-    private DropBoxManager mDropBoxManager = null;
-    private DevicePolicyManager mDevicePolicyManager = null;
-    private UiModeManager mUiModeManager = null;
-    private DownloadManager mDownloadManager = null;
-    private NfcManager mNfcManager = null;
 
     private final Object mSync = new Object();
 
@@ -215,25 +161,312 @@ class ContextImpl extends Context {
     private File mPreferencesDir;
     private File mFilesDir;
     private File mCacheDir;
+    private File mObbDir;
     private File mExternalFilesDir;
     private File mExternalCacheDir;
 
-    private static long sInstanceCount = 0;
-
     private static final String[] EMPTY_FILE_LIST = {};
 
-    // For debug only
-    /*
-    @Override
-    protected void finalize() throws Throwable {
-        super.finalize();
-        --sInstanceCount;
-    }
-    */
+    /**
+     * Override this class when the system service constructor needs a
+     * ContextImpl.  Else, use StaticServiceFetcher below.
+     */
+    /*package*/ static class ServiceFetcher {
+        int mContextCacheIndex = -1;
 
-    public static long getInstanceCount() {
-        return sInstanceCount;
+        /**
+         * Main entrypoint; only override if you don't need caching.
+         */
+        public Object getService(ContextImpl ctx) {
+            ArrayList<Object> cache = ctx.mServiceCache;
+            Object service;
+            synchronized (cache) {
+                if (cache.size() == 0) {
+                    // Initialize the cache vector on first access.
+                    // At this point sNextPerContextServiceCacheIndex
+                    // is the number of potential services that are
+                    // cached per-Context.
+                    for (int i = 0; i < sNextPerContextServiceCacheIndex; i++) {
+                        cache.add(null);
+                    }
+                } else {
+                    service = cache.get(mContextCacheIndex);
+                    if (service != null) {
+                        return service;
+                    }
+                }
+                service = createService(ctx);
+                cache.set(mContextCacheIndex, service);
+                return service;
+            }
+        }
+
+        /**
+         * Override this to create a new per-Context instance of the
+         * service.  getService() will handle locking and caching.
+         */
+        public Object createService(ContextImpl ctx) {
+            throw new RuntimeException("Not implemented");
+        }
     }
+
+    /**
+     * Override this class for services to be cached process-wide.
+     */
+    abstract static class StaticServiceFetcher extends ServiceFetcher {
+        private Object mCachedInstance;
+
+        @Override
+        public final Object getService(ContextImpl unused) {
+            synchronized (StaticServiceFetcher.this) {
+                Object service = mCachedInstance;
+                if (service != null) {
+                    return service;
+                }
+                return mCachedInstance = createStaticService();
+            }
+        }
+
+        public abstract Object createStaticService();
+    }
+
+    private static final HashMap<String, ServiceFetcher> SYSTEM_SERVICE_MAP =
+            new HashMap<String, ServiceFetcher>();
+
+    private static int sNextPerContextServiceCacheIndex = 0;
+    private static void registerService(String serviceName, ServiceFetcher fetcher) {
+        if (!(fetcher instanceof StaticServiceFetcher)) {
+            fetcher.mContextCacheIndex = sNextPerContextServiceCacheIndex++;
+        }
+        SYSTEM_SERVICE_MAP.put(serviceName, fetcher);
+    }
+
+    // This one's defined separately and given a variable name so it
+    // can be re-used by getWallpaperManager(), avoiding a HashMap
+    // lookup.
+    private static ServiceFetcher WALLPAPER_FETCHER = new ServiceFetcher() {
+            public Object createService(ContextImpl ctx) {
+                return new WallpaperManager(ctx.getOuterContext(),
+                        ctx.mMainThread.getHandler());
+            }};
+
+    static {
+        registerService(ACCESSIBILITY_SERVICE, new ServiceFetcher() {
+                public Object getService(ContextImpl ctx) {
+                    return AccessibilityManager.getInstance(ctx);
+                }});
+
+        registerService(ACCOUNT_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+                    IBinder b = ServiceManager.getService(ACCOUNT_SERVICE);
+                    IAccountManager service = IAccountManager.Stub.asInterface(b);
+                    return new AccountManager(ctx, service);
+                }});
+
+        registerService(ACTIVITY_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+                    return new ActivityManager(ctx.getOuterContext(), ctx.mMainThread.getHandler());
+                }});
+
+        registerService(ALARM_SERVICE, new StaticServiceFetcher() {
+                public Object createStaticService() {
+                    IBinder b = ServiceManager.getService(ALARM_SERVICE);
+                    IAlarmManager service = IAlarmManager.Stub.asInterface(b);
+                    return new AlarmManager(service);
+                }});
+
+        registerService(AUDIO_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+                    return new AudioManager(ctx);
+                }});
+
+        registerService(CLIPBOARD_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+                    return new ClipboardManager(ctx.getOuterContext(),
+                            ctx.mMainThread.getHandler());
+                }});
+
+        registerService(CONNECTIVITY_SERVICE, new StaticServiceFetcher() {
+                public Object createStaticService() {
+                    IBinder b = ServiceManager.getService(CONNECTIVITY_SERVICE);
+                    return new ConnectivityManager(IConnectivityManager.Stub.asInterface(b));
+                }});
+
+        registerService(COUNTRY_DETECTOR, new StaticServiceFetcher() {
+                public Object createStaticService() {
+                    IBinder b = ServiceManager.getService(COUNTRY_DETECTOR);
+                    return new CountryDetector(ICountryDetector.Stub.asInterface(b));
+                }});
+
+        registerService(DEVICE_POLICY_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+                    return DevicePolicyManager.create(ctx, ctx.mMainThread.getHandler());
+                }});
+
+        registerService(DOWNLOAD_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+                    return new DownloadManager(ctx.getContentResolver(), ctx.getPackageName());
+                }});
+
+        registerService(NFC_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+                    return new NfcManager(ctx);
+                }});
+
+        registerService(DROPBOX_SERVICE, new StaticServiceFetcher() {
+                public Object createStaticService() {
+                    return createDropBoxManager();
+                }});
+
+        registerService(INPUT_METHOD_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+                    return InputMethodManager.getInstance(ctx);
+                }});
+
+        registerService(TEXT_SERVICES_MANAGER_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+                    return TextServicesManager.getInstance();
+                }});
+
+        registerService(KEYGUARD_SERVICE, new ServiceFetcher() {
+                public Object getService(ContextImpl ctx) {
+                    // TODO: why isn't this caching it?  It wasn't
+                    // before, so I'm preserving the old behavior and
+                    // using getService(), instead of createService()
+                    // which would do the caching.
+                    return new KeyguardManager();
+                }});
+
+        registerService(LAYOUT_INFLATER_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+                    return PolicyManager.makeNewLayoutInflater(ctx.getOuterContext());
+                }});
+
+        registerService(LOCATION_SERVICE, new StaticServiceFetcher() {
+                public Object createStaticService() {
+                    IBinder b = ServiceManager.getService(LOCATION_SERVICE);
+                    return new LocationManager(ILocationManager.Stub.asInterface(b));
+                }});
+
+        registerService(NETWORK_POLICY_SERVICE, new ServiceFetcher() {
+            @Override
+            public Object createService(ContextImpl ctx) {
+                return new NetworkPolicyManager(INetworkPolicyManager.Stub.asInterface(
+                        ServiceManager.getService(NETWORK_POLICY_SERVICE)));
+            }
+        });
+
+        registerService(NOTIFICATION_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+                    final Context outerContext = ctx.getOuterContext();
+                    return new NotificationManager(
+                        new ContextThemeWrapper(outerContext,
+                                Resources.selectSystemTheme(0,
+                                        outerContext.getApplicationInfo().targetSdkVersion,
+                                        com.android.internal.R.style.Theme_Dialog,
+                                        com.android.internal.R.style.Theme_Holo_Dialog,
+                                        com.android.internal.R.style.Theme_DeviceDefault_Dialog)),
+                        ctx.mMainThread.getHandler());
+                }});
+
+        // Note: this was previously cached in a static variable, but
+        // constructed using mMainThread.getHandler(), so converting
+        // it to be a regular Context-cached service...
+        registerService(POWER_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+                    IBinder b = ServiceManager.getService(POWER_SERVICE);
+                    IPowerManager service = IPowerManager.Stub.asInterface(b);
+                    return new PowerManager(service, ctx.mMainThread.getHandler());
+                }});
+
+        registerService(SEARCH_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+                    return new SearchManager(ctx.getOuterContext(),
+                            ctx.mMainThread.getHandler());
+                }});
+
+        registerService(SENSOR_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+                    return new SensorManager(ctx.mMainThread.getHandler().getLooper());
+                }});
+
+        registerService(STATUS_BAR_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+                    return new StatusBarManager(ctx.getOuterContext());
+                }});
+
+        registerService(STORAGE_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+                    try {
+                        return new StorageManager(ctx.mMainThread.getHandler().getLooper());
+                    } catch (RemoteException rex) {
+                        Log.e(TAG, "Failed to create StorageManager", rex);
+                        return null;
+                    }
+                }});
+
+        registerService(TELEPHONY_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+                    return new TelephonyManager(ctx.getOuterContext());
+                }});
+
+        registerService(THROTTLE_SERVICE, new StaticServiceFetcher() {
+                public Object createStaticService() {
+                    IBinder b = ServiceManager.getService(THROTTLE_SERVICE);
+                    return new ThrottleManager(IThrottleManager.Stub.asInterface(b));
+                }});
+
+        registerService(UI_MODE_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+                    return new UiModeManager();
+                }});
+
+        registerService(USB_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+                    IBinder b = ServiceManager.getService(USB_SERVICE);
+                    return new UsbManager(ctx, IUsbManager.Stub.asInterface(b));
+                }});
+
+        registerService(VIBRATOR_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+                    return new Vibrator();
+                }});
+
+        registerService(WALLPAPER_SERVICE, WALLPAPER_FETCHER);
+
+        registerService(WIFI_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+                    IBinder b = ServiceManager.getService(WIFI_SERVICE);
+                    IWifiManager service = IWifiManager.Stub.asInterface(b);
+                    return new WifiManager(service, ctx.mMainThread.getHandler());
+                }});
+
+        registerService(WIFI_P2P_SERVICE, new ServiceFetcher() {
+                public Object createService(ContextImpl ctx) {
+                    IBinder b = ServiceManager.getService(WIFI_P2P_SERVICE);
+                    IWifiP2pManager service = IWifiP2pManager.Stub.asInterface(b);
+                    return new WifiP2pManager(service);
+                }});
+
+        registerService(WINDOW_SERVICE, new ServiceFetcher() {
+                public Object getService(ContextImpl ctx) {
+                    return WindowManagerImpl.getDefault(ctx.mPackageInfo.mCompatibilityInfo);
+                }});
+    }
+
+    static ContextImpl getImpl(Context context) {
+        Context nextContext;
+        while ((context instanceof ContextWrapper) &&
+                (nextContext=((ContextWrapper)context).getBaseContext()) != null) {
+            context = nextContext;
+        }
+        return (ContextImpl)context;
+    }
+
+    // The system service cache for the system services that are
+    // cached per-ContextImpl.  Package-scoped to avoid accessor
+    // methods.
+    final ArrayList<Object> mServiceCache = new ArrayList<Object>();
 
     @Override
     public AssetManager getAssets() {
@@ -269,24 +502,28 @@ class ContextImpl extends Context {
     public Looper getMainLooper() {
         return mMainThread.getLooper();
     }
-    
+
     @Override
     public Context getApplicationContext() {
         return (mPackageInfo != null) ?
                 mPackageInfo.getApplication() : mMainThread.getApplication();
     }
-    
+
     @Override
     public void setTheme(int resid) {
         mThemeResource = resid;
     }
-    
+
+    @Override
+    public int getThemeResId() {
+        return mThemeResource;
+    }
+
     @Override
     public Resources.Theme getTheme() {
         if (mTheme == null) {
-            if (mThemeResource == 0) {
-                mThemeResource = com.android.internal.R.style.Theme;
-            }
+            mThemeResource = Resources.selectDefaultTheme(mThemeResource,
+                    getOuterContext().getApplicationInfo().targetSdkVersion);
             mTheme = mResources.newTheme();
             mTheme.applyStyle(mThemeResource, true);
         }
@@ -331,10 +568,6 @@ class ContextImpl extends Context {
         throw new RuntimeException("Not supported in system context");
     }
 
-    private static File makeBackupFile(File prefsFile) {
-        return new File(prefsFile.getPath() + ".bak");
-    }
-
     public File getSharedPrefsFile(String name) {
         return makeFilename(getPreferencesDir(), name + ".xml");
     }
@@ -342,53 +575,21 @@ class ContextImpl extends Context {
     @Override
     public SharedPreferences getSharedPreferences(String name, int mode) {
         SharedPreferencesImpl sp;
-        File prefsFile;
-        boolean needInitialLoad = false;
         synchronized (sSharedPrefs) {
             sp = sSharedPrefs.get(name);
-            if (sp != null && !sp.hasFileChangedUnexpectedly()) {
-                return sp;
-            }
-            prefsFile = getSharedPrefsFile(name);
             if (sp == null) {
-                sp = new SharedPreferencesImpl(prefsFile, mode, null);
+                File prefsFile = getSharedPrefsFile(name);
+                sp = new SharedPreferencesImpl(prefsFile, mode);
                 sSharedPrefs.put(name, sp);
-                needInitialLoad = true;
+                return sp;
             }
         }
-
-        synchronized (sp) {
-            if (needInitialLoad && sp.isLoaded()) {
-                // lost the race to load; another thread handled it
-                return sp;
-            }
-            File backup = makeBackupFile(prefsFile);
-            if (backup.exists()) {
-                prefsFile.delete();
-                backup.renameTo(prefsFile);
-            }
-
-            // Debugging
-            if (prefsFile.exists() && !prefsFile.canRead()) {
-                Log.w(TAG, "Attempt to read preferences file " + prefsFile + " without permission");
-            }
-
-            Map map = null;
-            FileStatus stat = new FileStatus();
-            if (FileUtils.getFileStatus(prefsFile.getPath(), stat) && prefsFile.canRead()) {
-                try {
-                    FileInputStream str = new FileInputStream(prefsFile);
-                    map = XmlUtils.readMapXml(str);
-                    str.close();
-                } catch (org.xmlpull.v1.XmlPullParserException e) {
-                    Log.w(TAG, "getSharedPreferences", e);
-                } catch (FileNotFoundException e) {
-                    Log.w(TAG, "getSharedPreferences", e);
-                } catch (IOException e) {
-                    Log.w(TAG, "getSharedPreferences", e);
-                }
-            }
-            sp.replace(map, stat);
+        if ((mode & Context.MODE_MULTI_PROCESS) != 0 ||
+            getApplicationInfo().targetSdkVersion < android.os.Build.VERSION_CODES.HONEYCOMB) {
+            // If somebody else (some other process) changed the prefs
+            // file behind our back, we reload it.  This has been the
+            // historical (if undocumented) behavior.
+            sp.startReloadIfChangedUnexpectedly();
         }
         return sp;
     }
@@ -446,7 +647,7 @@ class ContextImpl extends Context {
             }
             if (!mFilesDir.exists()) {
                 if(!mFilesDir.mkdirs()) {
-                    Log.w(TAG, "Unable to create files directory");
+                    Log.w(TAG, "Unable to create files directory " + mFilesDir.getPath());
                     return null;
                 }
                 FileUtils.setPermissions(
@@ -457,7 +658,7 @@ class ContextImpl extends Context {
             return mFilesDir;
         }
     }
-    
+
     @Override
     public File getExternalFilesDir(String type) {
         synchronized (mSync) {
@@ -489,7 +690,18 @@ class ContextImpl extends Context {
             return dir;
         }
     }
-    
+
+    @Override
+    public File getObbDir() {
+        synchronized (mSync) {
+            if (mObbDir == null) {
+                mObbDir = Environment.getExternalStorageAppObbDirectory(
+                        getPackageName());
+            }
+            return mObbDir;
+        }
+    }
+
     @Override
     public File getCacheDir() {
         synchronized (mSync) {
@@ -509,7 +721,7 @@ class ContextImpl extends Context {
         }
         return mCacheDir;
     }
-    
+
     @Override
     public File getExternalCacheDir() {
         synchronized (mSync) {
@@ -531,7 +743,7 @@ class ContextImpl extends Context {
             return mExternalCacheDir;
         }
     }
-    
+
     @Override
     public File getFileStreamPath(String name) {
         return makeFilename(getFilesDir(), name);
@@ -547,6 +759,15 @@ class ContextImpl extends Context {
     public SQLiteDatabase openOrCreateDatabase(String name, int mode, CursorFactory factory) {
         File f = validateFilePath(name, true);
         SQLiteDatabase db = SQLiteDatabase.openOrCreateDatabase(f, factory);
+        setFilePermissionsFromMode(f.getPath(), mode, 0);
+        return db;
+    }
+
+    @Override
+    public SQLiteDatabase openOrCreateDatabase(String name, int mode, CursorFactory factory,
+            DatabaseErrorHandler errorHandler) {
+        File f = validateFilePath(name, true);
+        SQLiteDatabase db = SQLiteDatabase.openOrCreateDatabase(f.getPath(), factory, errorHandler);
         setFilePermissionsFromMode(f.getPath(), mode, 0);
         return db;
     }
@@ -572,7 +793,7 @@ class ContextImpl extends Context {
         return (list != null) ? list : EMPTY_FILE_LIST;
     }
 
-    
+
     private File getDatabasesDir() {
         synchronized (mSync) {
             if (mDatabasesDir == null) {
@@ -584,7 +805,7 @@ class ContextImpl extends Context {
             return mDatabasesDir;
         }
     }
-    
+
     @Override
     public Drawable getWallpaper() {
         return getWallpaperManager().getDrawable();
@@ -629,7 +850,21 @@ class ContextImpl extends Context {
                     + " Is this really what you want?");
         }
         mMainThread.getInstrumentation().execStartActivity(
-            getOuterContext(), mMainThread.getApplicationThread(), null, null, intent, -1);
+            getOuterContext(), mMainThread.getApplicationThread(), null,
+            (Activity)null, intent, -1);
+    }
+
+    @Override
+    public void startActivities(Intent[] intents) {
+        if ((intents[0].getFlags()&Intent.FLAG_ACTIVITY_NEW_TASK) == 0) {
+            throw new AndroidRuntimeException(
+                    "Calling startActivities() from outside of an Activity "
+                    + " context requires the FLAG_ACTIVITY_NEW_TASK flag on first Intent."
+                    + " Is this really what you want?");
+        }
+        mMainThread.getInstrumentation().execStartActivities(
+            getOuterContext(), mMainThread.getApplicationThread(), null,
+            (Activity)null, intents);
     }
 
     @Override
@@ -639,6 +874,7 @@ class ContextImpl extends Context {
         try {
             String resolvedType = null;
             if (fillInIntent != null) {
+                fillInIntent.setAllowFds(false);
                 resolvedType = fillInIntent.resolveTypeIfNeeded(getContentResolver());
             }
             int result = ActivityManagerNative.getDefault()
@@ -652,11 +888,12 @@ class ContextImpl extends Context {
         } catch (RemoteException e) {
         }
     }
-    
+
     @Override
     public void sendBroadcast(Intent intent) {
         String resolvedType = intent.resolveTypeIfNeeded(getContentResolver());
         try {
+            intent.setAllowFds(false);
             ActivityManagerNative.getDefault().broadcastIntent(
                 mMainThread.getApplicationThread(), intent, resolvedType, null,
                 Activity.RESULT_OK, null, null, null, false, false);
@@ -668,6 +905,7 @@ class ContextImpl extends Context {
     public void sendBroadcast(Intent intent, String receiverPermission) {
         String resolvedType = intent.resolveTypeIfNeeded(getContentResolver());
         try {
+            intent.setAllowFds(false);
             ActivityManagerNative.getDefault().broadcastIntent(
                 mMainThread.getApplicationThread(), intent, resolvedType, null,
                 Activity.RESULT_OK, null, null, receiverPermission, false, false);
@@ -680,6 +918,7 @@ class ContextImpl extends Context {
             String receiverPermission) {
         String resolvedType = intent.resolveTypeIfNeeded(getContentResolver());
         try {
+            intent.setAllowFds(false);
             ActivityManagerNative.getDefault().broadcastIntent(
                 mMainThread.getApplicationThread(), intent, resolvedType, null,
                 Activity.RESULT_OK, null, null, receiverPermission, true, false);
@@ -711,6 +950,7 @@ class ContextImpl extends Context {
         }
         String resolvedType = intent.resolveTypeIfNeeded(getContentResolver());
         try {
+            intent.setAllowFds(false);
             ActivityManagerNative.getDefault().broadcastIntent(
                 mMainThread.getApplicationThread(), intent, resolvedType, rd,
                 initialCode, initialData, initialExtras, receiverPermission,
@@ -723,6 +963,7 @@ class ContextImpl extends Context {
     public void sendStickyBroadcast(Intent intent) {
         String resolvedType = intent.resolveTypeIfNeeded(getContentResolver());
         try {
+            intent.setAllowFds(false);
             ActivityManagerNative.getDefault().broadcastIntent(
                 mMainThread.getApplicationThread(), intent, resolvedType, null,
                 Activity.RESULT_OK, null, null, null, false, true);
@@ -754,6 +995,7 @@ class ContextImpl extends Context {
         }
         String resolvedType = intent.resolveTypeIfNeeded(getContentResolver());
         try {
+            intent.setAllowFds(false);
             ActivityManagerNative.getDefault().broadcastIntent(
                 mMainThread.getApplicationThread(), intent, resolvedType, rd,
                 initialCode, initialData, initialExtras, null,
@@ -770,6 +1012,7 @@ class ContextImpl extends Context {
             intent.setDataAndType(intent.getData(), resolvedType);
         }
         try {
+            intent.setAllowFds(false);
             ActivityManagerNative.getDefault().unbroadcastIntent(
                 mMainThread.getApplicationThread(), intent);
         } catch (RemoteException e) {
@@ -810,7 +1053,7 @@ class ContextImpl extends Context {
         }
         try {
             return ActivityManagerNative.getDefault().registerReceiver(
-                    mMainThread.getApplicationThread(),
+                    mMainThread.getApplicationThread(), mBasePackageName,
                     rd, filter, broadcastPermission);
         } catch (RemoteException e) {
             return null;
@@ -834,6 +1077,7 @@ class ContextImpl extends Context {
     @Override
     public ComponentName startService(Intent service) {
         try {
+            service.setAllowFds(false);
             ComponentName cn = ActivityManagerNative.getDefault().startService(
                 mMainThread.getApplicationThread(), service,
                 service.resolveTypeIfNeeded(getContentResolver()));
@@ -851,6 +1095,7 @@ class ContextImpl extends Context {
     @Override
     public boolean stopService(Intent service) {
         try {
+            service.setAllowFds(false);
             int res = ActivityManagerNative.getDefault().stopService(
                 mMainThread.getApplicationThread(), service,
                 service.resolveTypeIfNeeded(getContentResolver()));
@@ -875,6 +1120,13 @@ class ContextImpl extends Context {
             throw new RuntimeException("Not supported in system context");
         }
         try {
+            IBinder token = getActivityToken();
+            if (token == null && (flags&BIND_AUTO_CREATE) == 0 && mPackageInfo != null
+                    && mPackageInfo.getApplicationInfo().targetSdkVersion
+                    < android.os.Build.VERSION_CODES.ICE_CREAM_SANDWICH) {
+                flags |= BIND_WAIVE_PRIORITY;
+            }
+            service.setAllowFds(false);
             int res = ActivityManagerNative.getDefault().bindService(
                 mMainThread.getApplicationThread(), getActivityToken(),
                 service, service.resolveTypeIfNeeded(getContentResolver()),
@@ -907,6 +1159,9 @@ class ContextImpl extends Context {
     public boolean startInstrumentation(ComponentName className,
             String profileFile, Bundle arguments) {
         try {
+            if (arguments != null) {
+                arguments.setAllowFds(false);
+            }
             return ActivityManagerNative.getDefault().startInstrumentation(
                     className, profileFile, 0, arguments, null);
         } catch (RemoteException e) {
@@ -917,322 +1172,25 @@ class ContextImpl extends Context {
 
     @Override
     public Object getSystemService(String name) {
-        if (WINDOW_SERVICE.equals(name)) {
-            return WindowManagerImpl.getDefault();
-        } else if (LAYOUT_INFLATER_SERVICE.equals(name)) {
-            synchronized (mSync) {
-                LayoutInflater inflater = mLayoutInflater;
-                if (inflater != null) {
-                    return inflater;
-                }
-                mLayoutInflater = inflater =
-                    PolicyManager.makeNewLayoutInflater(getOuterContext());
-                return inflater;
-            }
-        } else if (ACTIVITY_SERVICE.equals(name)) {
-            return getActivityManager();
-        } else if (INPUT_METHOD_SERVICE.equals(name)) {
-            return InputMethodManager.getInstance(this);
-        } else if (ALARM_SERVICE.equals(name)) {
-            return getAlarmManager();
-        } else if (ACCOUNT_SERVICE.equals(name)) {
-            return getAccountManager();
-        } else if (POWER_SERVICE.equals(name)) {
-            return getPowerManager();
-        } else if (CONNECTIVITY_SERVICE.equals(name)) {
-            return getConnectivityManager();
-        } else if (THROTTLE_SERVICE.equals(name)) {
-            return getThrottleManager();
-        } else if (WIFI_SERVICE.equals(name)) {
-            return getWifiManager();
-        } else if (NOTIFICATION_SERVICE.equals(name)) {
-            return getNotificationManager();
-        } else if (KEYGUARD_SERVICE.equals(name)) {
-            return new KeyguardManager();
-        } else if (ACCESSIBILITY_SERVICE.equals(name)) {
-            return AccessibilityManager.getInstance(this);
-        } else if (LOCATION_SERVICE.equals(name)) {
-            return getLocationManager();
-        } else if (SEARCH_SERVICE.equals(name)) {
-            return getSearchManager();
-        } else if (SENSOR_SERVICE.equals(name)) {
-            return getSensorManager();
-        } else if (STORAGE_SERVICE.equals(name)) {
-            return getStorageManager();
-        } else if (USB_SERVICE.equals(name)) {
-            return getUsbManager();
-        } else if (VIBRATOR_SERVICE.equals(name)) {
-            return getVibrator();
-        } else if (STATUS_BAR_SERVICE.equals(name)) {
-            synchronized (mSync) {
-                if (mStatusBarManager == null) {
-                    mStatusBarManager = new StatusBarManager(getOuterContext());
-                }
-                return mStatusBarManager;
-            }
-        } else if (AUDIO_SERVICE.equals(name)) {
-            return getAudioManager();
-        } else if (TELEPHONY_SERVICE.equals(name)) {
-            return getTelephonyManager();
-        } else if (CLIPBOARD_SERVICE.equals(name)) {
-            return getClipboardManager();
-        } else if (WALLPAPER_SERVICE.equals(name)) {
-            return getWallpaperManager();
-        } else if (DROPBOX_SERVICE.equals(name)) {
-            return getDropBoxManager();
-        } else if (DEVICE_POLICY_SERVICE.equals(name)) {
-            return getDevicePolicyManager();
-        } else if (UI_MODE_SERVICE.equals(name)) {
-            return getUiModeManager();
-        } else if (DOWNLOAD_SERVICE.equals(name)) {
-            return getDownloadManager();
-        } else if (NFC_SERVICE.equals(name)) {
-            return getNfcManager();
-        }
-
-        return null;
-    }
-
-    private AccountManager getAccountManager() {
-        synchronized (mSync) {
-            if (mAccountManager == null) {
-                IBinder b = ServiceManager.getService(ACCOUNT_SERVICE);
-                IAccountManager service = IAccountManager.Stub.asInterface(b);
-                mAccountManager = new AccountManager(this, service);
-            }
-            return mAccountManager;
-        }
-    }
-
-    private ActivityManager getActivityManager() {
-        synchronized (mSync) {
-            if (mActivityManager == null) {
-                mActivityManager = new ActivityManager(getOuterContext(),
-                        mMainThread.getHandler());
-            }
-        }
-        return mActivityManager;
-    }
-
-    private AlarmManager getAlarmManager() {
-        synchronized (sSync) {
-            if (sAlarmManager == null) {
-                IBinder b = ServiceManager.getService(ALARM_SERVICE);
-                IAlarmManager service = IAlarmManager.Stub.asInterface(b);
-                sAlarmManager = new AlarmManager(service);
-            }
-        }
-        return sAlarmManager;
-    }
-
-    private PowerManager getPowerManager() {
-        synchronized (sSync) {
-            if (sPowerManager == null) {
-                IBinder b = ServiceManager.getService(POWER_SERVICE);
-                IPowerManager service = IPowerManager.Stub.asInterface(b);
-                sPowerManager = new PowerManager(service, mMainThread.getHandler());
-            }
-        }
-        return sPowerManager;
-    }
-
-    private ConnectivityManager getConnectivityManager()
-    {
-        synchronized (sSync) {
-            if (sConnectivityManager == null) {
-                IBinder b = ServiceManager.getService(CONNECTIVITY_SERVICE);
-                IConnectivityManager service = IConnectivityManager.Stub.asInterface(b);
-                sConnectivityManager = new ConnectivityManager(service);
-            }
-        }
-        return sConnectivityManager;
-    }
-
-    private ThrottleManager getThrottleManager()
-    {
-        synchronized (sSync) {
-            if (sThrottleManager == null) {
-                IBinder b = ServiceManager.getService(THROTTLE_SERVICE);
-                IThrottleManager service = IThrottleManager.Stub.asInterface(b);
-                sThrottleManager = new ThrottleManager(service);
-            }
-        }
-        return sThrottleManager;
-    }
-
-    private WifiManager getWifiManager()
-    {
-        synchronized (sSync) {
-            if (sWifiManager == null) {
-                IBinder b = ServiceManager.getService(WIFI_SERVICE);
-                IWifiManager service = IWifiManager.Stub.asInterface(b);
-                sWifiManager = new WifiManager(service, mMainThread.getHandler());
-            }
-        }
-        return sWifiManager;
-    }
-
-    private NotificationManager getNotificationManager() {
-        synchronized (mSync) {
-            if (mNotificationManager == null) {
-                mNotificationManager = new NotificationManager(
-                        new ContextThemeWrapper(getOuterContext(), com.android.internal.R.style.Theme_Dialog),
-                        mMainThread.getHandler());
-            }
-        }
-        return mNotificationManager;
+        ServiceFetcher fetcher = SYSTEM_SERVICE_MAP.get(name);
+        return fetcher == null ? null : fetcher.getService(this);
     }
 
     private WallpaperManager getWallpaperManager() {
-        synchronized (mSync) {
-            if (mWallpaperManager == null) {
-                mWallpaperManager = new WallpaperManager(getOuterContext(),
-                        mMainThread.getHandler());
-            }
-        }
-        return mWallpaperManager;
-    }
-
-    private TelephonyManager getTelephonyManager() {
-        synchronized (mSync) {
-            if (mTelephonyManager == null) {
-                mTelephonyManager = new TelephonyManager(getOuterContext());
-            }
-        }
-        return mTelephonyManager;
-    }
-
-    private ClipboardManager getClipboardManager() {
-        synchronized (mSync) {
-            if (mClipboardManager == null) {
-                mClipboardManager = new ClipboardManager(getOuterContext(),
-                        mMainThread.getHandler());
-            }
-        }
-        return mClipboardManager;
-    }
-
-    private LocationManager getLocationManager() {
-        synchronized (sSync) {
-            if (sLocationManager == null) {
-                IBinder b = ServiceManager.getService(LOCATION_SERVICE);
-                ILocationManager service = ILocationManager.Stub.asInterface(b);
-                sLocationManager = new LocationManager(service);
-            }
-        }
-        return sLocationManager;
-    }
-
-    private SearchManager getSearchManager() {
-        synchronized (mSync) {
-            if (mSearchManager == null) {
-                mSearchManager = new SearchManager(getOuterContext(), mMainThread.getHandler());
-            }
-        }
-        return mSearchManager;
-    }
-
-    private SensorManager getSensorManager() {
-        synchronized (mSync) {
-            if (mSensorManager == null) {
-                mSensorManager = new SensorManager(mMainThread.getHandler().getLooper());
-            }
-        }
-        return mSensorManager;
-    }
-
-    private StorageManager getStorageManager() {
-        synchronized (mSync) {
-            if (mStorageManager == null) {
-                try {
-                    mStorageManager = new StorageManager(mMainThread.getHandler().getLooper());
-                } catch (RemoteException rex) {
-                    Log.e(TAG, "Failed to create StorageManager", rex);
-                    mStorageManager = null;
-                }
-            }
-        }
-        return mStorageManager;
-    }
-
-    private UsbManager getUsbManager() {
-        synchronized (mSync) {
-            if (mUsbManager == null) {
-                IBinder b = ServiceManager.getService(USB_SERVICE);
-                IUsbManager service = IUsbManager.Stub.asInterface(b);
-                mUsbManager = new UsbManager(this, service);
-            }
-        }
-        return mUsbManager;
-    }
-
-    private Vibrator getVibrator() {
-        synchronized (mSync) {
-            if (mVibrator == null) {
-                mVibrator = new Vibrator();
-            }
-        }
-        return mVibrator;
-    }
-
-    private AudioManager getAudioManager()
-    {
-        if (mAudioManager == null) {
-            mAudioManager = new AudioManager(this);
-        }
-        return mAudioManager;
+        return (WallpaperManager) WALLPAPER_FETCHER.getService(this);
     }
 
     /* package */ static DropBoxManager createDropBoxManager() {
         IBinder b = ServiceManager.getService(DROPBOX_SERVICE);
         IDropBoxManagerService service = IDropBoxManagerService.Stub.asInterface(b);
+        if (service == null) {
+            // Don't return a DropBoxManager that will NPE upon use.
+            // This also avoids caching a broken DropBoxManager in
+            // getDropBoxManager during early boot, before the
+            // DROPBOX_SERVICE is registered.
+            return null;
+        }
         return new DropBoxManager(service);
-    }
-
-    private DropBoxManager getDropBoxManager() {
-        synchronized (mSync) {
-            if (mDropBoxManager == null) {
-                mDropBoxManager = createDropBoxManager();
-            }
-        }
-        return mDropBoxManager;
-    }
-
-    private DevicePolicyManager getDevicePolicyManager() {
-        synchronized (mSync) {
-            if (mDevicePolicyManager == null) {
-                mDevicePolicyManager = DevicePolicyManager.create(this,
-                        mMainThread.getHandler());
-            }
-        }
-        return mDevicePolicyManager;
-    }
-
-    private UiModeManager getUiModeManager() {
-        synchronized (mSync) {
-            if (mUiModeManager == null) {
-                mUiModeManager = new UiModeManager();
-            }
-        }
-        return mUiModeManager;
-    }
-
-    private DownloadManager getDownloadManager() {
-        synchronized (mSync) {
-            if (mDownloadManager == null) {
-                mDownloadManager = new DownloadManager(getContentResolver(), getPackageName());
-            }
-        }
-        return mDownloadManager;
-    }
-
-    private NfcManager getNfcManager() {
-        synchronized (mSync) {
-            if (mNfcManager == null) {
-                mNfcManager = new NfcManager(this);
-            }
-        }
-        return mNfcManager;
     }
 
     @Override
@@ -1241,9 +1199,6 @@ class ContextImpl extends Context {
             throw new IllegalArgumentException("permission is null");
         }
 
-        if (!Process.supportsProcesses()) {
-            return PackageManager.PERMISSION_GRANTED;
-        }
         try {
             return ActivityManagerNative.getDefault().checkPermission(
                     permission, pid, uid);
@@ -1258,9 +1213,6 @@ class ContextImpl extends Context {
             throw new IllegalArgumentException("permission is null");
         }
 
-        if (!Process.supportsProcesses()) {
-            return PackageManager.PERMISSION_GRANTED;
-        }
         int pid = Binder.getCallingPid();
         if (pid != Process.myPid()) {
             return checkPermission(permission, pid,
@@ -1341,9 +1293,6 @@ class ContextImpl extends Context {
 
     @Override
     public int checkUriPermission(Uri uri, int pid, int uid, int modeFlags) {
-        if (!Process.supportsProcesses()) {
-            return PackageManager.PERMISSION_GRANTED;
-        }
         try {
             return ActivityManagerNative.getDefault().checkUriPermission(
                     uri, pid, uid, modeFlags);
@@ -1354,9 +1303,6 @@ class ContextImpl extends Context {
 
     @Override
     public int checkCallingUriPermission(Uri uri, int modeFlags) {
-        if (!Process.supportsProcesses()) {
-            return PackageManager.PERMISSION_GRANTED;
-        }
         int pid = Binder.getCallingPid();
         if (pid != Process.myPid()) {
             return checkUriPermission(uri, pid,
@@ -1470,11 +1416,11 @@ class ContextImpl extends Context {
         }
 
         LoadedApk pi =
-            mMainThread.getPackageInfo(packageName, flags);
+            mMainThread.getPackageInfo(packageName, mResources.getCompatibilityInfo(), flags);
         if (pi != null) {
             ContextImpl c = new ContextImpl();
             c.mRestricted = (flags & CONTEXT_RESTRICTED) == CONTEXT_RESTRICTED;
-            c.init(pi, null, mMainThread, mResources);
+            c.init(pi, null, mMainThread, mResources, mBasePackageName);
             if (c.mResources != null) {
                 return c;
             }
@@ -1516,8 +1462,6 @@ class ContextImpl extends Context {
     }
 
     ContextImpl() {
-        // For debug only
-        //++sInstanceCount;
         mOuterContext = this;
     }
 
@@ -1528,8 +1472,8 @@ class ContextImpl extends Context {
      * @param context Existing application context.
      */
     public ContextImpl(ContextImpl context) {
-        ++sInstanceCount;
         mPackageInfo = context.mPackageInfo;
+        mBasePackageName = context.mBasePackageName;
         mResources = context.mResources;
         mMainThread = context.mMainThread;
         mContentResolver = context.mContentResolver;
@@ -1538,13 +1482,14 @@ class ContextImpl extends Context {
 
     final void init(LoadedApk packageInfo,
             IBinder activityToken, ActivityThread mainThread) {
-        init(packageInfo, activityToken, mainThread, null);
+        init(packageInfo, activityToken, mainThread, null, null);
     }
 
     final void init(LoadedApk packageInfo,
                 IBinder activityToken, ActivityThread mainThread,
-                Resources container) {
+                Resources container, String basePackageName) {
         mPackageInfo = packageInfo;
+        mBasePackageName = basePackageName != null ? basePackageName : packageInfo.mPackageName;
         mResources = mPackageInfo.getResources(mainThread);
 
         if (mResources != null && container != null
@@ -1555,7 +1500,7 @@ class ContextImpl extends Context {
                         " compatiblity info:" + container.getDisplayMetrics());
             }
             mResources = mainThread.getTopLevelResources(
-                    mPackageInfo.getResDir(), container.getCompatibilityInfo().copy());
+                    mPackageInfo.getResDir(), container.getCompatibilityInfo());
         }
         mMainThread = mainThread;
         mContentResolver = new ApplicationContentResolver(this, mainThread);
@@ -1565,6 +1510,7 @@ class ContextImpl extends Context {
 
     final void init(Resources resources, ActivityThread mainThread) {
         mPackageInfo = null;
+        mBasePackageName = null;
         mResources = resources;
         mMainThread = mainThread;
         mContentResolver = new ApplicationContentResolver(this, mainThread);
@@ -1589,20 +1535,20 @@ class ContextImpl extends Context {
     final void setActivityToken(IBinder token) {
         mActivityToken = token;
     }
-    
+
     final void setOuterContext(Context context) {
         mOuterContext = context;
     }
-    
+
     final Context getOuterContext() {
         return mOuterContext;
     }
-    
+
     final IBinder getActivityToken() {
         return mActivityToken;
     }
 
-    private static void setFilePermissionsFromMode(String name, int mode,
+    static void setFilePermissionsFromMode(String name, int mode,
             int extraPermissions) {
         int perms = FileUtils.S_IRUSR|FileUtils.S_IWUSR
             |FileUtils.S_IRGRP|FileUtils.S_IWGRP
@@ -1675,1546 +1621,7 @@ class ContextImpl extends Context {
         public boolean releaseProvider(IContentProvider provider) {
             return mMainThread.releaseProvider(provider);
         }
-        
+
         private final ActivityThread mMainThread;
-    }
-
-    // ----------------------------------------------------------------------
-    // ----------------------------------------------------------------------
-    // ----------------------------------------------------------------------
-
-    /*package*/
-    static final class ApplicationPackageManager extends PackageManager {
-        @Override
-        public PackageInfo getPackageInfo(String packageName, int flags)
-                throws NameNotFoundException {
-            try {
-                PackageInfo pi = mPM.getPackageInfo(packageName, flags);
-                if (pi != null) {
-                    return pi;
-                }
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-
-            throw new NameNotFoundException(packageName);
-        }
-
-        @Override
-        public String[] currentToCanonicalPackageNames(String[] names) {
-            try {
-                return mPM.currentToCanonicalPackageNames(names);
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-        }
-        
-        @Override
-        public String[] canonicalToCurrentPackageNames(String[] names) {
-            try {
-                return mPM.canonicalToCurrentPackageNames(names);
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-        }
-        
-        @Override
-        public Intent getLaunchIntentForPackage(String packageName) {
-            // First see if the package has an INFO activity; the existence of
-            // such an activity is implied to be the desired front-door for the
-            // overall package (such as if it has multiple launcher entries).
-            Intent intentToResolve = new Intent(Intent.ACTION_MAIN);
-            intentToResolve.addCategory(Intent.CATEGORY_INFO);
-            intentToResolve.setPackage(packageName);
-            ResolveInfo resolveInfo = resolveActivity(intentToResolve, 0);
-
-            // Otherwise, try to find a main launcher activity.
-            if (resolveInfo == null) {
-                // reuse the intent instance
-                intentToResolve.removeCategory(Intent.CATEGORY_INFO);
-                intentToResolve.addCategory(Intent.CATEGORY_LAUNCHER);
-                intentToResolve.setPackage(packageName);
-                resolveInfo = resolveActivity(intentToResolve, 0);
-            }
-            if (resolveInfo == null) {
-                return null;
-            }
-            Intent intent = new Intent(Intent.ACTION_MAIN);
-            intent.setClassName(packageName, resolveInfo.activityInfo.name);
-            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            return intent;
-        }
-
-        @Override
-        public int[] getPackageGids(String packageName)
-            throws NameNotFoundException {
-            try {
-                int[] gids = mPM.getPackageGids(packageName);
-                if (gids == null || gids.length > 0) {
-                    return gids;
-                }
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-
-            throw new NameNotFoundException(packageName);
-        }
-
-        @Override
-        public PermissionInfo getPermissionInfo(String name, int flags)
-            throws NameNotFoundException {
-            try {
-                PermissionInfo pi = mPM.getPermissionInfo(name, flags);
-                if (pi != null) {
-                    return pi;
-                }
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-
-            throw new NameNotFoundException(name);
-        }
-
-        @Override
-        public List<PermissionInfo> queryPermissionsByGroup(String group, int flags)
-                throws NameNotFoundException {
-            try {
-                List<PermissionInfo> pi = mPM.queryPermissionsByGroup(group, flags);
-                if (pi != null) {
-                    return pi;
-                }
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-
-            throw new NameNotFoundException(group);
-        }
-
-        @Override
-        public PermissionGroupInfo getPermissionGroupInfo(String name,
-                int flags) throws NameNotFoundException {
-            try {
-                PermissionGroupInfo pgi = mPM.getPermissionGroupInfo(name, flags);
-                if (pgi != null) {
-                    return pgi;
-                }
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-
-            throw new NameNotFoundException(name);
-        }
-
-        @Override
-        public List<PermissionGroupInfo> getAllPermissionGroups(int flags) {
-            try {
-                return mPM.getAllPermissionGroups(flags);
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-        }
-
-        @Override
-        public ApplicationInfo getApplicationInfo(String packageName, int flags)
-            throws NameNotFoundException {
-            try {
-                ApplicationInfo ai = mPM.getApplicationInfo(packageName, flags);
-                if (ai != null) {
-                    return ai;
-                }
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-
-            throw new NameNotFoundException(packageName);
-        }
-
-        @Override
-        public ActivityInfo getActivityInfo(ComponentName className, int flags)
-            throws NameNotFoundException {
-            try {
-                ActivityInfo ai = mPM.getActivityInfo(className, flags);
-                if (ai != null) {
-                    return ai;
-                }
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-
-            throw new NameNotFoundException(className.toString());
-        }
-
-        @Override
-        public ActivityInfo getReceiverInfo(ComponentName className, int flags)
-            throws NameNotFoundException {
-            try {
-                ActivityInfo ai = mPM.getReceiverInfo(className, flags);
-                if (ai != null) {
-                    return ai;
-                }
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-
-            throw new NameNotFoundException(className.toString());
-        }
-
-        @Override
-        public ServiceInfo getServiceInfo(ComponentName className, int flags)
-            throws NameNotFoundException {
-            try {
-                ServiceInfo si = mPM.getServiceInfo(className, flags);
-                if (si != null) {
-                    return si;
-                }
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-
-            throw new NameNotFoundException(className.toString());
-        }
-
-        @Override
-        public ProviderInfo getProviderInfo(ComponentName className, int flags)
-            throws NameNotFoundException {
-            try {
-                ProviderInfo pi = mPM.getProviderInfo(className, flags);
-                if (pi != null) {
-                    return pi;
-                }
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-
-            throw new NameNotFoundException(className.toString());
-        }
-
-        @Override
-        public String[] getSystemSharedLibraryNames() {
-             try {
-                 return mPM.getSystemSharedLibraryNames();
-             } catch (RemoteException e) {
-                 throw new RuntimeException("Package manager has died", e);
-             }
-        }
-
-        @Override
-        public FeatureInfo[] getSystemAvailableFeatures() {
-            try {
-                return mPM.getSystemAvailableFeatures();
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-        }
-        
-        @Override
-        public boolean hasSystemFeature(String name) {
-            try {
-                return mPM.hasSystemFeature(name);
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-        }
-        
-        @Override
-        public int checkPermission(String permName, String pkgName) {
-            try {
-                return mPM.checkPermission(permName, pkgName);
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-        }
-
-        @Override
-        public boolean addPermission(PermissionInfo info) {
-            try {
-                return mPM.addPermission(info);
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-        }
-
-        @Override
-        public boolean addPermissionAsync(PermissionInfo info) {
-            try {
-                return mPM.addPermissionAsync(info);
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-        }
-
-        @Override
-        public void removePermission(String name) {
-            try {
-                mPM.removePermission(name);
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-        }
-
-        @Override
-        public int checkSignatures(String pkg1, String pkg2) {
-            try {
-                return mPM.checkSignatures(pkg1, pkg2);
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-        }
-
-        @Override
-        public int checkSignatures(int uid1, int uid2) {
-            try {
-                return mPM.checkUidSignatures(uid1, uid2);
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-        }
-
-        @Override
-        public String[] getPackagesForUid(int uid) {
-            try {
-                return mPM.getPackagesForUid(uid);
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-        }
-
-        @Override
-        public String getNameForUid(int uid) {
-            try {
-                return mPM.getNameForUid(uid);
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-        }
-        
-        @Override
-        public int getUidForSharedUser(String sharedUserName) 
-                throws NameNotFoundException {
-            try {
-                int uid = mPM.getUidForSharedUser(sharedUserName);
-                if(uid != -1) {
-                    return uid;
-                }
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-            throw new NameNotFoundException("No shared userid for user:"+sharedUserName);
-        }
-
-        @SuppressWarnings("unchecked")
-        @Override
-        public List<PackageInfo> getInstalledPackages(int flags) {
-            try {
-                final List<PackageInfo> packageInfos = new ArrayList<PackageInfo>();
-                PackageInfo lastItem = null;
-                ParceledListSlice<PackageInfo> slice;
-
-                do {
-                    final String lastKey = lastItem != null ? lastItem.packageName : null;
-                    slice = mPM.getInstalledPackages(flags, lastKey);
-                    lastItem = slice.populateList(packageInfos, PackageInfo.CREATOR);
-                } while (!slice.isLastSlice());
-
-                return packageInfos;
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-        }
-
-        @SuppressWarnings("unchecked")
-        @Override
-        public List<ApplicationInfo> getInstalledApplications(int flags) {
-            try {
-                final List<ApplicationInfo> applicationInfos = new ArrayList<ApplicationInfo>();
-                ApplicationInfo lastItem = null;
-                ParceledListSlice<ApplicationInfo> slice;
-
-                do {
-                    final String lastKey = lastItem != null ? lastItem.packageName : null;
-                    slice = mPM.getInstalledApplications(flags, lastKey);
-                    lastItem = slice.populateList(applicationInfos, ApplicationInfo.CREATOR);
-                } while (!slice.isLastSlice());
-
-                return applicationInfos;
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-        }
-
-        @Override
-        public ResolveInfo resolveActivity(Intent intent, int flags) {
-            try {
-                return mPM.resolveIntent(
-                    intent,
-                    intent.resolveTypeIfNeeded(mContext.getContentResolver()),
-                    flags);
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-        }
-
-        @Override
-        public List<ResolveInfo> queryIntentActivities(Intent intent,
-                int flags) {
-            try {
-                return mPM.queryIntentActivities(
-                    intent,
-                    intent.resolveTypeIfNeeded(mContext.getContentResolver()),
-                    flags);
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-        }
-
-        @Override
-        public List<ResolveInfo> queryIntentActivityOptions(
-                ComponentName caller, Intent[] specifics, Intent intent,
-                int flags) {
-            final ContentResolver resolver = mContext.getContentResolver();
-
-            String[] specificTypes = null;
-            if (specifics != null) {
-                final int N = specifics.length;
-                for (int i=0; i<N; i++) {
-                    Intent sp = specifics[i];
-                    if (sp != null) {
-                        String t = sp.resolveTypeIfNeeded(resolver);
-                        if (t != null) {
-                            if (specificTypes == null) {
-                                specificTypes = new String[N];
-                            }
-                            specificTypes[i] = t;
-                        }
-                    }
-                }
-            }
-
-            try {
-                return mPM.queryIntentActivityOptions(caller, specifics,
-                    specificTypes, intent, intent.resolveTypeIfNeeded(resolver),
-                    flags);
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-        }
-
-        @Override
-        public List<ResolveInfo> queryBroadcastReceivers(Intent intent, int flags) {
-            try {
-                return mPM.queryIntentReceivers(
-                    intent,
-                    intent.resolveTypeIfNeeded(mContext.getContentResolver()),
-                    flags);
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-        }
-
-        @Override
-        public ResolveInfo resolveService(Intent intent, int flags) {
-            try {
-                return mPM.resolveService(
-                    intent,
-                    intent.resolveTypeIfNeeded(mContext.getContentResolver()),
-                    flags);
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-        }
-
-        @Override
-        public List<ResolveInfo> queryIntentServices(Intent intent, int flags) {
-            try {
-                return mPM.queryIntentServices(
-                    intent,
-                    intent.resolveTypeIfNeeded(mContext.getContentResolver()),
-                    flags);
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-        }
-
-        @Override
-        public ProviderInfo resolveContentProvider(String name,
-                int flags) {
-            try {
-                return mPM.resolveContentProvider(name, flags);
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-        }
-
-        @Override
-        public List<ProviderInfo> queryContentProviders(String processName,
-                int uid, int flags) {
-            try {
-                return mPM.queryContentProviders(processName, uid, flags);
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-        }
-
-        @Override
-        public InstrumentationInfo getInstrumentationInfo(
-                ComponentName className, int flags)
-                throws NameNotFoundException {
-            try {
-                InstrumentationInfo ii = mPM.getInstrumentationInfo(
-                        className, flags);
-                if (ii != null) {
-                    return ii;
-                }
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-
-            throw new NameNotFoundException(className.toString());
-        }
-
-        @Override
-        public List<InstrumentationInfo> queryInstrumentation(
-                String targetPackage, int flags) {
-            try {
-                return mPM.queryInstrumentation(targetPackage, flags);
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-        }
-
-        @Override public Drawable getDrawable(String packageName, int resid,
-                ApplicationInfo appInfo) {
-            ResourceName name = new ResourceName(packageName, resid);
-            Drawable dr = getCachedIcon(name);
-            if (dr != null) {
-                return dr;
-            }
-            if (appInfo == null) {
-                try {
-                    appInfo = getApplicationInfo(packageName, 0);
-                } catch (NameNotFoundException e) {
-                    return null;
-                }
-            }
-            try {
-                Resources r = getResourcesForApplication(appInfo);
-                dr = r.getDrawable(resid);
-                if (false) {
-                    RuntimeException e = new RuntimeException("here");
-                    e.fillInStackTrace();
-                    Log.w(TAG, "Getting drawable 0x" + Integer.toHexString(resid)
-                            + " from package " + packageName
-                            + ": app scale=" + r.getCompatibilityInfo().applicationScale
-                            + ", caller scale=" + mContext.getResources().getCompatibilityInfo().applicationScale,
-                            e);
-                }
-                if (DEBUG_ICONS) Log.v(TAG, "Getting drawable 0x"
-                        + Integer.toHexString(resid) + " from " + r
-                        + ": " + dr);
-                putCachedIcon(name, dr);
-                return dr;
-            } catch (NameNotFoundException e) {
-                Log.w("PackageManager", "Failure retrieving resources for"
-                        + appInfo.packageName);
-            } catch (RuntimeException e) {
-                // If an exception was thrown, fall through to return
-                // default icon.
-                Log.w("PackageManager", "Failure retrieving icon 0x"
-                        + Integer.toHexString(resid) + " in package "
-                        + packageName, e);
-            }
-            return null;
-        }
-
-        @Override public Drawable getActivityIcon(ComponentName activityName)
-                throws NameNotFoundException {
-            return getActivityInfo(activityName, 0).loadIcon(this);
-        }
-
-        @Override public Drawable getActivityIcon(Intent intent)
-                throws NameNotFoundException {
-            if (intent.getComponent() != null) {
-                return getActivityIcon(intent.getComponent());
-            }
-
-            ResolveInfo info = resolveActivity(
-                intent, PackageManager.MATCH_DEFAULT_ONLY);
-            if (info != null) {
-                return info.activityInfo.loadIcon(this);
-            }
-
-            throw new NameNotFoundException(intent.toURI());
-        }
-
-        @Override public Drawable getDefaultActivityIcon() {
-            return Resources.getSystem().getDrawable(
-                com.android.internal.R.drawable.sym_def_app_icon);
-        }
-
-        @Override public Drawable getApplicationIcon(ApplicationInfo info) {
-            return info.loadIcon(this);
-        }
-
-        @Override public Drawable getApplicationIcon(String packageName)
-                throws NameNotFoundException {
-            return getApplicationIcon(getApplicationInfo(packageName, 0));
-        }
-        
-        @Override 
-        public Drawable getActivityLogo(ComponentName activityName)
-                throws NameNotFoundException {
-            return getActivityInfo(activityName, 0).loadLogo(this);
-        }
-
-        @Override
-        public Drawable getActivityLogo(Intent intent)
-                throws NameNotFoundException {
-            if (intent.getComponent() != null) {
-                return getActivityLogo(intent.getComponent());
-            }
-
-            ResolveInfo info = resolveActivity(
-                    intent, PackageManager.MATCH_DEFAULT_ONLY);
-            if (info != null) {
-                return info.activityInfo.loadLogo(this);
-            }
-
-            throw new NameNotFoundException(intent.toUri(0));
-        }
-
-        @Override
-        public Drawable getApplicationLogo(ApplicationInfo info) {
-            return info.loadLogo(this);
-        }
-
-        @Override
-        public Drawable getApplicationLogo(String packageName)
-                throws NameNotFoundException {
-            return getApplicationLogo(getApplicationInfo(packageName, 0));
-        }
-
-        @Override public Resources getResourcesForActivity(
-                ComponentName activityName) throws NameNotFoundException {
-            return getResourcesForApplication(
-                getActivityInfo(activityName, 0).applicationInfo);
-        }
-
-        @Override public Resources getResourcesForApplication(
-                ApplicationInfo app) throws NameNotFoundException {
-            if (app.packageName.equals("system")) {
-                return mContext.mMainThread.getSystemContext().getResources();
-            }
-            Resources r = mContext.mMainThread.getTopLevelResources(
-                    app.uid == Process.myUid() ? app.sourceDir
-                    : app.publicSourceDir, mContext.mPackageInfo);
-            if (r != null) {
-                return r;
-            }
-            throw new NameNotFoundException("Unable to open " + app.publicSourceDir);
-        }
-
-        @Override public Resources getResourcesForApplication(
-                String appPackageName) throws NameNotFoundException {
-            return getResourcesForApplication(
-                getApplicationInfo(appPackageName, 0));
-        }
-
-        int mCachedSafeMode = -1;
-        @Override public boolean isSafeMode() {
-            try {
-                if (mCachedSafeMode < 0) {
-                    mCachedSafeMode = mPM.isSafeMode() ? 1 : 0;
-                }
-                return mCachedSafeMode != 0;
-            } catch (RemoteException e) {
-                throw new RuntimeException("Package manager has died", e);
-            }
-        }
-
-        static void configurationChanged() {
-            synchronized (sSync) {
-                sIconCache.clear();
-                sStringCache.clear();
-            }
-        }
-
-        ApplicationPackageManager(ContextImpl context,
-                IPackageManager pm) {
-            mContext = context;
-            mPM = pm;
-        }
-
-        private Drawable getCachedIcon(ResourceName name) {
-            synchronized (sSync) {
-                WeakReference<Drawable> wr = sIconCache.get(name);
-                if (DEBUG_ICONS) Log.v(TAG, "Get cached weak drawable ref for "
-                        + name + ": " + wr);
-                if (wr != null) {   // we have the activity
-                    Drawable dr = wr.get();
-                    if (dr != null) {
-                        if (DEBUG_ICONS) Log.v(TAG, "Get cached drawable for "
-                                + name + ": " + dr);
-                        return dr;
-                    }
-                    // our entry has been purged
-                    sIconCache.remove(name);
-                }
-            }
-            return null;
-        }
-
-        private void putCachedIcon(ResourceName name, Drawable dr) {
-            synchronized (sSync) {
-                sIconCache.put(name, new WeakReference<Drawable>(dr));
-                if (DEBUG_ICONS) Log.v(TAG, "Added cached drawable for "
-                        + name + ": " + dr);
-            }
-        }
-
-        static final void handlePackageBroadcast(int cmd, String[] pkgList,
-                boolean hasPkgInfo) {
-            boolean immediateGc = false;
-            if (cmd == IApplicationThread.EXTERNAL_STORAGE_UNAVAILABLE) {
-                immediateGc = true;
-            }
-            if (pkgList != null && (pkgList.length > 0)) {
-                boolean needCleanup = false;
-                for (String ssp : pkgList) {
-                    synchronized (sSync) {
-                        if (sIconCache.size() > 0) {
-                            Iterator<ResourceName> it = sIconCache.keySet().iterator();
-                            while (it.hasNext()) {
-                                ResourceName nm = it.next();
-                                if (nm.packageName.equals(ssp)) {
-                                    //Log.i(TAG, "Removing cached drawable for " + nm);
-                                    it.remove();
-                                    needCleanup = true;
-                                }
-                            }
-                        }
-                        if (sStringCache.size() > 0) {
-                            Iterator<ResourceName> it = sStringCache.keySet().iterator();
-                            while (it.hasNext()) {
-                                ResourceName nm = it.next();
-                                if (nm.packageName.equals(ssp)) {
-                                    //Log.i(TAG, "Removing cached string for " + nm);
-                                    it.remove();
-                                    needCleanup = true;
-                                }
-                            }
-                        }
-                    }
-                }
-                if (needCleanup || hasPkgInfo) {
-                    if (immediateGc) {
-                        // Schedule an immediate gc.
-                        Runtime.getRuntime().gc();
-                    } else {
-                        ActivityThread.currentActivityThread().scheduleGcIdler();
-                    }
-                }
-            }
-        }
-        
-        private static final class ResourceName {
-            final String packageName;
-            final int iconId;
-
-            ResourceName(String _packageName, int _iconId) {
-                packageName = _packageName;
-                iconId = _iconId;
-            }
-
-            ResourceName(ApplicationInfo aInfo, int _iconId) {
-                this(aInfo.packageName, _iconId);
-            }
-
-            ResourceName(ComponentInfo cInfo, int _iconId) {
-                this(cInfo.applicationInfo.packageName, _iconId);
-            }
-
-            ResourceName(ResolveInfo rInfo, int _iconId) {
-                this(rInfo.activityInfo.applicationInfo.packageName, _iconId);
-            }
-
-            @Override
-            public boolean equals(Object o) {
-                if (this == o) return true;
-                if (o == null || getClass() != o.getClass()) return false;
-
-                ResourceName that = (ResourceName) o;
-
-                if (iconId != that.iconId) return false;
-                return !(packageName != null ?
-                        !packageName.equals(that.packageName) : that.packageName != null);
-
-            }
-
-            @Override
-            public int hashCode() {
-                int result;
-                result = packageName.hashCode();
-                result = 31 * result + iconId;
-                return result;
-            }
-
-            @Override
-            public String toString() {
-                return "{ResourceName " + packageName + " / " + iconId + "}";
-            }
-        }
-
-        private CharSequence getCachedString(ResourceName name) {
-            synchronized (sSync) {
-                WeakReference<CharSequence> wr = sStringCache.get(name);
-                if (wr != null) {   // we have the activity
-                    CharSequence cs = wr.get();
-                    if (cs != null) {
-                        return cs;
-                    }
-                    // our entry has been purged
-                    sStringCache.remove(name);
-                }
-            }
-            return null;
-        }
-
-        private void putCachedString(ResourceName name, CharSequence cs) {
-            synchronized (sSync) {
-                sStringCache.put(name, new WeakReference<CharSequence>(cs));
-            }
-        }
-
-        @Override
-        public CharSequence getText(String packageName, int resid,
-                ApplicationInfo appInfo) {
-            ResourceName name = new ResourceName(packageName, resid);
-            CharSequence text = getCachedString(name);
-            if (text != null) {
-                return text;
-            }
-            if (appInfo == null) {
-                try {
-                    appInfo = getApplicationInfo(packageName, 0);
-                } catch (NameNotFoundException e) {
-                    return null;
-                }
-            }
-            try {
-                Resources r = getResourcesForApplication(appInfo);
-                text = r.getText(resid);
-                putCachedString(name, text);
-                return text;
-            } catch (NameNotFoundException e) {
-                Log.w("PackageManager", "Failure retrieving resources for"
-                        + appInfo.packageName);
-            } catch (RuntimeException e) {
-                // If an exception was thrown, fall through to return
-                // default icon.
-                Log.w("PackageManager", "Failure retrieving text 0x"
-                        + Integer.toHexString(resid) + " in package "
-                        + packageName, e);
-            }
-            return null;
-        }
-
-        @Override
-        public XmlResourceParser getXml(String packageName, int resid,
-                ApplicationInfo appInfo) {
-            if (appInfo == null) {
-                try {
-                    appInfo = getApplicationInfo(packageName, 0);
-                } catch (NameNotFoundException e) {
-                    return null;
-                }
-            }
-            try {
-                Resources r = getResourcesForApplication(appInfo);
-                return r.getXml(resid);
-            } catch (RuntimeException e) {
-                // If an exception was thrown, fall through to return
-                // default icon.
-                Log.w("PackageManager", "Failure retrieving xml 0x"
-                        + Integer.toHexString(resid) + " in package "
-                        + packageName, e);
-            } catch (NameNotFoundException e) {
-                Log.w("PackageManager", "Failure retrieving resources for"
-                        + appInfo.packageName);
-            }
-            return null;
-        }
-
-        @Override
-        public CharSequence getApplicationLabel(ApplicationInfo info) {
-            return info.loadLabel(this);
-        }
-
-        @Override
-        public void installPackage(Uri packageURI, IPackageInstallObserver observer, int flags,
-                String installerPackageName) {
-            try {
-                mPM.installPackage(packageURI, observer, flags, installerPackageName);
-            } catch (RemoteException e) {
-                // Should never happen!
-            }
-        }
-
-        @Override
-        public void movePackage(String packageName, IPackageMoveObserver observer, int flags) {
-            try {
-                mPM.movePackage(packageName, observer, flags);
-            } catch (RemoteException e) {
-                // Should never happen!
-            }
-        }
-
-        @Override
-        public String getInstallerPackageName(String packageName) {
-            try {
-                return mPM.getInstallerPackageName(packageName);
-            } catch (RemoteException e) {
-                // Should never happen!
-            }
-            return null;
-        }
-
-        @Override
-        public void deletePackage(String packageName, IPackageDeleteObserver observer, int flags) {
-            try {
-                mPM.deletePackage(packageName, observer, flags);
-            } catch (RemoteException e) {
-                // Should never happen!
-            }
-        }
-        @Override
-        public void clearApplicationUserData(String packageName, 
-                IPackageDataObserver observer) {
-            try {
-                mPM.clearApplicationUserData(packageName, observer);
-            } catch (RemoteException e) {
-                // Should never happen!
-            }
-        }
-        @Override
-        public void deleteApplicationCacheFiles(String packageName, 
-                IPackageDataObserver observer) {
-            try {
-                mPM.deleteApplicationCacheFiles(packageName, observer);
-            } catch (RemoteException e) {
-                // Should never happen!
-            }
-        }
-        @Override
-        public void freeStorageAndNotify(long idealStorageSize, IPackageDataObserver observer) {
-            try {
-                mPM.freeStorageAndNotify(idealStorageSize, observer);
-            } catch (RemoteException e) {
-                // Should never happen!
-            }
-        }
-
-        @Override
-        public void freeStorage(long freeStorageSize, IntentSender pi) {
-            try {
-                mPM.freeStorage(freeStorageSize, pi);
-            } catch (RemoteException e) {
-                // Should never happen!
-            }
-        }
-        
-        @Override
-        public void getPackageSizeInfo(String packageName, 
-                IPackageStatsObserver observer) {
-            try {
-                mPM.getPackageSizeInfo(packageName, observer);
-            } catch (RemoteException e) {
-                // Should never happen!
-            }
-        }
-        @Override
-        public void addPackageToPreferred(String packageName) {
-            try {
-                mPM.addPackageToPreferred(packageName);
-            } catch (RemoteException e) {
-                // Should never happen!
-            }
-        }
-
-        @Override
-        public void removePackageFromPreferred(String packageName) {
-            try {
-                mPM.removePackageFromPreferred(packageName);
-            } catch (RemoteException e) {
-                // Should never happen!
-            }
-        }
-
-        @Override
-        public List<PackageInfo> getPreferredPackages(int flags) {
-            try {
-                return mPM.getPreferredPackages(flags);
-            } catch (RemoteException e) {
-                // Should never happen!
-            }
-            return new ArrayList<PackageInfo>();
-        }
-
-        @Override
-        public void addPreferredActivity(IntentFilter filter,
-                int match, ComponentName[] set, ComponentName activity) {
-            try {
-                mPM.addPreferredActivity(filter, match, set, activity);
-            } catch (RemoteException e) {
-                // Should never happen!
-            }
-        }
-        
-        @Override
-        public void replacePreferredActivity(IntentFilter filter,
-                int match, ComponentName[] set, ComponentName activity) {
-            try {
-                mPM.replacePreferredActivity(filter, match, set, activity);
-            } catch (RemoteException e) {
-                // Should never happen!
-            }
-        }
-
-        @Override
-        public void clearPackagePreferredActivities(String packageName) {
-            try {
-                mPM.clearPackagePreferredActivities(packageName);
-            } catch (RemoteException e) {
-                // Should never happen!
-            }
-        }
-        
-        @Override
-        public int getPreferredActivities(List<IntentFilter> outFilters,
-                List<ComponentName> outActivities, String packageName) {
-            try {
-                return mPM.getPreferredActivities(outFilters, outActivities, packageName);
-            } catch (RemoteException e) {
-                // Should never happen!
-            }
-            return 0;
-        }
-        
-        @Override
-        public void setComponentEnabledSetting(ComponentName componentName,
-                int newState, int flags) {
-            try {
-                mPM.setComponentEnabledSetting(componentName, newState, flags);
-            } catch (RemoteException e) {
-                // Should never happen!
-            }
-        }
-
-        @Override
-        public int getComponentEnabledSetting(ComponentName componentName) {
-            try {
-                return mPM.getComponentEnabledSetting(componentName);
-            } catch (RemoteException e) {
-                // Should never happen!
-            }
-            return PackageManager.COMPONENT_ENABLED_STATE_DEFAULT;
-        }
-
-        @Override
-        public void setApplicationEnabledSetting(String packageName,
-                int newState, int flags) {
-            try {
-                mPM.setApplicationEnabledSetting(packageName, newState, flags);
-            } catch (RemoteException e) {
-                // Should never happen!
-            }
-        }
-        
-        @Override
-        public int getApplicationEnabledSetting(String packageName) {
-            try {
-                return mPM.getApplicationEnabledSetting(packageName);
-            } catch (RemoteException e) {
-                // Should never happen!
-            }
-            return PackageManager.COMPONENT_ENABLED_STATE_DEFAULT;
-        }
-
-        private final ContextImpl mContext;
-        private final IPackageManager mPM;
-
-        private static final Object sSync = new Object();
-        private static HashMap<ResourceName, WeakReference<Drawable> > sIconCache
-                = new HashMap<ResourceName, WeakReference<Drawable> >();
-        private static HashMap<ResourceName, WeakReference<CharSequence> > sStringCache
-                = new HashMap<ResourceName, WeakReference<CharSequence> >();
-    }
-
-    // ----------------------------------------------------------------------
-    // ----------------------------------------------------------------------
-    // ----------------------------------------------------------------------
-
-    private static final class SharedPreferencesImpl implements SharedPreferences {
-
-        // Lock ordering rules:
-        //  - acquire SharedPreferencesImpl.this before EditorImpl.this
-        //  - acquire mWritingToDiskLock before EditorImpl.this
-
-        private final File mFile;
-        private final File mBackupFile;
-        private final int mMode;
-
-        private Map<String, Object> mMap;     // guarded by 'this'
-        private int mDiskWritesInFlight = 0;  // guarded by 'this'
-        private boolean mLoaded = false;      // guarded by 'this'
-        private long mStatTimestamp;          // guarded by 'this'
-        private long mStatSize;               // guarded by 'this'
-
-        private final Object mWritingToDiskLock = new Object();
-        private static final Object mContent = new Object();
-        private final WeakHashMap<OnSharedPreferenceChangeListener, Object> mListeners;
-
-        SharedPreferencesImpl(
-            File file, int mode, Map initialContents) {
-            mFile = file;
-            mBackupFile = makeBackupFile(file);
-            mMode = mode;
-            mLoaded = initialContents != null;
-            mMap = initialContents != null ? initialContents : new HashMap<String, Object>();
-            FileStatus stat = new FileStatus();
-            if (FileUtils.getFileStatus(file.getPath(), stat)) {
-                mStatTimestamp = stat.mtime;
-            }
-            mListeners = new WeakHashMap<OnSharedPreferenceChangeListener, Object>();
-        }
-
-        // Has this SharedPreferences ever had values assigned to it?
-        boolean isLoaded() {
-            synchronized (this) {
-                return mLoaded;
-            }
-        }
-
-        // Has the file changed out from under us?  i.e. writes that
-        // we didn't instigate.
-        public boolean hasFileChangedUnexpectedly() {
-            synchronized (this) {
-                if (mDiskWritesInFlight > 0) {
-                    // If we know we caused it, it's not unexpected.
-                    if (DEBUG) Log.d(TAG, "disk write in flight, not unexpected.");
-                    return false;
-                }
-            }
-            FileStatus stat = new FileStatus();
-            if (!FileUtils.getFileStatus(mFile.getPath(), stat)) {
-                return true;
-            }
-            synchronized (this) {
-                return mStatTimestamp != stat.mtime || mStatSize != stat.size;
-            }
-        }
-
-        /* package */ void replace(Map newContents, FileStatus stat) {
-            synchronized (this) {
-                mLoaded = true;
-                if (newContents != null) {
-                    mMap = newContents;
-                }
-                if (stat != null) {
-                    mStatTimestamp = stat.mtime;
-                    mStatSize = stat.size;
-                }
-            }
-        }
-
-        public void registerOnSharedPreferenceChangeListener(OnSharedPreferenceChangeListener listener) {
-            synchronized(this) {
-                mListeners.put(listener, mContent);
-            }
-        }
-
-        public void unregisterOnSharedPreferenceChangeListener(OnSharedPreferenceChangeListener listener) {
-            synchronized(this) {
-                mListeners.remove(listener);
-            }
-        }
-
-        public Map<String, ?> getAll() {
-            synchronized(this) {
-                //noinspection unchecked
-                return new HashMap<String, Object>(mMap);
-            }
-        }
-
-        public String getString(String key, String defValue) {
-            synchronized (this) {
-                String v = (String)mMap.get(key);
-                return v != null ? v : defValue;
-            }
-        }
-
-        public int getInt(String key, int defValue) {
-            synchronized (this) {
-                Integer v = (Integer)mMap.get(key);
-                return v != null ? v : defValue;
-            }
-        }
-        public long getLong(String key, long defValue) {
-            synchronized (this) {
-                Long v = (Long)mMap.get(key);
-                return v != null ? v : defValue;
-            }
-        }
-        public float getFloat(String key, float defValue) {
-            synchronized (this) {
-                Float v = (Float)mMap.get(key);
-                return v != null ? v : defValue;
-            }
-        }
-        public boolean getBoolean(String key, boolean defValue) {
-            synchronized (this) {
-                Boolean v = (Boolean)mMap.get(key);
-                return v != null ? v : defValue;
-            }
-        }
-
-        public boolean contains(String key) {
-            synchronized (this) {
-                return mMap.containsKey(key);
-            }
-        }
-
-        public Editor edit() {
-            return new EditorImpl();
-        }
-
-        // Return value from EditorImpl#commitToMemory()
-        private static class MemoryCommitResult {
-            public boolean changesMade;  // any keys different?
-            public List<String> keysModified;  // may be null
-            public Set<OnSharedPreferenceChangeListener> listeners;  // may be null
-            public Map<?, ?> mapToWriteToDisk;
-            public final CountDownLatch writtenToDiskLatch = new CountDownLatch(1);
-            public volatile boolean writeToDiskResult = false;
-
-            public void setDiskWriteResult(boolean result) {
-                writeToDiskResult = result;
-                writtenToDiskLatch.countDown();
-            }
-        }
-
-        public final class EditorImpl implements Editor {
-            private final Map<String, Object> mModified = Maps.newHashMap();
-            private boolean mClear = false;
-
-            public Editor putString(String key, String value) {
-                synchronized (this) {
-                    mModified.put(key, value);
-                    return this;
-                }
-            }
-            public Editor putInt(String key, int value) {
-                synchronized (this) {
-                    mModified.put(key, value);
-                    return this;
-                }
-            }
-            public Editor putLong(String key, long value) {
-                synchronized (this) {
-                    mModified.put(key, value);
-                    return this;
-                }
-            }
-            public Editor putFloat(String key, float value) {
-                synchronized (this) {
-                    mModified.put(key, value);
-                    return this;
-                }
-            }
-            public Editor putBoolean(String key, boolean value) {
-                synchronized (this) {
-                    mModified.put(key, value);
-                    return this;
-                }
-            }
-
-            public Editor remove(String key) {
-                synchronized (this) {
-                    mModified.put(key, this);
-                    return this;
-                }
-            }
-
-            public Editor clear() {
-                synchronized (this) {
-                    mClear = true;
-                    return this;
-                }
-            }
-
-            public void apply() {
-                final MemoryCommitResult mcr = commitToMemory();
-                final Runnable awaitCommit = new Runnable() {
-                        public void run() {
-                            try {
-                                mcr.writtenToDiskLatch.await();
-                            } catch (InterruptedException ignored) {
-                            }
-                        }
-                    };
-
-                QueuedWork.add(awaitCommit);
-
-                Runnable postWriteRunnable = new Runnable() {
-                        public void run() {
-                            awaitCommit.run();
-                            QueuedWork.remove(awaitCommit);
-                        }
-                    };
-
-                SharedPreferencesImpl.this.enqueueDiskWrite(mcr, postWriteRunnable);
-
-                // Okay to notify the listeners before it's hit disk
-                // because the listeners should always get the same
-                // SharedPreferences instance back, which has the
-                // changes reflected in memory.
-                notifyListeners(mcr);
-            }
-
-            // Returns true if any changes were made
-            private MemoryCommitResult commitToMemory() {
-                MemoryCommitResult mcr = new MemoryCommitResult();
-                synchronized (SharedPreferencesImpl.this) {
-                    // We optimistically don't make a deep copy until
-                    // a memory commit comes in when we're already
-                    // writing to disk.
-                    if (mDiskWritesInFlight > 0) {
-                        // We can't modify our mMap as a currently
-                        // in-flight write owns it.  Clone it before
-                        // modifying it.
-                        // noinspection unchecked
-                        mMap = new HashMap<String, Object>(mMap);
-                    }
-                    mcr.mapToWriteToDisk = mMap;
-                    mDiskWritesInFlight++;
-
-                    boolean hasListeners = mListeners.size() > 0;
-                    if (hasListeners) {
-                        mcr.keysModified = new ArrayList<String>();
-                        mcr.listeners =
-                            new HashSet<OnSharedPreferenceChangeListener>(mListeners.keySet());
-                    }
-
-                    synchronized (this) {
-                        if (mClear) {
-                            if (!mMap.isEmpty()) {
-                                mcr.changesMade = true;
-                                mMap.clear();
-                            }
-                            mClear = false;
-                        }
-
-                        for (Entry<String, Object> e : mModified.entrySet()) {
-                            String k = e.getKey();
-                            Object v = e.getValue();
-                            if (v == this) {  // magic value for a removal mutation
-                                if (!mMap.containsKey(k)) {
-                                    continue;
-                                }
-                                mMap.remove(k);
-                            } else {
-                                boolean isSame = false;
-                                if (mMap.containsKey(k)) {
-                                    Object existingValue = mMap.get(k);
-                                    if (existingValue != null && existingValue.equals(v)) {
-                                        continue;
-                                    }
-                                }
-                                mMap.put(k, v);
-                            }
-
-                            mcr.changesMade = true;
-                            if (hasListeners) {
-                                mcr.keysModified.add(k);
-                            }
-                        }
-
-                        mModified.clear();
-                    }
-                }
-                return mcr;
-            }
-
-            public boolean commit() {
-                MemoryCommitResult mcr = commitToMemory();
-                SharedPreferencesImpl.this.enqueueDiskWrite(
-                    mcr, null /* sync write on this thread okay */);
-                try {
-                    mcr.writtenToDiskLatch.await();
-                } catch (InterruptedException e) {
-                    return false;
-                }
-                notifyListeners(mcr);
-                return mcr.writeToDiskResult;
-            }
-
-            private void notifyListeners(final MemoryCommitResult mcr) {
-                if (mcr.listeners == null || mcr.keysModified == null ||
-                    mcr.keysModified.size() == 0) {
-                    return;
-                }
-                if (Looper.myLooper() == Looper.getMainLooper()) {
-                    for (int i = mcr.keysModified.size() - 1; i >= 0; i--) {
-                        final String key = mcr.keysModified.get(i);
-                        for (OnSharedPreferenceChangeListener listener : mcr.listeners) {
-                            if (listener != null) {
-                                listener.onSharedPreferenceChanged(SharedPreferencesImpl.this, key);
-                            }
-                        }
-                    }
-                } else {
-                    // Run this function on the main thread.
-                    ActivityThread.sMainThreadHandler.post(new Runnable() {
-                            public void run() {
-                                notifyListeners(mcr);
-                            }
-                        });
-                }
-            }
-        }
-
-        /**
-         * Enqueue an already-committed-to-memory result to be written
-         * to disk.
-         *
-         * They will be written to disk one-at-a-time in the order
-         * that they're enqueued.
-         *
-         * @param postWriteRunnable if non-null, we're being called
-         *   from apply() and this is the runnable to run after
-         *   the write proceeds.  if null (from a regular commit()),
-         *   then we're allowed to do this disk write on the main
-         *   thread (which in addition to reducing allocations and
-         *   creating a background thread, this has the advantage that
-         *   we catch them in userdebug StrictMode reports to convert
-         *   them where possible to apply() ...)
-         */
-        private void enqueueDiskWrite(final MemoryCommitResult mcr,
-                                      final Runnable postWriteRunnable) {
-            final Runnable writeToDiskRunnable = new Runnable() {
-                    public void run() {
-                        synchronized (mWritingToDiskLock) {
-                            writeToFile(mcr);
-                        }
-                        synchronized (SharedPreferencesImpl.this) {
-                            mDiskWritesInFlight--;
-                        }
-                        if (postWriteRunnable != null) {
-                            postWriteRunnable.run();
-                        }
-                    }
-                };
-
-            final boolean isFromSyncCommit = (postWriteRunnable == null);
-
-            // Typical #commit() path with fewer allocations, doing a write on
-            // the current thread.
-            if (isFromSyncCommit) {
-                boolean wasEmpty = false;
-                synchronized (SharedPreferencesImpl.this) {
-                    wasEmpty = mDiskWritesInFlight == 1;
-                }
-                if (wasEmpty) {
-                    writeToDiskRunnable.run();
-                    return;
-                }
-            }
-
-            QueuedWork.singleThreadExecutor().execute(writeToDiskRunnable);
-        }
-
-        private static FileOutputStream createFileOutputStream(File file) {
-            FileOutputStream str = null;
-            try {
-                str = new FileOutputStream(file);
-            } catch (FileNotFoundException e) {
-                File parent = file.getParentFile();
-                if (!parent.mkdir()) {
-                    Log.e(TAG, "Couldn't create directory for SharedPreferences file " + file);
-                    return null;
-                }
-                FileUtils.setPermissions(
-                    parent.getPath(),
-                    FileUtils.S_IRWXU|FileUtils.S_IRWXG|FileUtils.S_IXOTH,
-                    -1, -1);
-                try {
-                    str = new FileOutputStream(file);
-                } catch (FileNotFoundException e2) {
-                    Log.e(TAG, "Couldn't create SharedPreferences file " + file, e2);
-                }
-            }
-            return str;
-        }
-
-        // Note: must hold mWritingToDiskLock
-        private void writeToFile(MemoryCommitResult mcr) {
-            // Rename the current file so it may be used as a backup during the next read
-            if (mFile.exists()) {
-                if (!mcr.changesMade) {
-                    // If the file already exists, but no changes were
-                    // made to the underlying map, it's wasteful to
-                    // re-write the file.  Return as if we wrote it
-                    // out.
-                    mcr.setDiskWriteResult(true);
-                    return;
-                }
-                if (!mBackupFile.exists()) {
-                    if (!mFile.renameTo(mBackupFile)) {
-                        Log.e(TAG, "Couldn't rename file " + mFile
-                                + " to backup file " + mBackupFile);
-                        mcr.setDiskWriteResult(false);
-                        return;
-                    }
-                } else {
-                    mFile.delete();
-                }
-            }
-
-            // Attempt to write the file, delete the backup and return true as atomically as
-            // possible.  If any exception occurs, delete the new file; next time we will restore
-            // from the backup.
-            try {
-                FileOutputStream str = createFileOutputStream(mFile);
-                if (str == null) {
-                    mcr.setDiskWriteResult(false);
-                    return;
-                }
-                XmlUtils.writeMapXml(mcr.mapToWriteToDisk, str);
-                FileUtils.sync(str);
-                str.close();
-                setFilePermissionsFromMode(mFile.getPath(), mMode, 0);
-                FileStatus stat = new FileStatus();
-                if (FileUtils.getFileStatus(mFile.getPath(), stat)) {
-                    synchronized (this) {
-                        mStatTimestamp = stat.mtime;
-                        mStatSize = stat.size;
-                    }
-                }
-                // Writing was successful, delete the backup file if there is one.
-                mBackupFile.delete();
-                mcr.setDiskWriteResult(true);
-                return;
-            } catch (XmlPullParserException e) {
-                Log.w(TAG, "writeToFile: Got exception:", e);
-            } catch (IOException e) {
-                Log.w(TAG, "writeToFile: Got exception:", e);
-            }
-            // Clean up an unsuccessfully written file
-            if (mFile.exists()) {
-                if (!mFile.delete()) {
-                    Log.e(TAG, "Couldn't clean up partially-written file " + mFile);
-                }
-            }
-            mcr.setDiskWriteResult(false);
-        }
     }
 }

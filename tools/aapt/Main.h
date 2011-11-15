@@ -14,18 +14,29 @@
 #include "AaptAssets.h"
 #include "ZipFile.h"
 
+
+/* Benchmarking Flag */
+//#define BENCHMARK 1
+
+#if BENCHMARK
+    #include <time.h>
+#endif /* BENCHMARK */
+
 extern int doVersion(Bundle* bundle);
 extern int doList(Bundle* bundle);
 extern int doDump(Bundle* bundle);
 extern int doAdd(Bundle* bundle);
 extern int doRemove(Bundle* bundle);
 extern int doPackage(Bundle* bundle);
+extern int doCrunch(Bundle* bundle);
 
 extern int calcPercent(long uncompressedLen, long compressedLen);
 
 extern android::status_t writeAPK(Bundle* bundle,
     const sp<AaptAssets>& assets,
     const android::String8& outputFile);
+
+extern android::status_t updatePreProcessedCache(Bundle* bundle);
 
 extern android::status_t buildResources(Bundle* bundle,
     const sp<AaptAssets>& assets);
@@ -46,4 +57,6 @@ int dumpResources(Bundle* bundle);
 String8 getAttribute(const ResXMLTree& tree, const char* ns,
                             const char* attr, String8* outError);
 
+status_t writeDependencyPreReqs(Bundle* bundle, const sp<AaptAssets>& assets,
+                                FILE* fp, bool includeRaw);
 #endif // __MAIN_H

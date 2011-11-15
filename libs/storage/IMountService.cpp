@@ -47,6 +47,9 @@ enum {
     TRANSACTION_unmountObb,
     TRANSACTION_isObbMounted,
     TRANSACTION_getMountedObbPath,
+    TRANSACTION_isExternalStorageEmulated,
+    TRANSACTION_decryptStorage,
+    TRANSACTION_encryptStorage,
 };
 
 class BpMountService: public BpInterface<IMountService>
@@ -154,12 +157,13 @@ public:
         return reply.readInt32();
     }
 
-    int32_t unmountVolume(const String16& mountPoint, const bool force)
+    int32_t unmountVolume(const String16& mountPoint, const bool force, const bool removeEncryption)
     {
         Parcel data, reply;
         data.writeInterfaceToken(IMountService::getInterfaceDescriptor());
         data.writeString16(mountPoint);
         data.writeInt32(force ? 1 : 0);
+        data.writeInt32(removeEncryption ? 1 : 0);
         if (remote()->transact(TRANSACTION_unmountVolume, data, &reply) != NO_ERROR) {
             LOGD("unmountVolume could not contact remote\n");
             return -1;
@@ -502,6 +506,40 @@ public:
         }
         path = reply.readString16();
         return true;
+    }
+
+    int32_t decryptStorage(const String16& password)
+    {
+        Parcel data, reply;
+        data.writeInterfaceToken(IMountService::getInterfaceDescriptor());
+        data.writeString16(password);
+        if (remote()->transact(TRANSACTION_decryptStorage, data, &reply) != NO_ERROR) {
+            LOGD("decryptStorage could not contact remote\n");
+            return -1;
+        }
+        int32_t err = reply.readExceptionCode();
+        if (err < 0) {
+            LOGD("decryptStorage caught exception %d\n", err);
+            return err;
+        }
+        return reply.readInt32();
+    }
+
+    int32_t encryptStorage(const String16& password)
+    {
+        Parcel data, reply;
+        data.writeInterfaceToken(IMountService::getInterfaceDescriptor());
+        data.writeString16(password);
+        if (remote()->transact(TRANSACTION_encryptStorage, data, &reply) != NO_ERROR) {
+            LOGD("encryptStorage could not contact remote\n");
+            return -1;
+        }
+        int32_t err = reply.readExceptionCode();
+        if (err < 0) {
+            LOGD("encryptStorage caught exception %d\n", err);
+            return err;
+        }
+        return reply.readInt32();
     }
 };
 

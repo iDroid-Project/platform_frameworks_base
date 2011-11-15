@@ -18,7 +18,6 @@ package com.android.internal.policy.impl;
 
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.app.StatusBarManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.DialogInterface;
@@ -56,8 +55,6 @@ import java.util.ArrayList;
 class GlobalActions implements DialogInterface.OnDismissListener, DialogInterface.OnClickListener  {
 
     private static final String TAG = "GlobalActions";
-
-    private StatusBarManager mStatusBar;
 
     private final Context mContext;
     private final AudioManager mAudioManager;
@@ -103,13 +100,12 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
         mKeyguardShowing = keyguardShowing;
         mDeviceProvisioned = isDeviceProvisioned;
         if (mDialog == null) {
-            mStatusBar = (StatusBarManager)mContext.getSystemService(Context.STATUS_BAR_SERVICE);
             mDialog = createDialog();
         }
         prepareDialog();
 
-        mStatusBar.disable(StatusBarManager.DISABLE_EXPAND);
         mDialog.show();
+        mDialog.getWindow().getDecorView().setSystemUiVisibility(View.STATUS_BAR_DISABLE_EXPAND);
     }
 
     /**
@@ -118,18 +114,17 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
      */
     private AlertDialog createDialog() {
         mSilentModeToggle = new ToggleAction(
-                R.drawable.ic_lock_silent_mode,
-                R.drawable.ic_lock_silent_mode_off,
+                R.drawable.ic_audio_vol_mute,
+                R.drawable.ic_audio_vol,
                 R.string.global_action_toggle_silent_mode,
                 R.string.global_action_silent_mode_on_status,
                 R.string.global_action_silent_mode_off_status) {
 
             void willCreate() {
-                // XXX: FIXME: switch to ic_lock_vibrate_mode when available
                 mEnabledIconResId = (Settings.System.getInt(mContext.getContentResolver(),
                         Settings.System.VIBRATE_IN_SILENT, 1) == 1)
-                    ? R.drawable.ic_lock_silent_mode_vibrate
-                    : R.drawable.ic_lock_silent_mode;
+                    ? R.drawable.ic_audio_ring_notif_vibrate
+                    : R.drawable.ic_audio_vol_mute;
             }
 
             void onToggle(boolean on) {
@@ -221,15 +216,11 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
         final AlertDialog.Builder ab = new AlertDialog.Builder(mContext);
 
         ab.setAdapter(mAdapter, this)
-                .setInverseBackgroundForced(true);
+                .setInverseBackgroundForced(true)
+                .setTitle(R.string.global_actions);
 
         final AlertDialog dialog = ab.create();
         dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_DIALOG);
-        if (!mContext.getResources().getBoolean(
-                com.android.internal.R.bool.config_sf_slowBlur)) {
-            dialog.getWindow().setFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND,
-                    WindowManager.LayoutParams.FLAG_BLUR_BEHIND);
-        }
 
         dialog.setOnDismissListener(this);
 
@@ -248,13 +239,11 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
         } else {
             mDialog.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_DIALOG);
         }
-        mDialog.setTitle(R.string.global_actions);
     }
 
 
     /** {@inheritDoc} */
     public void onDismiss(DialogInterface dialog) {
-        mStatusBar.disable(StatusBarManager.DISABLE_NONE);
     }
 
     /** {@inheritDoc} */
@@ -316,9 +305,10 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
                 filteredPos++;
             }
 
-            throw new IllegalArgumentException("position " + position + " out of "
-                    + "range of showable actions, filtered count = "
-                    + "= " + getCount() + ", keyguardshowing=" + mKeyguardShowing
+            throw new IllegalArgumentException("position " + position
+                    + " out of range of showable actions"
+                    + ", filtered count=" + getCount()
+                    + ", keyguardshowing=" + mKeyguardShowing
                     + ", provisioned=" + mDeviceProvisioned);
         }
 

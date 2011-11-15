@@ -19,7 +19,9 @@
 #include <utils/Log.h>
 
 #include "include/NuCachedSource2.h"
+#include "include/HTTPBase.h"
 
+#include <cutils/properties.h>
 #include <media/stagefright/foundation/ADebug.h>
 #include <media/stagefright/foundation/AMessage.h>
 #include <media/stagefright/MediaErrors.h>
@@ -135,6 +137,10 @@ size_t PageCache::releaseFromStart(size_t maxBytes) {
 void PageCache::copy(size_t from, void *data, size_t size) {
     LOGV("copy from %d size %d", from, size);
 
+    if (size == 0) {
+        return;
+    }
+
     CHECK_LE(from + size, mTotalSize);
 
     size_t offset = 0;
@@ -171,7 +177,10 @@ void PageCache::copy(size_t from, void *data, size_t size) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-NuCachedSource2::NuCachedSource2(const sp<DataSource> &source)
+NuCachedSource2::NuCachedSource2(
+        const sp<DataSource> &source,
+        const char *cacheConfig,
+        bool disconnectAtHighwatermark)
     : mSource(source),
       mReflector(new AHandlerReflector<NuCachedSource2>(this)),
       mLooper(new ALooper),
@@ -181,7 +190,27 @@ NuCachedSource2::NuCachedSource2(const sp<DataSource> &source)
       mLastAccessPos(0),
       mFetching(true),
       mLastFetchTimeUs(-1),
-      mSuspended(false) {
+      mNumRetriesLeft(kMaxNumRetries),
+      mHighwaterThresholdBytes(kDefaultHighWaterThreshold),
+      mLowwaterThresholdBytes(kDefaultLowWaterThreshold),
+      mKeepAliveIntervalUs(kDefaultKeepAliveIntervalUs),
+      mDisconnectAtHighwatermark(disconnectAtHighwatermark) {
+    // We are NOT going to support disconnect-at-highwatermark indefinitely
+    // and we are not guaranteeing support for client-specified cache
+    // parameters. Both of these are temporary measures to solve a specific
+    // problem that will be solved in a better way going forward.
+
+    updateCacheParamsFromSystemProperty();
+
+    if (cacheConfig != NULL) {
+        updateCacheParamsFromString(cacheConfig);
+    }
+
+    if (mDisconnectAtHighwatermark) {
+        // Makes no sense to disconnect and do keep-alives...
+        mKeepAliveIntervalUs = 0;
+    }
+
     mLooper->setName("NuCachedSource2");
     mLooper->registerHandler(mReflector);
     mLooper->start();
@@ -198,16 +227,34 @@ NuCachedSource2::~NuCachedSource2() {
     mCache = NULL;
 }
 
+status_t NuCachedSource2::getEstimatedBandwidthKbps(int32_t *kbps) {
+    if (mSource->flags() & kIsHTTPBasedSource) {
+        HTTPBase* source = static_cast<HTTPBase *>(mSource.get());
+        return source->getEstimatedBandwidthKbps(kbps);
+    }
+    return ERROR_UNSUPPORTED;
+}
+
+status_t NuCachedSource2::setCacheStatCollectFreq(int32_t freqMs) {
+    if (mSource->flags() & kIsHTTPBasedSource) {
+        HTTPBase *source = static_cast<HTTPBase *>(mSource.get());
+        return source->setBandwidthStatCollectFreq(freqMs);
+    }
+    return ERROR_UNSUPPORTED;
+}
+
 status_t NuCachedSource2::initCheck() const {
     return mSource->initCheck();
 }
 
-status_t NuCachedSource2::getSize(off_t *size) {
+status_t NuCachedSource2::getSize(off64_t *size) {
     return mSource->getSize(size);
 }
 
 uint32_t NuCachedSource2::flags() {
-    return (mSource->flags() & ~kWantsPrefetching) | kIsCachingDataSource;
+    // Remove HTTP related flags since NuCachedSource2 is not HTTP-based.
+    uint32_t flags = mSource->flags() & ~(kWantsPrefetching | kIsHTTPBasedSource);
+    return (flags | kIsCachingDataSource);
 }
 
 void NuCachedSource2::onMessageReceived(const sp<AMessage> &msg) {
@@ -224,12 +271,6 @@ void NuCachedSource2::onMessageReceived(const sp<AMessage> &msg) {
             break;
         }
 
-        case kWhatSuspend:
-        {
-            onSuspend();
-            break;
-        }
-
         default:
             TRESPASS();
     }
@@ -238,7 +279,35 @@ void NuCachedSource2::onMessageReceived(const sp<AMessage> &msg) {
 void NuCachedSource2::fetchInternal() {
     LOGV("fetchInternal");
 
-    CHECK_EQ(mFinalStatus, (status_t)OK);
+    bool reconnect = false;
+
+    {
+        Mutex::Autolock autoLock(mLock);
+        CHECK(mFinalStatus == OK || mNumRetriesLeft > 0);
+
+        if (mFinalStatus != OK) {
+            --mNumRetriesLeft;
+
+            reconnect = true;
+        }
+    }
+
+    if (reconnect) {
+        status_t err =
+            mSource->reconnectAtOffset(mCacheOffset + mCache->totalSize());
+
+        Mutex::Autolock autoLock(mLock);
+
+        if (err == ERROR_UNSUPPORTED) {
+            mNumRetriesLeft = 0;
+            return;
+        } else if (err != OK) {
+            LOGI("The attempt to reconnect failed, %d retries remaining",
+                 mNumRetriesLeft);
+
+            return;
+        }
+    }
 
     PageCache::Page *page = mCache->acquirePage();
 
@@ -248,14 +317,23 @@ void NuCachedSource2::fetchInternal() {
     Mutex::Autolock autoLock(mLock);
 
     if (n < 0) {
-        LOGE("source returned error %ld", n);
+        LOGE("source returned error %ld, %d retries left", n, mNumRetriesLeft);
         mFinalStatus = n;
         mCache->releasePage(page);
     } else if (n == 0) {
         LOGI("ERROR_END_OF_STREAM");
+
+        mNumRetriesLeft = 0;
         mFinalStatus = ERROR_END_OF_STREAM;
+
         mCache->releasePage(page);
     } else {
+        if (mFinalStatus != OK) {
+            LOGI("retrying a previously failed read succeeded.");
+        }
+        mNumRetriesLeft = kMaxNumRetries;
+        mFinalStatus = OK;
+
         page->mSize = n;
         mCache->appendPage(page);
     }
@@ -264,16 +342,16 @@ void NuCachedSource2::fetchInternal() {
 void NuCachedSource2::onFetch() {
     LOGV("onFetch");
 
-    if (mFinalStatus != OK) {
+    if (mFinalStatus != OK && mNumRetriesLeft == 0) {
         LOGV("EOS reached, done prefetching for now");
         mFetching = false;
     }
 
     bool keepAlive =
         !mFetching
-            && !mSuspended
             && mFinalStatus == OK
-            && ALooper::GetNowUs() >= mLastFetchTimeUs + kKeepAliveIntervalUs;
+            && mKeepAliveIntervalUs > 0
+            && ALooper::GetNowUs() >= mLastFetchTimeUs + mKeepAliveIntervalUs;
 
     if (mFetching || keepAlive) {
         if (keepAlive) {
@@ -284,17 +362,34 @@ void NuCachedSource2::onFetch() {
 
         mLastFetchTimeUs = ALooper::GetNowUs();
 
-        if (mFetching && mCache->totalSize() >= kHighWaterThreshold) {
+        if (mFetching && mCache->totalSize() >= mHighwaterThresholdBytes) {
             LOGI("Cache full, done prefetching for now");
             mFetching = false;
+
+            if (mDisconnectAtHighwatermark
+                    && (mSource->flags() & DataSource::kIsHTTPBasedSource)) {
+                LOGV("Disconnecting at high watermark");
+                static_cast<HTTPBase *>(mSource.get())->disconnect();
+            }
         }
-    } else if (!mSuspended) {
+    } else {
         Mutex::Autolock autoLock(mLock);
         restartPrefetcherIfNecessary_l();
     }
 
-    (new AMessage(kWhatFetchMore, mReflector->id()))->post(
-            mFetching ? 0 : 100000ll);
+    int64_t delayUs;
+    if (mFetching) {
+        if (mFinalStatus != OK && mNumRetriesLeft > 0) {
+            // We failed this time and will try again in 3 seconds.
+            delayUs = 3000000ll;
+        } else {
+            delayUs = 0;
+        }
+    } else {
+        delayUs = 100000ll;
+    }
+
+    (new AMessage(kWhatFetchMore, mReflector->id()))->post(delayUs);
 }
 
 void NuCachedSource2::onRead(const sp<AMessage> &msg) {
@@ -326,30 +421,28 @@ void NuCachedSource2::onRead(const sp<AMessage> &msg) {
     mCondition.signal();
 }
 
-void NuCachedSource2::restartPrefetcherIfNecessary_l(bool force) {
-    static const size_t kGrayArea = 256 * 1024;
+void NuCachedSource2::restartPrefetcherIfNecessary_l(
+        bool ignoreLowWaterThreshold, bool force) {
+    static const size_t kGrayArea = 1024 * 1024;
 
-    if (mFetching || mFinalStatus != OK) {
+    if (mFetching || (mFinalStatus != OK && mNumRetriesLeft == 0)) {
         return;
     }
 
-    size_t maxBytes;
+    if (!ignoreLowWaterThreshold && !force
+            && mCacheOffset + mCache->totalSize() - mLastAccessPos
+                >= mLowwaterThresholdBytes) {
+        return;
+    }
+
+    size_t maxBytes = mLastAccessPos - mCacheOffset;
 
     if (!force) {
-        if (mCacheOffset + mCache->totalSize() - mLastAccessPos
-                >= kLowWaterThreshold) {
-            return;
-        }
-
-        maxBytes = mLastAccessPos - mCacheOffset;
         if (maxBytes < kGrayArea) {
             return;
         }
 
         maxBytes -= kGrayArea;
-    } else {
-        // Empty it all out.
-        maxBytes = mLastAccessPos - mCacheOffset;
     }
 
     size_t actualBytes = mCache->releaseFromStart(maxBytes);
@@ -359,10 +452,10 @@ void NuCachedSource2::restartPrefetcherIfNecessary_l(bool force) {
     mFetching = true;
 }
 
-ssize_t NuCachedSource2::readAt(off_t offset, void *data, size_t size) {
+ssize_t NuCachedSource2::readAt(off64_t offset, void *data, size_t size) {
     Mutex::Autolock autoSerializer(mSerializer);
 
-    LOGV("readAt offset %ld, size %d", offset, size);
+    LOGV("readAt offset %lld, size %d", offset, size);
 
     Mutex::Autolock autoLock(mLock);
 
@@ -407,41 +500,49 @@ size_t NuCachedSource2::cachedSize() {
     return mCacheOffset + mCache->totalSize();
 }
 
-size_t NuCachedSource2::approxDataRemaining(bool *eos) {
+size_t NuCachedSource2::approxDataRemaining(status_t *finalStatus) {
     Mutex::Autolock autoLock(mLock);
-    return approxDataRemaining_l(eos);
+    return approxDataRemaining_l(finalStatus);
 }
 
-size_t NuCachedSource2::approxDataRemaining_l(bool *eos) {
-    *eos = (mFinalStatus != OK);
-    off_t lastBytePosCached = mCacheOffset + mCache->totalSize();
+size_t NuCachedSource2::approxDataRemaining_l(status_t *finalStatus) {
+    *finalStatus = mFinalStatus;
+
+    if (mFinalStatus != OK && mNumRetriesLeft > 0) {
+        // Pretend that everything is fine until we're out of retries.
+        *finalStatus = OK;
+    }
+
+    off64_t lastBytePosCached = mCacheOffset + mCache->totalSize();
     if (mLastAccessPos < lastBytePosCached) {
         return lastBytePosCached - mLastAccessPos;
     }
     return 0;
 }
 
-ssize_t NuCachedSource2::readInternal(off_t offset, void *data, size_t size) {
-    CHECK(size <= kHighWaterThreshold);
+ssize_t NuCachedSource2::readInternal(off64_t offset, void *data, size_t size) {
+    CHECK_LE(size, (size_t)mHighwaterThresholdBytes);
 
-    LOGV("readInternal offset %ld size %d", offset, size);
+    LOGV("readInternal offset %lld size %d", offset, size);
 
     Mutex::Autolock autoLock(mLock);
 
     if (!mFetching) {
         mLastAccessPos = offset;
-        restartPrefetcherIfNecessary_l(true /* force */);
+        restartPrefetcherIfNecessary_l(
+                false, // ignoreLowWaterThreshold
+                true); // force
     }
 
     if (offset < mCacheOffset
-            || offset >= (off_t)(mCacheOffset + mCache->totalSize())) {
-        static const off_t kPadding = 32768;
+            || offset >= (off64_t)(mCacheOffset + mCache->totalSize())) {
+        static const off64_t kPadding = 256 * 1024;
 
         // In the presence of multiple decoded streams, once of them will
         // trigger this seek request, the other one will request data "nearby"
         // soon, adjust the seek position so that that subsequent request
         // does not trigger another seek.
-        off_t seekOffset = (offset > kPadding) ? offset - kPadding : 0;
+        off64_t seekOffset = (offset > kPadding) ? offset - kPadding : 0;
 
         seekInternal_l(seekOffset);
     }
@@ -454,6 +555,11 @@ ssize_t NuCachedSource2::readInternal(off_t offset, void *data, size_t size) {
         }
 
         size_t avail = mCache->totalSize() - delta;
+
+        if (avail > size) {
+            avail = size;
+        }
+
         mCache->copy(delta, data, avail);
 
         return avail;
@@ -470,15 +576,15 @@ ssize_t NuCachedSource2::readInternal(off_t offset, void *data, size_t size) {
     return -EAGAIN;
 }
 
-status_t NuCachedSource2::seekInternal_l(off_t offset) {
+status_t NuCachedSource2::seekInternal_l(off64_t offset) {
     mLastAccessPos = offset;
 
     if (offset >= mCacheOffset
-            && offset <= (off_t)(mCacheOffset + mCache->totalSize())) {
+            && offset <= (off64_t)(mCacheOffset + mCache->totalSize())) {
         return OK;
     }
 
-    LOGI("new range: offset= %ld", offset);
+    LOGI("new range: offset= %lld", offset);
 
     mCacheOffset = offset;
 
@@ -491,39 +597,106 @@ status_t NuCachedSource2::seekInternal_l(off_t offset) {
     return OK;
 }
 
-void NuCachedSource2::clearCacheAndResume() {
-    LOGV("clearCacheAndResume");
-
+void NuCachedSource2::resumeFetchingIfNecessary() {
     Mutex::Autolock autoLock(mLock);
 
-    CHECK(mSuspended);
-
-    mCacheOffset = 0;
-    mFinalStatus = OK;
-    mLastAccessPos = 0;
-    mLastFetchTimeUs = -1;
-
-    size_t totalSize = mCache->totalSize();
-    CHECK_EQ(mCache->releaseFromStart(totalSize), totalSize);
-
-    mFetching = true;
-    mSuspended = false;
+    restartPrefetcherIfNecessary_l(true /* ignore low water threshold */);
 }
 
-void NuCachedSource2::suspend() {
-    (new AMessage(kWhatSuspend, mReflector->id()))->post();
+sp<DecryptHandle> NuCachedSource2::DrmInitialization() {
+    return mSource->DrmInitialization();
+}
 
-    while (!mSuspended) {
-        usleep(10000);
+void NuCachedSource2::getDrmInfo(sp<DecryptHandle> &handle, DrmManagerClient **client) {
+    mSource->getDrmInfo(handle, client);
+}
+
+String8 NuCachedSource2::getUri() {
+    return mSource->getUri();
+}
+
+String8 NuCachedSource2::getMIMEType() const {
+    return mSource->getMIMEType();
+}
+
+void NuCachedSource2::updateCacheParamsFromSystemProperty() {
+    char value[PROPERTY_VALUE_MAX];
+    if (!property_get("media.stagefright.cache-params", value, NULL)) {
+        return;
+    }
+
+    updateCacheParamsFromString(value);
+}
+
+void NuCachedSource2::updateCacheParamsFromString(const char *s) {
+    ssize_t lowwaterMarkKb, highwaterMarkKb;
+    int keepAliveSecs;
+
+    if (sscanf(s, "%ld/%ld/%d",
+               &lowwaterMarkKb, &highwaterMarkKb, &keepAliveSecs) != 3) {
+        LOGE("Failed to parse cache parameters from '%s'.", s);
+        return;
+    }
+
+    if (lowwaterMarkKb >= 0) {
+        mLowwaterThresholdBytes = lowwaterMarkKb * 1024;
+    } else {
+        mLowwaterThresholdBytes = kDefaultLowWaterThreshold;
+    }
+
+    if (highwaterMarkKb >= 0) {
+        mHighwaterThresholdBytes = highwaterMarkKb * 1024;
+    } else {
+        mHighwaterThresholdBytes = kDefaultHighWaterThreshold;
+    }
+
+    if (mLowwaterThresholdBytes >= mHighwaterThresholdBytes) {
+        LOGE("Illegal low/highwater marks specified, reverting to defaults.");
+
+        mLowwaterThresholdBytes = kDefaultLowWaterThreshold;
+        mHighwaterThresholdBytes = kDefaultHighWaterThreshold;
+    }
+
+    if (keepAliveSecs >= 0) {
+        mKeepAliveIntervalUs = keepAliveSecs * 1000000ll;
+    } else {
+        mKeepAliveIntervalUs = kDefaultKeepAliveIntervalUs;
+    }
+
+    LOGV("lowwater = %d bytes, highwater = %d bytes, keepalive = %lld us",
+         mLowwaterThresholdBytes,
+         mHighwaterThresholdBytes,
+         mKeepAliveIntervalUs);
+}
+
+// static
+void NuCachedSource2::RemoveCacheSpecificHeaders(
+        KeyedVector<String8, String8> *headers,
+        String8 *cacheConfig,
+        bool *disconnectAtHighwatermark) {
+    *cacheConfig = String8();
+    *disconnectAtHighwatermark = false;
+
+    if (headers == NULL) {
+        return;
+    }
+
+    ssize_t index;
+    if ((index = headers->indexOfKey(String8("x-cache-config"))) >= 0) {
+        *cacheConfig = headers->valueAt(index);
+
+        headers->removeItemsAt(index);
+
+        LOGV("Using special cache config '%s'", cacheConfig->string());
+    }
+
+    if ((index = headers->indexOfKey(
+                    String8("x-disconnect-at-highwatermark"))) >= 0) {
+        *disconnectAtHighwatermark = true;
+        headers->removeItemsAt(index);
+
+        LOGV("Client requested disconnection at highwater mark");
     }
 }
 
-void NuCachedSource2::onSuspend() {
-    Mutex::Autolock autoLock(mLock);
-
-    mFetching = false;
-    mSuspended = true;
-}
-
 }  // namespace android
-

@@ -6,17 +6,9 @@ LOCAL_SRC_FILES:=                     \
         SoftwareRenderer.cpp
 
 LOCAL_C_INCLUDES := \
-        $(TOP)/frameworks/base/include/media/stagefright/openmax
-
-LOCAL_SHARED_LIBRARIES :=       \
-        libbinder               \
-        libmedia                \
-        libutils                \
-        libui                   \
-        libcutils				\
-        libsurfaceflinger_client\
-        libcamera_client
+        $(TOP)/frameworks/base/include/media/stagefright/openmax \
+        $(TOP)/hardware/msm7k
 
 LOCAL_MODULE:= libstagefright_color_conversion
 
-include $(BUILD_SHARED_LIBRARY)
+include $(BUILD_STATIC_LIBRARY)

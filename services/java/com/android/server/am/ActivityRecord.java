@@ -24,8 +24,10 @@ import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
+import android.content.res.CompatibilityInfo;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Message;
 import android.os.Process;
@@ -36,6 +38,7 @@ import android.util.Log;
 import android.util.Slog;
 import android.util.TimeUtils;
 import android.view.IApplicationToken;
+import android.view.WindowManager;
 
 import java.io.PrintWriter;
 import java.lang.ref.WeakReference;
@@ -45,7 +48,7 @@ import java.util.HashSet;
 /**
  * An entry in the history stack, representing an activity.
  */
-class ActivityRecord extends IApplicationToken.Stub {
+final class ActivityRecord extends IApplicationToken.Stub {
     final ActivityManagerService service; // owner
     final ActivityStack stack; // owner
     final ActivityInfo info; // all about me
@@ -58,7 +61,8 @@ class ActivityRecord extends IApplicationToken.Stub {
     final String processName; // process where this component wants to run
     final String taskAffinity; // as per ActivityInfo.taskAffinity
     final boolean stateNotNeeded; // As per ActivityInfo.flags
-    final boolean fullscreen;     // covers the full screen?
+    final boolean fullscreen; // covers the full screen?
+    final boolean noDisplay;  // activity is not displayed?
     final boolean componentSpecified;  // did caller specifiy an explicit component?
     final boolean isHomeActivity; // do we consider this to be a home activity?
     final String baseDir;   // where activity source (resources etc) located
@@ -68,11 +72,15 @@ class ActivityRecord extends IApplicationToken.Stub {
     int labelRes;           // the label information from the package mgr.
     int icon;               // resource identifier of activity's icon.
     int theme;              // resource identifier of activity's theme.
+    int realTheme;          // actual theme resource we will use, never 0.
+    int windowFlags;        // custom window flags for preview window.
     TaskRecord task;        // the task this is in.
+    ThumbnailHolder thumbHolder; // where our thumbnails should go.
     long launchTime;        // when we starting launching this activity
     long startTime;         // last time this activity was started
     long cpuTimeAtResume;   // the cpu time of host process at the time of resuming activity
     Configuration configuration; // configuration activity was last running in
+    CompatibilityInfo compat;// last used compatibility mode
     ActivityRecord resultTo; // who started this entry, so will get our reply
     final String resultWho; // additional identifier for use by resultTo.
     final int requestCode;  // code given by requester (resultTo)
@@ -81,9 +89,7 @@ class ActivityRecord extends IApplicationToken.Stub {
     ArrayList newIntents;   // any pending new intents for single-top mode
     HashSet<ConnectionRecord> connections; // All ConnectionRecord we hold
     UriPermissionOwner uriPermissions; // current special URI access perms.
-    ProcessRecord app;  // if non-null, hosting application
-    Bitmap thumbnail;       // icon representation of paused screen
-    CharSequence description; // textual description of paused screen
+    ProcessRecord app;      // if non-null, hosting application
     ActivityState state;    // current state we are in
     Bundle  icicle;         // last saved activity state
     boolean frontOfTask;    // is this the root activity of its task?
@@ -95,24 +101,28 @@ class ActivityRecord extends IApplicationToken.Stub {
     boolean configDestroy;  // need to destroy due to config change?
     int configChangeFlags;  // which config values have changed
     boolean keysPaused;     // has key dispatching been paused for it?
-    boolean inHistory;      // are we in the history stack?
     int launchMode;         // the launch mode activity attribute.
     boolean visible;        // does this activity's window need to be shown?
+    boolean sleeping;       // have we told the activity to sleep?
     boolean waitingVisible; // true if waiting for a new act to become vis
     boolean nowVisible;     // is this activity's window visible?
     boolean thumbnailNeeded;// has someone requested a thumbnail?
     boolean idle;           // has the activity gone idle?
     boolean hasBeenLaunched;// has this activity ever been launched?
     boolean frozenBeforeDestroy;// has been frozen but not yet destroyed.
+    boolean immersive;      // immersive mode (don't interrupt if possible)
+    boolean forceNewConfig; // force re-create with new config next time
 
     String stringName;      // for caching of toString().
     
+    private boolean inHistory;  // are we in the history stack?
+
     void dump(PrintWriter pw, String prefix) {
         pw.print(prefix); pw.print("packageName="); pw.print(packageName);
                 pw.print(" processName="); pw.println(processName);
         pw.print(prefix); pw.print("launchedFromUid="); pw.print(launchedFromUid);
                 pw.print(" app="); pw.println(app);
-        pw.print(prefix); pw.println(intent);
+        pw.print(prefix); pw.println(intent.toInsecureString());
         pw.print(prefix); pw.print("frontOfTask="); pw.print(frontOfTask);
                 pw.print(" task="); pw.println(task);
         pw.print(prefix); pw.print("taskAffinity="); pw.println(taskAffinity);
@@ -128,7 +138,8 @@ class ActivityRecord extends IApplicationToken.Stub {
         pw.print(prefix); pw.print("stateNotNeeded="); pw.print(stateNotNeeded);
                 pw.print(" componentSpecified="); pw.print(componentSpecified);
                 pw.print(" isHomeActivity="); pw.println(isHomeActivity);
-        pw.print(prefix); pw.print("configuration="); pw.println(configuration);
+        pw.print(prefix); pw.print("config="); pw.println(configuration);
+        pw.print(prefix); pw.print("compat="); pw.println(compat);
         if (resultTo != null || resultWho != null) {
             pw.print(prefix); pw.print("resultTo="); pw.print(resultTo);
                     pw.print(" resultWho="); pw.print(resultWho);
@@ -159,12 +170,17 @@ class ActivityRecord extends IApplicationToken.Stub {
                 pw.print(" finishing="); pw.println(finishing);
         pw.print(prefix); pw.print("keysPaused="); pw.print(keysPaused);
                 pw.print(" inHistory="); pw.print(inHistory);
-                pw.print(" launchMode="); pw.println(launchMode);
-        pw.print(prefix); pw.print("fullscreen="); pw.print(fullscreen);
                 pw.print(" visible="); pw.print(visible);
-                pw.print(" frozenBeforeDestroy="); pw.print(frozenBeforeDestroy);
-                pw.print(" thumbnailNeeded="); pw.print(thumbnailNeeded);
+                pw.print(" sleeping="); pw.print(sleeping);
                 pw.print(" idle="); pw.println(idle);
+        pw.print(prefix); pw.print("fullscreen="); pw.print(fullscreen);
+                pw.print(" noDisplay="); pw.print(noDisplay);
+                pw.print(" immersive="); pw.print(immersive);
+                pw.print(" launchMode="); pw.println(launchMode);
+        pw.print(prefix); pw.print("frozenBeforeDestroy="); pw.print(frozenBeforeDestroy);
+                pw.print(" thumbnailNeeded="); pw.print(thumbnailNeeded);
+                pw.print(" forceNewConfig="); pw.println(forceNewConfig);
+        pw.print(prefix); pw.print("thumbHolder="); pw.println(thumbHolder);
         if (launchTime != 0 || startTime != 0) {
             pw.print(prefix); pw.print("launchTime=");
                     TimeUtils.formatDuration(launchTime, pw); pw.print(" startTime=");
@@ -242,6 +258,16 @@ class ActivityRecord extends IApplicationToken.Stub {
             }
             icon = aInfo.getIconResource();
             theme = aInfo.getThemeResource();
+            realTheme = theme;
+            if (realTheme == 0) {
+                realTheme = aInfo.applicationInfo.targetSdkVersion
+                        < Build.VERSION_CODES.HONEYCOMB
+                        ? android.R.style.Theme
+                        : android.R.style.Theme_Holo;
+            }
+            if ((aInfo.flags&ActivityInfo.FLAG_HARDWARE_ACCELERATED) != 0) {
+                windowFlags |= WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED;
+            }
             if ((aInfo.flags&ActivityInfo.FLAG_MULTIPROCESS) != 0
                     && _caller != null
                     && (aInfo.applicationInfo.uid == Process.SYSTEM_UID
@@ -259,12 +285,13 @@ class ActivityRecord extends IApplicationToken.Stub {
             launchMode = aInfo.launchMode;
             
             AttributeCache.Entry ent = AttributeCache.instance().get(packageName,
-                    theme != 0 ? theme : android.R.style.Theme,
-                    com.android.internal.R.styleable.Window);
+                    realTheme, com.android.internal.R.styleable.Window);
             fullscreen = ent != null && !ent.array.getBoolean(
                     com.android.internal.R.styleable.Window_windowIsFloating, false)
                     && !ent.array.getBoolean(
                     com.android.internal.R.styleable.Window_windowIsTranslucent, false);
+            noDisplay = ent != null && ent.array.getBoolean(
+                    com.android.internal.R.styleable.Window_windowNoDisplay, false);
             
             if (!_componentSpecified || _launchedFromUid == Process.myUid()
                     || _launchedFromUid == 0) {
@@ -289,6 +316,8 @@ class ActivityRecord extends IApplicationToken.Stub {
             } else {
                 isHomeActivity = false;
             }
+
+            immersive = (aInfo.flags & ActivityInfo.FLAG_IMMERSIVE) != 0;
         } else {
             realActivity = null;
             taskAffinity = null;
@@ -299,7 +328,63 @@ class ActivityRecord extends IApplicationToken.Stub {
             processName = null;
             packageName = null;
             fullscreen = true;
+            noDisplay = false;
             isHomeActivity = false;
+            immersive = false;
+        }
+    }
+
+    void setTask(TaskRecord newTask, ThumbnailHolder newThumbHolder, boolean isRoot) {
+        if (inHistory && !finishing) {
+            if (task != null) {
+                task.numActivities--;
+            }
+            if (newTask != null) {
+                newTask.numActivities++;
+            }
+        }
+        if (newThumbHolder == null) {
+            newThumbHolder = newTask;
+        }
+        task = newTask;
+        if (!isRoot && (intent.getFlags()&Intent.FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET) != 0) {
+            // This is the start of a new sub-task.
+            if (thumbHolder == null) {
+                thumbHolder = new ThumbnailHolder();
+            }
+        } else {
+            thumbHolder = newThumbHolder;
+        }
+    }
+
+    void putInHistory() {
+        if (!inHistory) {
+            inHistory = true;
+            if (task != null && !finishing) {
+                task.numActivities++;
+            }
+        }
+    }
+
+    void takeFromHistory() {
+        if (inHistory) {
+            inHistory = false;
+            if (task != null && !finishing) {
+                task.numActivities--;
+            }
+        }
+    }
+
+    boolean isInHistory() {
+        return inHistory;
+    }
+
+    void makeFinishing() {
+        if (!finishing) {
+            finishing = true;
+            if (task != null && inHistory) {
+                task.numActivities--;
+            }
         }
     }
 
@@ -396,6 +481,25 @@ class ActivityRecord extends IApplicationToken.Stub {
         }
     }
 
+    void updateThumbnail(Bitmap newThumbnail, CharSequence description) {
+        if ((intent.getFlags()&Intent.FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET) != 0) {
+            // This is a logical break in the task; it repre
+        }
+        if (thumbHolder != null) {
+            if (newThumbnail != null) {
+                thumbHolder.lastThumbnail = newThumbnail;
+            }
+            thumbHolder.lastDescription = description;
+        }
+    }
+
+    void clearThumbnail() {
+        if (thumbHolder != null) {
+            thumbHolder.lastThumbnail = null;
+            thumbHolder.lastDescription = null;
+        }
+    }
+
     // IApplicationToken
 
     public boolean mayFreezeScreenLocked(ProcessRecord app) {
@@ -403,7 +507,7 @@ class ActivityRecord extends IApplicationToken.Stub {
         // an application, and that application is not blocked or unresponding.
         // In any other case, we can't count on getting the screen unfrozen,
         // so it is best to leave as-is.
-        return app == null || (!app.crashing && !app.notResponding);
+        return app != null && !app.crashing && !app.notResponding;
     }
     
     public void startFreezingScreenLocked(ProcessRecord app, int configChanges) {
@@ -554,12 +658,12 @@ class ActivityRecord extends IApplicationToken.Stub {
     public long getKeyDispatchingTimeout() {
         synchronized(service) {
             ActivityRecord r = getWaitingHistoryRecordLocked();
-            if (r == null || r.app == null
-                    || r.app.instrumentationClass == null) {
-                return ActivityManagerService.KEY_DISPATCHING_TIMEOUT;
+            if (r != null && r.app != null
+                    && (r.app.instrumentationClass != null || r.app.usingWrapper)) {
+                return ActivityManagerService.INSTRUMENTATION_KEY_DISPATCHING_TIMEOUT;
             }
-            
-            return ActivityManagerService.INSTRUMENTATION_KEY_DISPATCHING_TIMEOUT;
+
+            return ActivityManagerService.KEY_DISPATCHING_TIMEOUT;
         }
     }
 
@@ -570,14 +674,32 @@ class ActivityRecord extends IApplicationToken.Stub {
     public boolean isInterestingToUserLocked() {
         return visible || nowVisible || state == ActivityState.PAUSING || 
                 state == ActivityState.RESUMED;
-     }
+    }
+
+    public void setSleeping(boolean _sleeping) {
+        if (sleeping == _sleeping) {
+            return;
+        }
+        if (app != null && app.thread != null) {
+            try {
+                app.thread.scheduleSleeping(this, _sleeping);
+                if (sleeping && !stack.mGoingToSleepActivities.contains(this)) {
+                    stack.mGoingToSleepActivities.add(this);
+                }
+                sleeping = _sleeping;
+            } catch (RemoteException e) {
+                Slog.w(ActivityStack.TAG, "Exception thrown when sleeping: "
+                        + intent.getComponent(), e);
+            }
+        }
+    }
     
     public String toString() {
         if (stringName != null) {
             return stringName;
         }
         StringBuilder sb = new StringBuilder(128);
-        sb.append("HistoryRecord{");
+        sb.append("ActivityRecord{");
         sb.append(Integer.toHexString(System.identityHashCode(this)));
         sb.append(' ');
         sb.append(intent.getComponent().flattenToShortString());

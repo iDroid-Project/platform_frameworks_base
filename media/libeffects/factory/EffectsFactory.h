@@ -22,10 +22,10 @@
 #include <dirent.h>
 #include <media/EffectsFactoryApi.h>
 
-
 #if __cplusplus
 extern "C" {
 #endif
+
 
 typedef struct list_elem_s {
     void *object;
@@ -33,18 +33,17 @@ typedef struct list_elem_s {
 } list_elem_t;
 
 typedef struct lib_entry_s {
-    char path[PATH_MAX];
+    audio_effect_library_t *desc;
+    char *name;
+    char *path;
     void *handle;
-    int id;
-    effect_CreateEffect_t createFx;
-    effect_ReleaseEffect_t releaseFx;
     list_elem_t *effects; //list of effect_descriptor_t
     pthread_mutex_t lock;
 } lib_entry_t;
 
 typedef struct effect_entry_s {
     struct effect_interface_s *itfe;
-    effect_interface_t subItfe;
+    effect_handle_t subItfe;
     lib_entry_t *lib;
 } effect_entry_t;
 

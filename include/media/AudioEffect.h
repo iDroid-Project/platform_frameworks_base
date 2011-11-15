@@ -21,9 +21,10 @@
 #include <sys/types.h>
 
 #include <media/IAudioFlinger.h>
+#include <media/IAudioPolicyService.h>
 #include <media/IEffect.h>
 #include <media/IEffectClient.h>
-#include <media/EffectApi.h>
+#include <hardware/audio_effect.h>
 #include <media/AudioSystem.h>
 
 #include <utils/RefBase.h>
@@ -42,50 +43,6 @@ class effect_param_cblk_t;
 class AudioEffect : public RefBase
 {
 public:
-
-    /*
-     *  Static methods for effect libraries management.
-     */
-
-    /*
-     *   Loads the effect library which path is given as first argument.
-     *   This must be the full path of a dynamic library (.so) implementing one or
-     *   more effect engines and exposing the effect library interface described in
-     *   EffectApi.h. The function returns a handle on the library for use by
-     *   further call to unloadEffectLibrary() to unload the library.
-     *
-     *   Parameters:
-     *          libPath:    full path of the dynamic library file in the file system.
-     *          handle:     address where to return the library handle
-     *
-     *   Returned status (from utils/Errors.h) can be:
-     *          NO_ERROR    successful operation.
-     *          PERMISSION_DENIED could not get AudioFlinger interface or
-     *                      application does not have permission to configure audio
-     *          NO_INIT     effect factory not initialized or
-     *                      library could not be loaded or
-     *                      library does not implement required functions
-     *          BAD_VALUE   invalid libPath string or handle
-     *
-     *   Returned value:
-     *          *handle updated with library handle
-     */
-    static status_t loadEffectLibrary(const char *libPath, int *handle);
-
-    /*
-     *   Unloads the effect library which handle is given as argument.
-     *
-     *   Parameters:
-     *          handle: library handle
-     *
-     *   Returned status (from utils/Errors.h) can be:
-     *          NO_ERROR    successful operation.
-     *          PERMISSION_DENIED could not get AudioFlinger interface or
-     *                      application does not have permission to configure audio
-     *          NO_INIT     effect factory not initialized
-     *          BAD_VALUE   invalid handle
-     */
-    static status_t unloadEffectLibrary(int handle);
 
     /*
      *  Static methods for effects enumeration.
@@ -153,6 +110,36 @@ public:
      */
     static status_t getEffectDescriptor(effect_uuid_t *uuid, effect_descriptor_t *descriptor);
 
+
+    /*
+     * Returns a list of descriptors corresponding to the pre processings enabled by default
+     * on an AudioRecord with the supplied audio session ID.
+     *
+     * Parameters:
+     *      audioSession:  audio session ID.
+     *      descriptors: address where the effect descriptors should be returned.
+     *      count: as input, the maximum number of descriptor than should be returned
+     *             as output, the number of descriptor returned if status is NO_ERROR or the actual
+     *             number of enabled pre processings if status is NO_MEMORY
+     *
+     * Returned status (from utils/Errors.h) can be:
+     *      NO_ERROR        successful operation.
+     *      NO_MEMORY       the number of descriptor to return is more than the maximum number
+     *                      indicated by count.
+     *      PERMISSION_DENIED could not get AudioFlinger interface
+     *      NO_INIT         effect library failed to initialize
+     *      BAD_VALUE       invalid audio session or descriptor pointers
+     *
+     * Returned value
+     *   *descriptor updated with descriptors of pre processings enabled by default
+     *   *count      number of descriptors returned if returned status is N_ERROR.
+     *               total number of pre processing enabled by default if returned status is
+     *               NO_MEMORY. This happens if the count passed as input is less than the number
+     *               of descriptors to return
+     */
+    static status_t queryDefaultPreProcessing(int audioSession,
+                                              effect_descriptor_t *descriptors,
+                                              uint32_t *count);
 
     /*
      * Events used by callback function (effect_callback_t).
@@ -232,7 +219,7 @@ public:
      * sessionID:   audio session this effect is associated to. If 0, the effect will be global to
      *      the output mix. If not 0, the effect will be applied to all players
      *      (AudioTrack or MediaPLayer) within the same audio session.
-     * output:  HAL audio output stream to which this effect must be attached. Leave at 0 for
+     * io:  HAL audio output or input stream to which this effect must be attached. Leave at 0 for
      *      automatic output selection by AudioFlinger.
      */
 
@@ -242,7 +229,7 @@ public:
                   effect_callback_t cbf = 0,
                   void* user = 0,
                   int sessionId = 0,
-                  audio_io_handle_t output = 0
+                  audio_io_handle_t io = 0
                   );
 
     /* Constructor.
@@ -254,7 +241,7 @@ public:
                     effect_callback_t cbf = 0,
                     void* user = 0,
                     int sessionId = 0,
-                    audio_io_handle_t output = 0
+                    audio_io_handle_t io = 0
                     );
 
     /* Terminates the AudioEffect and unregisters it from AudioFlinger.
@@ -276,7 +263,7 @@ public:
                             effect_callback_t cbf = 0,
                             void* user = 0,
                             int sessionId = 0,
-                            audio_io_handle_t output = 0
+                            audio_io_handle_t io = 0
                             );
 
     /* Result of constructing the AudioEffect. This must be checked
@@ -298,7 +285,7 @@ public:
      */
             int32_t     id() const { return mId; }
 
-    /* Returns a descriptor for the effect (see effect_descriptor_t in EffectApi.h).
+    /* Returns a descriptor for the effect (see effect_descriptor_t in audio_effect.h).
      */
             effect_descriptor_t descriptor() const;
 
@@ -324,7 +311,7 @@ public:
      *
      * Parameters:
      *      param:  pointer to effect_param_t structure containing the parameter
-     *          and its value (See EffectApi.h).
+     *          and its value (See audio_effect.h).
      * Returned status (from utils/Errors.h) can be:
      *  - NO_ERROR: successful operation.
      *  - INVALID_OPERATION: the application does not have control of the effect engine.
@@ -340,7 +327,7 @@ public:
      *
      * Parameters:
      *      param:  pointer to effect_param_t structure containing the parameter
-     *          and its value (See EffectApi.h).
+     *          and its value (See audio_effect.h).
      *
      * Returned status (from utils/Errors.h) can be:
      *  - NO_ERROR: successful operation.
@@ -368,7 +355,7 @@ public:
      *
      * Parameters:
      *      param:  pointer to effect_param_t structure containing the parameter
-     *          and the returned value (See EffectApi.h).
+     *          and the returned value (See audio_effect.h).
      *
      * Returned status (from utils/Errors.h) can be:
      *  - NO_ERROR: successful operation.
@@ -379,7 +366,7 @@ public:
      virtual status_t   getParameter(effect_param_t *param);
 
      /* Sends a command and receives a response to/from effect engine.
-      *     See EffectApi.h for details on effect command() function, valid command codes
+      *     See audio_effect.h for details on effect command() function, valid command codes
       *     and formats.
       */
      virtual status_t command(uint32_t cmdCode,
@@ -403,7 +390,7 @@ public:
      static status_t guidToString(const effect_uuid_t *guid, char *str, size_t maxLen);
 
 protected:
-     volatile int32_t        mEnabled;           // enable state
+     bool                    mEnabled;           // enable state
      int32_t                 mSessionId;         // audio session ID
      int32_t                 mPriority;          // priority for effect control
      status_t                mStatus;            // effect status
@@ -412,6 +399,7 @@ protected:
      void*                   mUserData;          // client context for callback function
      effect_descriptor_t     mDescriptor;        // effect descriptor
      int32_t                 mId;                // system wide unique effect engine instance ID
+     Mutex                   mLock;               // Mutex for mEnabled access
 
 private:
 

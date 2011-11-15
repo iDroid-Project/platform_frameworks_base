@@ -16,42 +16,51 @@
 
 package android.view;
 
-import android.util.Config;
-import android.util.Log;
-import android.util.DisplayMetrics;
-import android.content.res.Resources;
 import android.content.Context;
+import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Rect;
-import android.os.Environment;
 import android.os.Debug;
+import android.os.Environment;
+import android.os.Looper;
+import android.os.Message;
+import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
+import android.os.SystemClock;
+import android.util.DisplayMetrics;
+import android.util.Log;
+import android.util.Printer;
 
-import java.io.ByteArrayOutputStream;
-import java.io.File;
+import java.io.BufferedOutputStream;
 import java.io.BufferedWriter;
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
+import java.io.File;
+import java.io.FileDescriptor;
+import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.io.FileOutputStream;
-import java.io.DataOutputStream;
-import java.io.OutputStreamWriter;
-import java.io.BufferedOutputStream;
 import java.io.OutputStream;
-import java.util.List;
-import java.util.LinkedList;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.lang.annotation.Target;
+import java.io.OutputStreamWriter;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
-import java.lang.reflect.InvocationTargetException;
+import java.lang.annotation.Target;
 import java.lang.reflect.AccessibleObject;
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.channels.FileChannel;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Various debugging/tracing tools related to {@link View} and the view hierarchy.
@@ -93,53 +102,44 @@ public class ViewDebug {
     public static final boolean TRACE_RECYCLER = false;
 
     /**
-     * Enables or disables motion events tracing. Any invoker of
-     * {@link #trace(View, MotionEvent, MotionEventTraceType)} should first check
-     * that this value is set to true as not to affect performance.
-     * 
-     * @hide
-     */
-    public static final boolean TRACE_MOTION_EVENTS = false;
-
-    /**
-     * The system property of dynamic switch for capturing view information
-     * when it is set, we dump interested fields and methods for the view on focus
-     */
-    static final String SYSTEM_PROPERTY_CAPTURE_VIEW = "debug.captureview";
-
-    /**
-     * The system property of dynamic switch for capturing event information
-     * when it is set, we log key events, touch/motion and trackball events
-     */
-    static final String SYSTEM_PROPERTY_CAPTURE_EVENT = "debug.captureevent";
-
-    /**
      * Profiles drawing times in the events log.
      *
      * @hide
      */
-    @Debug.DebugProperty
-    public static boolean profileDrawing = false;
+    public static final boolean DEBUG_PROFILE_DRAWING = false;
 
     /**
      * Profiles layout times in the events log.
      *
      * @hide
      */
-    @Debug.DebugProperty
-    public static boolean profileLayout = false;
+    public static final boolean DEBUG_PROFILE_LAYOUT = false;
 
     /**
-     * Profiles real fps (times between draws) and displays the result.
-     *
+     * Enables detailed logging of drag/drop operations.
      * @hide
      */
-    @Debug.DebugProperty
-    public static boolean showFps = false;
+    public static final boolean DEBUG_DRAG = false;
+
+    /**
+     * Enables logging of factors that affect the latency and responsiveness of an application.
+     *
+     * Logs the relative difference between the time an event was created and the time it
+     * was delivered.
+     *
+     * Logs the time spent waiting for Surface.lockCanvas() or eglSwapBuffers().
+     * This is time that the event loop spends blocked and unresponsive.  Ideally, drawing
+     * and animations should be perfectly synchronized with VSYNC so that swap buffers
+     * is instantaneous.
+     *
+     * Logs the time spent in ViewRoot.performTraversals() or ViewRoot.draw().
+     * @hide
+     */
+    public static final boolean DEBUG_LATENCY = false;
 
     /**
      * <p>Enables or disables views consistency check. Even when this property is enabled,
-     * view consistency checks happen only if {@link android.util.Config#DEBUG} is set
+     * view consistency checks happen only if {@link false} is set
      * to true. The value of this property can be configured externally in one of the
      * following files:</p>
      * <ul>
@@ -151,12 +151,6 @@ public class ViewDebug {
      */
     @Debug.DebugProperty
     public static boolean consistencyCheckEnabled = false;
-
-    static {
-        if (Config.DEBUG) {        
-	        Debug.setFieldsOn(ViewDebug.class, true);
-	    }
-    }
 
     /**
      * This annotation can be used to mark fields and methods to be dumped by
@@ -357,6 +351,7 @@ public class ViewDebug {
     private static final String REMOTE_COMMAND_REQUEST_LAYOUT = "REQUEST_LAYOUT";
     private static final String REMOTE_PROFILE = "PROFILE";
     private static final String REMOTE_COMMAND_CAPTURE_LAYERS = "CAPTURE_LAYERS";
+    private static final String REMOTE_COMMAND_OUTPUT_DISPLAYLIST = "OUTPUT_DISPLAYLIST";
 
     private static HashMap<Class<?>, Field[]> sFieldsForClasses;
     private static HashMap<Class<?>, Method[]> sMethodsForClasses;
@@ -377,7 +372,7 @@ public class ViewDebug {
     }
 
     private static BufferedWriter sHierarchyTraces;
-    private static ViewRoot sHierarhcyRoot;
+    private static ViewRootImpl sHierarhcyRoot;
     private static String sHierarchyTracePrefix;
 
     /**
@@ -404,20 +399,8 @@ public class ViewDebug {
     private static List<RecyclerTrace> sRecyclerTraces;
     private static String sRecyclerTracePrefix;
 
-    /**
-     * Defines the type of motion events trace to output to the motion events traces file.
-     * 
-     * @hide
-     */
-    public enum MotionEventTraceType {
-        DISPATCH,
-        ON_INTERCEPT,
-        ON_TOUCH
-    }
-
-    private static BufferedWriter sMotionEventTraces;
-    private static ViewRoot sMotionEventRoot;
-    private static String sMotionEventTracePrefix;
+    private static final ThreadLocal<LooperProfiler> sLooperProfilerStorage =
+            new ThreadLocal<LooperProfiler>();
 
     /**
      * Returns the number of instanciated Views.
@@ -427,18 +410,253 @@ public class ViewDebug {
      * @hide
      */
     public static long getViewInstanceCount() {
-        return View.sInstanceCount;
+        return Debug.countInstancesOfClass(View.class);
     }
 
     /**
-     * Returns the number of instanciated ViewRoots.
+     * Returns the number of instanciated ViewAncestors.
      *
-     * @return The number of ViewRoots instanciated in the current process.
+     * @return The number of ViewAncestors instanciated in the current process.
      *
      * @hide
      */
-    public static long getViewRootInstanceCount() {
-        return ViewRoot.getInstanceCount();
+    public static long getViewRootImplCount() {
+        return Debug.countInstancesOfClass(ViewRootImpl.class);
+    }
+
+    /**
+     * Starts profiling the looper associated with the current thread.
+     * You must call {@link #stopLooperProfiling} to end profiling
+     * and obtain the traces. Both methods must be invoked on the
+     * same thread.
+     * 
+     * @hide
+     */
+    public static void startLooperProfiling(String path, FileDescriptor fileDescriptor) {
+        if (sLooperProfilerStorage.get() == null) {
+            LooperProfiler profiler = new LooperProfiler(path, fileDescriptor);
+            sLooperProfilerStorage.set(profiler);
+            Looper.myLooper().setMessageLogging(profiler);
+        }
+    }    
+
+    /**
+     * Stops profiling the looper associated with the current thread.
+     * 
+     * @see #startLooperProfiling(String, java.io.FileDescriptor) 
+     * 
+     * @hide
+     */
+    public static void stopLooperProfiling() {
+        LooperProfiler profiler = sLooperProfilerStorage.get();
+        if (profiler != null) {
+            sLooperProfilerStorage.remove();
+            Looper.myLooper().setMessageLogging(null);
+            profiler.save();
+        }
+    }
+
+    private static class LooperProfiler implements Looper.Profiler, Printer {
+        private static final String LOG_TAG = "LooperProfiler";
+
+        private static final int TRACE_VERSION_NUMBER = 3;
+        private static final int ACTION_EXIT_METHOD = 0x1;
+        private static final int HEADER_SIZE = 32;
+        private static final String HEADER_MAGIC = "SLOW";
+        private static final short HEADER_RECORD_SIZE = (short) 14;
+
+        private final long mTraceWallStart;
+        private final long mTraceThreadStart;
+        
+        private final ArrayList<Entry> mTraces = new ArrayList<Entry>(512);
+
+        private final HashMap<String, Integer> mTraceNames = new HashMap<String, Integer>(32);
+        private int mTraceId = 0;
+
+        private final String mPath;
+        private ParcelFileDescriptor mFileDescriptor;
+
+        LooperProfiler(String path, FileDescriptor fileDescriptor) {
+            mPath = path;
+            try {
+                mFileDescriptor = ParcelFileDescriptor.dup(fileDescriptor);
+            } catch (IOException e) {
+                Log.e(LOG_TAG, "Could not write trace file " + mPath, e);
+                throw new RuntimeException(e);
+            }
+            mTraceWallStart = SystemClock.currentTimeMicro();
+            mTraceThreadStart = SystemClock.currentThreadTimeMicro();            
+        }
+
+        @Override
+        public void println(String x) {
+            // Ignore messages
+        }
+
+        @Override
+        public void profile(Message message, long wallStart, long wallTime,
+                long threadStart, long threadTime) {
+            Entry entry = new Entry();
+            entry.traceId = getTraceId(message);
+            entry.wallStart = wallStart;
+            entry.wallTime = wallTime;
+            entry.threadStart = threadStart;
+            entry.threadTime = threadTime;
+
+            mTraces.add(entry);
+        }
+
+        private int getTraceId(Message message) {
+            String name = message.getTarget().getMessageName(message);
+            Integer traceId = mTraceNames.get(name);
+            if (traceId == null) {
+                traceId = mTraceId++ << 4;
+                mTraceNames.put(name, traceId);
+            }
+            return traceId;
+        }
+
+        void save() {
+            // Don't block the UI thread
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    saveTraces();
+                }
+            }, "LooperProfiler[" + mPath + "]").start();
+        }
+
+        private void saveTraces() {
+            FileOutputStream fos = new FileOutputStream(mFileDescriptor.getFileDescriptor());
+            DataOutputStream out = new DataOutputStream(new BufferedOutputStream(fos));
+
+            try {
+                writeHeader(out, mTraceWallStart, mTraceNames, mTraces);
+                out.flush();
+
+                writeTraces(fos, out.size(), mTraceWallStart, mTraceThreadStart, mTraces);
+
+                Log.d(LOG_TAG, "Looper traces ready: " + mPath);
+            } catch (IOException e) {
+                Log.e(LOG_TAG, "Could not write trace file " + mPath, e);
+            } finally {
+                try {
+                    out.close();
+                } catch (IOException e) {
+                    Log.e(LOG_TAG, "Could not write trace file " + mPath, e);
+                }
+                try {
+                    mFileDescriptor.close();
+                } catch (IOException e) {
+                    Log.e(LOG_TAG, "Could not write trace file " + mPath, e);
+                }
+            }
+        }
+        
+        private static void writeTraces(FileOutputStream out, long offset, long wallStart,
+                long threadStart, ArrayList<Entry> entries) throws IOException {
+    
+            FileChannel channel = out.getChannel();
+    
+            // Header
+            ByteBuffer buffer = ByteBuffer.allocateDirect(HEADER_SIZE);
+            buffer.put(HEADER_MAGIC.getBytes());
+            buffer = buffer.order(ByteOrder.LITTLE_ENDIAN);
+            buffer.putShort((short) TRACE_VERSION_NUMBER);    // version
+            buffer.putShort((short) HEADER_SIZE);             // offset to data
+            buffer.putLong(wallStart);                        // start time in usec
+            buffer.putShort(HEADER_RECORD_SIZE);              // size of a record in bytes
+            // padding to 32 bytes
+            for (int i = 0; i < HEADER_SIZE - 18; i++) {
+                buffer.put((byte) 0);
+            }
+    
+            buffer.flip();
+            channel.position(offset).write(buffer);
+            
+            buffer = ByteBuffer.allocateDirect(14).order(ByteOrder.LITTLE_ENDIAN);
+            for (Entry entry : entries) {
+                buffer.putShort((short) 1);   // we simulate only one thread
+                buffer.putInt(entry.traceId); // entering method
+                buffer.putInt((int) (entry.threadStart - threadStart));
+                buffer.putInt((int) (entry.wallStart - wallStart));
+    
+                buffer.flip();
+                channel.write(buffer);
+                buffer.clear();
+    
+                buffer.putShort((short) 1);
+                buffer.putInt(entry.traceId | ACTION_EXIT_METHOD); // exiting method
+                buffer.putInt((int) (entry.threadStart + entry.threadTime - threadStart));
+                buffer.putInt((int) (entry.wallStart + entry.wallTime - wallStart));
+    
+                buffer.flip();
+                channel.write(buffer);
+                buffer.clear();
+            }
+    
+            channel.close();
+        }
+    
+        private static void writeHeader(DataOutputStream out, long start,
+                HashMap<String, Integer> names, ArrayList<Entry> entries) throws IOException {
+    
+            Entry last = entries.get(entries.size() - 1);
+            long wallTotal = (last.wallStart + last.wallTime) - start;
+    
+            startSection("version", out);
+            addValue(null, Integer.toString(TRACE_VERSION_NUMBER), out);
+            addValue("data-file-overflow", "false", out);
+            addValue("clock", "dual", out);
+            addValue("elapsed-time-usec", Long.toString(wallTotal), out);
+            addValue("num-method-calls", Integer.toString(entries.size()), out);
+            addValue("clock-call-overhead-nsec", "1", out);
+            addValue("vm", "dalvik", out);
+    
+            startSection("threads", out);
+            addThreadId(1, "main", out);
+    
+            startSection("methods", out);
+            addMethods(names, out);
+    
+            startSection("end", out);
+        }
+    
+        private static void addMethods(HashMap<String, Integer> names, DataOutputStream out)
+                throws IOException {
+    
+            for (Map.Entry<String, Integer> name : names.entrySet()) {
+                out.writeBytes(String.format("0x%08x\tEventQueue\t%s\t()V\tLooper\t-2\n",
+                        name.getValue(), name.getKey()));
+            }
+        }
+    
+        private static void addThreadId(int id, String name, DataOutputStream out)
+                throws IOException {
+
+            out.writeBytes(Integer.toString(id) + '\t' + name + '\n');
+        }
+    
+        private static void addValue(String name, String value, DataOutputStream out)
+                throws IOException {
+    
+            if (name != null) {
+                out.writeBytes(name + "=");
+            }
+            out.writeBytes(value + '\n');
+        }
+    
+        private static void startSection(String name, DataOutputStream out) throws IOException {
+            out.writeBytes("*" + name + '\n');
+        }
+
+        static class Entry {
+            int traceId;
+            long wallStart;
+            long wallTime;
+            long threadStart;
+            long threadTime;
+        }
     }
 
     /**
@@ -555,6 +773,7 @@ public class ViewDebug {
         recyclerDump = new File(recyclerDump, sRecyclerTracePrefix + ".traces");
         try {
             if (recyclerDump.exists()) {
+                //noinspection ResultOfMethodCallIgnored
                 recyclerDump.delete();
             }
             final FileOutputStream file = new FileOutputStream(recyclerDump);
@@ -652,7 +871,7 @@ public class ViewDebug {
             return;
         }
 
-        sHierarhcyRoot = (ViewRoot) view.getRootView().getParent();
+        sHierarhcyRoot = (ViewRootImpl) view.getRootView().getParent();
     }
 
     /**
@@ -713,146 +932,6 @@ public class ViewDebug {
         sHierarhcyRoot = null;
     }
 
-    /**
-     * Outputs a trace to the currently opened traces file. The trace contains the class name
-     * and instance's hashcode of the specified view as well as the supplied trace type.
-     *
-     * @param view the view to trace
-     * @param event the event of the trace
-     * @param type the type of the trace
-     * 
-     * @hide
-     */
-    public static void trace(View view, MotionEvent event, MotionEventTraceType type) {
-        if (sMotionEventTraces == null) {
-            return;
-        }
-
-        try {
-            sMotionEventTraces.write(type.name());
-            sMotionEventTraces.write(' ');
-            sMotionEventTraces.write(event.getAction());
-            sMotionEventTraces.write(' ');
-            sMotionEventTraces.write(view.getClass().getName());
-            sMotionEventTraces.write('@');
-            sMotionEventTraces.write(Integer.toHexString(view.hashCode()));
-            sHierarchyTraces.newLine();
-        } catch (IOException e) {
-            Log.w("View", "Error while dumping trace of event " + event + " for view " + view);
-        }
-    }
-
-    /**
-     * Starts tracing the motion events for the hierarchy of the specificy view.
-     * The trace is identified by a prefix, used to build the traces files names:
-     * <code>/EXTERNAL/motion-events/PREFIX.traces</code> and
-     * <code>/EXTERNAL/motion-events/PREFIX.tree</code>.
-     *
-     * Only one view hierarchy can be traced at the same time. After calling this method, any
-     * other invocation will result in a <code>IllegalStateException</code> unless
-     * {@link #stopMotionEventTracing()} is invoked before.
-     *
-     * Calling this method creates the file <code>/EXTERNAL/motion-events/PREFIX.traces</code>
-     * containing all the traces (or method calls) relative to the specified view's hierarchy.
-     *
-     * This method will return immediately if TRACE_HIERARCHY is false.
-     *
-     * @param prefix the traces files name prefix
-     * @param view the view whose hierarchy must be traced
-     *
-     * @see #stopMotionEventTracing()
-     * @see #trace(View, MotionEvent, android.view.ViewDebug.MotionEventTraceType)
-     * 
-     * @hide 
-     */
-    public static void startMotionEventTracing(String prefix, View view) {
-        //noinspection PointlessBooleanExpression,ConstantConditions
-        if (!TRACE_MOTION_EVENTS) {
-            return;
-        }
-
-        if (sMotionEventRoot != null) {
-            throw new IllegalStateException("You must call stopMotionEventTracing() before running" +
-                " a new trace!");
-        }
-
-        File hierarchyDump = new File(Environment.getExternalStorageDirectory(), "motion-events/");
-        //noinspection ResultOfMethodCallIgnored
-        hierarchyDump.mkdirs();
-
-        hierarchyDump = new File(hierarchyDump, prefix + ".traces");
-        sMotionEventTracePrefix = prefix;
-
-        try {
-            sMotionEventTraces = new BufferedWriter(new FileWriter(hierarchyDump), 32 * 1024);
-        } catch (IOException e) {
-            Log.e("View", "Could not dump view hierarchy");
-            return;
-        }
-
-        sMotionEventRoot = (ViewRoot) view.getRootView().getParent();
-    }
-
-    /**
-     * Stops the current motion events tracing. This method closes the file
-     * <code>/EXTERNAL/motion-events/PREFIX.traces</code>.
-     *
-     * Calling this method creates the file <code>/EXTERNAL/motion-events/PREFIX.tree</code>
-     * containing the view hierarchy of the view supplied to
-     * {@link #startMotionEventTracing(String, View)}.
-     *
-     * This method will return immediately if TRACE_HIERARCHY is false.
-     *
-     * @see #startMotionEventTracing(String, View) 
-     * @see #trace(View, MotionEvent, android.view.ViewDebug.MotionEventTraceType) 
-     * 
-     * @hide
-     */
-    public static void stopMotionEventTracing() {
-        //noinspection PointlessBooleanExpression,ConstantConditions
-        if (!TRACE_MOTION_EVENTS) {
-            return;
-        }
-
-        if (sMotionEventRoot == null || sMotionEventTraces == null) {
-            throw new IllegalStateException("You must call startMotionEventTracing() before" +
-                " stopMotionEventTracing()!");
-        }
-
-        try {
-            sMotionEventTraces.close();
-        } catch (IOException e) {
-            Log.e("View", "Could not write view traces");
-        }
-        sMotionEventTraces = null;
-
-        File hierarchyDump = new File(Environment.getExternalStorageDirectory(), "motion-events/");
-        //noinspection ResultOfMethodCallIgnored
-        hierarchyDump.mkdirs();
-        hierarchyDump = new File(hierarchyDump, sMotionEventTracePrefix + ".tree");
-
-        BufferedWriter out;
-        try {
-            out = new BufferedWriter(new FileWriter(hierarchyDump), 8 * 1024);
-        } catch (IOException e) {
-            Log.e("View", "Could not dump view hierarchy");
-            return;
-        }
-
-        View view = sMotionEventRoot.getView();
-        if (view instanceof ViewGroup) {
-            ViewGroup group = (ViewGroup) view;
-            dumpViewHierarchy(group, out, 0);
-            try {
-                out.close();
-            } catch (IOException e) {
-                Log.e("View", "Could not dump view hierarchy");
-            }
-        }
-
-        sHierarhcyRoot = null;
-    }
-
     static void dispatchCommand(View view, String command, String parameters,
             OutputStream clientStream) throws IOException {
 
@@ -867,6 +946,8 @@ public class ViewDebug {
             final String[] params = parameters.split(" ");
             if (REMOTE_COMMAND_CAPTURE.equalsIgnoreCase(command)) {
                 capture(view, clientStream, params[0]);
+            } else if (REMOTE_COMMAND_OUTPUT_DISPLAYLIST.equalsIgnoreCase(command)) {
+                outputDisplayList(view, params[0]);
             } else if (REMOTE_COMMAND_INVALIDATE.equalsIgnoreCase(command)) {
                 invalidate(view, params[0]);
             } else if (REMOTE_COMMAND_REQUEST_LAYOUT.equalsIgnoreCase(command)) {
@@ -995,22 +1076,30 @@ public class ViewDebug {
                         new ViewOperation<Object>() {
                             public Object[] pre() {
                                 final DisplayMetrics metrics =
-                                        view.getResources().getDisplayMetrics();
-                                final Bitmap bitmap =
+                                        (view != null && view.getResources() != null) ?
+                                                view.getResources().getDisplayMetrics() : null;
+                                final Bitmap bitmap = metrics != null ?
                                         Bitmap.createBitmap(metrics.widthPixels,
-                                                metrics.heightPixels, Bitmap.Config.RGB_565);
-                                final Canvas canvas = new Canvas(bitmap);
+                                                metrics.heightPixels, Bitmap.Config.RGB_565) : null;
+                                final Canvas canvas = bitmap != null ? new Canvas(bitmap) : null;
                                 return new Object[] {
                                         bitmap, canvas
                                 };
                             }
 
                             public void run(Object... data) {
-                                view.draw((Canvas) data[1]);
+                                if (data[1] != null) {
+                                    view.draw((Canvas) data[1]);
+                                }
                             }
 
                             public void post(Object... data) {
-                                ((Bitmap) data[0]).recycle();
+                                if (data[1] != null) {
+                                    ((Canvas) data[1]).setBitmap(null);
+                                }
+                                if (data[0] != null) {
+                                    ((Bitmap) data[0]).recycle();
+                                }
                             }
                         }) : 0;
         out.write(String.valueOf(durationMeasure));
@@ -1043,8 +1132,10 @@ public class ViewDebug {
                 try {
                     T[] data = operation.pre();
                     long start = Debug.threadCpuTimeNanos();
+                    //noinspection unchecked
                     operation.run(data);
                     duration[0] = Debug.threadCpuTimeNanos() - start;
+                    //noinspection unchecked
                     operation.post(data);
                 } finally {
                     latch.countDown();
@@ -1133,6 +1224,11 @@ public class ViewDebug {
         }
     }
 
+    private static void outputDisplayList(View root, String parameter) throws IOException {
+        final View view = findView(root, parameter);
+        view.getViewRootImpl().outputDisplayList(view);
+    }
+
     private static void capture(View root, final OutputStream clientStream, String parameter)
             throws IOException {
 
@@ -1170,12 +1266,7 @@ public class ViewDebug {
                         cache[0] = captureView.createSnapshot(
                                 Bitmap.Config.ARGB_8888, 0, skpiChildren);
                     } catch (OutOfMemoryError e) {
-                        try {
-                            cache[0] = captureView.createSnapshot(
-                                    Bitmap.Config.ARGB_4444, 0, skpiChildren);
-                        } catch (OutOfMemoryError e2) {
-                            Log.w("View", "Out of memory for bitmap");
-                        }
+                        Log.w("View", "Out of memory for bitmap");
                     } finally {
                         latch.countDown();
                     }
@@ -1285,7 +1376,6 @@ public class ViewDebug {
         }
 
         final HashMap<Class<?>, Field[]> map = sFieldsForClasses;
-        final HashMap<AccessibleObject, ExportedProperty> annotations = sAnnotations;
 
         Field[] fields = map.get(klass);
         if (fields != null) {
@@ -1301,7 +1391,7 @@ public class ViewDebug {
             if (field.isAnnotationPresent(ExportedProperty.class)) {
                 field.setAccessible(true);
                 foundFields.add(field);
-                annotations.put(field, field.getAnnotation(ExportedProperty.class));
+                sAnnotations.put(field, field.getAnnotation(ExportedProperty.class));
             }
         }
 
@@ -1320,7 +1410,6 @@ public class ViewDebug {
         }
 
         final HashMap<Class<?>, Method[]> map = sMethodsForClasses;
-        final HashMap<AccessibleObject, ExportedProperty> annotations = sAnnotations;
 
         Method[] methods = map.get(klass);
         if (methods != null) {
@@ -1338,7 +1427,7 @@ public class ViewDebug {
                     method.getReturnType() != Void.class) {
                 method.setAccessible(true);
                 foundMethods.add(method);
-                annotations.put(method, method.getAnnotation(ExportedProperty.class));
+                sAnnotations.put(method, method.getAnnotation(ExportedProperty.class));
             }
         }
 

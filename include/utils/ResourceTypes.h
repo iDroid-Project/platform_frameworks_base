@@ -841,6 +841,7 @@ struct ResTable_config
         DENSITY_DEFAULT = ACONFIGURATION_DENSITY_DEFAULT,
         DENSITY_LOW = ACONFIGURATION_DENSITY_LOW,
         DENSITY_MEDIUM = ACONFIGURATION_DENSITY_MEDIUM,
+        DENSITY_TV = ACONFIGURATION_DENSITY_TV,
         DENSITY_HIGH = ACONFIGURATION_DENSITY_HIGH,
         DENSITY_NONE = ACONFIGURATION_DENSITY_NONE
     };
@@ -953,6 +954,7 @@ struct ResTable_config
         UI_MODE_TYPE_NORMAL = ACONFIGURATION_UI_MODE_TYPE_NORMAL,
         UI_MODE_TYPE_DESK = ACONFIGURATION_UI_MODE_TYPE_DESK,
         UI_MODE_TYPE_CAR = ACONFIGURATION_UI_MODE_TYPE_CAR,
+        UI_MODE_TYPE_TELEVISION = ACONFIGURATION_UI_MODE_TYPE_TELEVISION,
 
         // uiMode bits for the night switch.
         MASK_UI_MODE_NIGHT = 0x30,
@@ -966,12 +968,19 @@ struct ResTable_config
         struct {
             uint8_t screenLayout;
             uint8_t uiMode;
-            uint8_t screenConfigPad1;
-            uint8_t screenConfigPad2;
+            uint16_t smallestScreenWidthDp;
         };
         uint32_t screenConfig;
     };
     
+    union {
+        struct {
+            uint16_t screenWidthDp;
+            uint16_t screenHeightDp;
+        };
+        uint32_t screenSizeDp;
+    };
+
     inline void copyFromDeviceNoSwap(const ResTable_config& o) {
         const size_t size = dtohl(o.size);
         if (size >= sizeof(ResTable_config)) {
@@ -992,6 +1001,9 @@ struct ResTable_config
         screenHeight = dtohs(screenHeight);
         sdkVersion = dtohs(sdkVersion);
         minorVersion = dtohs(minorVersion);
+        smallestScreenWidthDp = dtohs(smallestScreenWidthDp);
+        screenWidthDp = dtohs(screenWidthDp);
+        screenHeightDp = dtohs(screenHeightDp);
     }
     
     inline void swapHtoD() {
@@ -1003,6 +1015,9 @@ struct ResTable_config
         screenHeight = htods(screenHeight);
         sdkVersion = htods(sdkVersion);
         minorVersion = htods(minorVersion);
+        smallestScreenWidthDp = htods(smallestScreenWidthDp);
+        screenWidthDp = htods(screenWidthDp);
+        screenHeightDp = htods(screenHeightDp);
     }
     
     inline int compare(const ResTable_config& o) const {
@@ -1021,6 +1036,10 @@ struct ResTable_config
         diff = (int32_t)(screenLayout - o.screenLayout);
         if (diff != 0) return diff;
         diff = (int32_t)(uiMode - o.uiMode);
+        if (diff != 0) return diff;
+        diff = (int32_t)(smallestScreenWidthDp - o.smallestScreenWidthDp);
+        if (diff != 0) return diff;
+        diff = (int32_t)(screenSizeDp - o.screenSizeDp);
         return (int)diff;
     }
     
@@ -1038,6 +1057,7 @@ struct ResTable_config
         CONFIG_ORIENTATION = ACONFIGURATION_ORIENTATION,
         CONFIG_DENSITY = ACONFIGURATION_DENSITY,
         CONFIG_SCREEN_SIZE = ACONFIGURATION_SCREEN_SIZE,
+        CONFIG_SMALLEST_SCREEN_SIZE = ACONFIGURATION_SMALLEST_SCREEN_SIZE,
         CONFIG_VERSION = ACONFIGURATION_VERSION,
         CONFIG_SCREEN_LAYOUT = ACONFIGURATION_SCREEN_LAYOUT,
         CONFIG_UI_MODE = ACONFIGURATION_UI_MODE
@@ -1061,6 +1081,8 @@ struct ResTable_config
         if (version != o.version) diffs |= CONFIG_VERSION;
         if (screenLayout != o.screenLayout) diffs |= CONFIG_SCREEN_LAYOUT;
         if (uiMode != o.uiMode) diffs |= CONFIG_UI_MODE;
+        if (smallestScreenWidthDp != o.smallestScreenWidthDp) diffs |= CONFIG_SMALLEST_SCREEN_SIZE;
+        if (screenSizeDp != o.screenSizeDp) diffs |= CONFIG_SCREEN_SIZE;
         return diffs;
     }
     
@@ -1091,6 +1113,25 @@ struct ResTable_config
             if (country[0] != o.country[0]) {
                 if (!country[0]) return false;
                 if (!o.country[0]) return true;
+            }
+        }
+
+        if (smallestScreenWidthDp || o.smallestScreenWidthDp) {
+            if (smallestScreenWidthDp != o.smallestScreenWidthDp) {
+                if (!smallestScreenWidthDp) return false;
+                if (!o.smallestScreenWidthDp) return true;
+            }
+        }
+
+        if (screenSizeDp || o.screenSizeDp) {
+            if (screenWidthDp != o.screenWidthDp) {
+                if (!screenWidthDp) return false;
+                if (!o.screenWidthDp) return true;
+            }
+
+            if (screenHeightDp != o.screenHeightDp) {
+                if (!screenHeightDp) return false;
+                if (!o.screenHeightDp) return true;
             }
         }
 
@@ -1209,6 +1250,37 @@ struct ResTable_config
                 if ((country[0] != o.country[0]) && requested->country[0]) {
                     return (country[0]);
                 }
+            }
+
+            if (smallestScreenWidthDp || o.smallestScreenWidthDp) {
+                // The configuration closest to the actual size is best.
+                // We assume that larger configs have already been filtered
+                // out at this point.  That means we just want the largest one.
+                return smallestScreenWidthDp >= o.smallestScreenWidthDp;
+            }
+
+            if (screenSizeDp || o.screenSizeDp) {
+                // "Better" is based on the sum of the difference between both
+                // width and height from the requested dimensions.  We are
+                // assuming the invalid configs (with smaller dimens) have
+                // already been filtered.  Note that if a particular dimension
+                // is unspecified, we will end up with a large value (the
+                // difference between 0 and the requested dimension), which is
+                // good since we will prefer a config that has specified a
+                // dimension value.
+                int myDelta = 0, otherDelta = 0;
+                if (requested->screenWidthDp) {
+                    myDelta += requested->screenWidthDp - screenWidthDp;
+                    otherDelta += requested->screenWidthDp - o.screenWidthDp;
+                }
+                if (requested->screenHeightDp) {
+                    myDelta += requested->screenHeightDp - screenHeightDp;
+                    otherDelta += requested->screenHeightDp - o.screenHeightDp;
+                }
+                //LOGI("Comparing this %dx%d to other %dx%d in %dx%d: myDelta=%d otherDelta=%d",
+                //    screenWidthDp, screenHeightDp, o.screenWidthDp, o.screenHeightDp,
+                //    requested->screenWidthDp, requested->screenHeightDp, myDelta, otherDelta);
+                return (myDelta <= otherDelta);
             }
 
             if (screenLayout || o.screenLayout) {
@@ -1337,14 +1409,24 @@ struct ResTable_config
             }
 
             if (screenSize || o.screenSize) {
-                if ((screenWidth != o.screenWidth) && requested->screenWidth) {
-                    return (screenWidth);
+                // "Better" is based on the sum of the difference between both
+                // width and height from the requested dimensions.  We are
+                // assuming the invalid configs (with smaller sizes) have
+                // already been filtered.  Note that if a particular dimension
+                // is unspecified, we will end up with a large value (the
+                // difference between 0 and the requested dimension), which is
+                // good since we will prefer a config that has specified a
+                // size value.
+                int myDelta = 0, otherDelta = 0;
+                if (requested->screenWidth) {
+                    myDelta += requested->screenWidth - screenWidth;
+                    otherDelta += requested->screenWidth - o.screenWidth;
                 }
-
-                if ((screenHeight != o.screenHeight) &&
-                        requested->screenHeight) {
-                    return (screenHeight);
+                if (requested->screenHeight) {
+                    myDelta += requested->screenHeight - screenHeight;
+                    otherDelta += requested->screenHeight - o.screenHeight;
                 }
+                return (myDelta <= otherDelta);
             }
 
             if (version || o.version) {
@@ -1371,24 +1453,20 @@ struct ResTable_config
     // settings is the requested settings
     inline bool match(const ResTable_config& settings) const {
         if (imsi != 0) {
-            if ((settings.mcc != 0 && mcc != 0
-                 && mcc != settings.mcc) || 
-                (settings.mcc == 0 && mcc != 0)) {
+            if (mcc != 0 && mcc != settings.mcc) {
                 return false;
             }
-            if ((settings.mnc != 0 && mnc != 0
-                 && mnc != settings.mnc) ||
-                (settings.mnc == 0 && mnc != 0)) {
+            if (mnc != 0 && mnc != settings.mnc) {
                 return false;
             }
         }
         if (locale != 0) {
-            if (settings.language[0] != 0 && language[0] != 0
+            if (language[0] != 0
                 && (language[0] != settings.language[0]
                     || language[1] != settings.language[1])) {
                 return false;
             }
-            if (settings.country[0] != 0 && country[0] != 0
+            if (country[0] != 0
                 && (country[0] != settings.country[0]
                     || country[1] != settings.country[1])) {
                 return false;
@@ -1399,49 +1477,56 @@ struct ResTable_config
             const int setScreenSize = settings.screenLayout&MASK_SCREENSIZE;
             // Any screen sizes for larger screens than the setting do not
             // match.
-            if ((setScreenSize != 0 && screenSize != 0
-                    && screenSize > setScreenSize) ||
-                    (setScreenSize == 0 && screenSize != 0)) {
+            if (screenSize != 0 && screenSize > setScreenSize) {
                 return false;
             }
             
             const int screenLong = screenLayout&MASK_SCREENLONG;
             const int setScreenLong = settings.screenLayout&MASK_SCREENLONG;
-            if (setScreenLong != 0 && screenLong != 0
-                    && screenLong != setScreenLong) {
+            if (screenLong != 0 && screenLong != setScreenLong) {
                 return false;
             }
 
             const int uiModeType = uiMode&MASK_UI_MODE_TYPE;
             const int setUiModeType = settings.uiMode&MASK_UI_MODE_TYPE;
-            if (setUiModeType != 0 && uiModeType != 0
-                    && uiModeType != setUiModeType) {
+            if (uiModeType != 0 && uiModeType != setUiModeType) {
                 return false;
             }
 
             const int uiModeNight = uiMode&MASK_UI_MODE_NIGHT;
             const int setUiModeNight = settings.uiMode&MASK_UI_MODE_NIGHT;
-            if (setUiModeNight != 0 && uiModeNight != 0
-                    && uiModeNight != setUiModeNight) {
+            if (uiModeNight != 0 && uiModeNight != setUiModeNight) {
+                return false;
+            }
+
+            if (smallestScreenWidthDp != 0
+                    && smallestScreenWidthDp > settings.smallestScreenWidthDp) {
+                return false;
+            }
+        }
+        if (screenSizeDp != 0) {
+            if (screenWidthDp != 0 && screenWidthDp > settings.screenWidthDp) {
+                //LOGI("Filtering out width %d in requested %d", screenWidthDp, settings.screenWidthDp);
+                return false;
+            }
+            if (screenHeightDp != 0 && screenHeightDp > settings.screenHeightDp) {
+                //LOGI("Filtering out height %d in requested %d", screenHeightDp, settings.screenHeightDp);
                 return false;
             }
         }
         if (screenType != 0) {
-            if (settings.orientation != 0 && orientation != 0
-                && orientation != settings.orientation) {
+            if (orientation != 0 && orientation != settings.orientation) {
                 return false;
             }
             // density always matches - we can scale it.  See isBetterThan
-            if (settings.touchscreen != 0 && touchscreen != 0
-                && touchscreen != settings.touchscreen) {
+            if (touchscreen != 0 && touchscreen != settings.touchscreen) {
                 return false;
             }
         }
         if (input != 0) {
             const int keysHidden = inputFlags&MASK_KEYSHIDDEN;
             const int setKeysHidden = settings.inputFlags&MASK_KEYSHIDDEN;
-            if (setKeysHidden != 0 && keysHidden != 0
-                && keysHidden != setKeysHidden) {
+            if (keysHidden != 0 && keysHidden != setKeysHidden) {
                 // For compatibility, we count a request for KEYSHIDDEN_NO as also
                 // matching the more recent KEYSHIDDEN_SOFT.  Basically
                 // KEYSHIDDEN_NO means there is some kind of keyboard available.
@@ -1453,36 +1538,29 @@ struct ResTable_config
             }
             const int navHidden = inputFlags&MASK_NAVHIDDEN;
             const int setNavHidden = settings.inputFlags&MASK_NAVHIDDEN;
-            if (setNavHidden != 0 && navHidden != 0
-                && navHidden != setNavHidden) {
+            if (navHidden != 0 && navHidden != setNavHidden) {
                 return false;
             }
-            if (settings.keyboard != 0 && keyboard != 0
-                && keyboard != settings.keyboard) {
+            if (keyboard != 0 && keyboard != settings.keyboard) {
                 return false;
             }
-            if (settings.navigation != 0 && navigation != 0
-                && navigation != settings.navigation) {
+            if (navigation != 0 && navigation != settings.navigation) {
                 return false;
             }
         }
         if (screenSize != 0) {
-            if (settings.screenWidth != 0 && screenWidth != 0
-                && screenWidth != settings.screenWidth) {
+            if (screenWidth != 0 && screenWidth > settings.screenWidth) {
                 return false;
             }
-            if (settings.screenHeight != 0 && screenHeight != 0
-                && screenHeight != settings.screenHeight) {
+            if (screenHeight != 0 && screenHeight > settings.screenHeight) {
                 return false;
             }
         }
         if (version != 0) {
-            if (settings.sdkVersion != 0 && sdkVersion != 0
-                && sdkVersion > settings.sdkVersion) {
+            if (sdkVersion != 0 && sdkVersion > settings.sdkVersion) {
                 return false;
             }
-            if (settings.minorVersion != 0 && minorVersion != 0
-                && minorVersion != settings.minorVersion) {
+            if (minorVersion != 0 && minorVersion != settings.minorVersion) {
                 return false;
             }
         }
@@ -1505,13 +1583,13 @@ struct ResTable_config
     String8 toString() const {
         char buf[200];
         sprintf(buf, "imsi=%d/%d lang=%c%c reg=%c%c orient=%d touch=%d dens=%d "
-                "kbd=%d nav=%d input=%d scrnW=%d scrnH=%d sz=%d long=%d "
+                "kbd=%d nav=%d input=%d ssz=%dx%d sw%ddp w%ddp h%ddp sz=%d long=%d "
                 "ui=%d night=%d vers=%d.%d",
                 mcc, mnc,
                 language[0] ? language[0] : '-', language[1] ? language[1] : '-',
                 country[0] ? country[0] : '-', country[1] ? country[1] : '-',
                 orientation, touchscreen, density, keyboard, navigation, inputFlags,
-                screenWidth, screenHeight,
+                screenWidth, screenHeight, smallestScreenWidthDp, screenWidthDp, screenHeightDp,
                 screenLayout&MASK_SCREENSIZE, screenLayout&MASK_SCREENLONG,
                 uiMode&MASK_UI_MODE_TYPE, uiMode&MASK_UI_MODE_NIGHT,
                 sdkVersion, minorVersion);
@@ -1735,9 +1813,9 @@ public:
     ~ResTable();
 
     status_t add(const void* data, size_t size, void* cookie,
-                 bool copyData=false);
+                 bool copyData=false, const void* idmap = NULL);
     status_t add(Asset* asset, void* cookie,
-                 bool copyData=false);
+                 bool copyData=false, const void* idmap = NULL);
     status_t add(ResTable* src);
 
     status_t getError() const;
@@ -1771,12 +1849,14 @@ public:
      *
      * @return ssize_t Either a >= 0 table index or a negative error code.
      */
-    ssize_t getResource(uint32_t resID, Res_value* outValue, bool mayBeBag=false,
-            uint32_t* outSpecFlags=NULL, ResTable_config* outConfig=NULL) const;
+    ssize_t getResource(uint32_t resID, Res_value* outValue, bool mayBeBag = false,
+                    uint16_t density = 0,
+                    uint32_t* outSpecFlags = NULL,
+                    ResTable_config* outConfig = NULL) const;
 
     inline ssize_t getResource(const ResTable_ref& res, Res_value* outValue,
             uint32_t* outSpecFlags=NULL) const {
-        return getResource(res.ident, outValue, false, outSpecFlags, NULL);
+        return getResource(res.ident, outValue, false, 0, outSpecFlags, NULL);
     }
 
     ssize_t resolveReference(Res_value* inOutValue,
@@ -1908,7 +1988,8 @@ public:
                                   String16* outName,
                                   const String16* defType = NULL,
                                   const String16* defPackage = NULL,
-                                  const char** outErrorMsg = NULL);
+                                  const char** outErrorMsg = NULL,
+                                  bool* outPublicOnly = NULL);
 
     static bool stringToInt(const char16_t* s, size_t len, Res_value* outValue);
     static bool stringToFloat(const char16_t* s, size_t len, Res_value* outValue);
@@ -1981,8 +2062,27 @@ public:
 
     void getLocales(Vector<String8>* locales) const;
 
+    // Generate an idmap.
+    //
+    // Return value: on success: NO_ERROR; caller is responsible for free-ing
+    // outData (using free(3)). On failure, any status_t value other than
+    // NO_ERROR; the caller should not free outData.
+    status_t createIdmap(const ResTable& overlay, uint32_t originalCrc, uint32_t overlayCrc,
+                         void** outData, size_t* outSize) const;
+
+    enum {
+        IDMAP_HEADER_SIZE_BYTES = 3 * sizeof(uint32_t),
+    };
+    // Retrieve idmap meta-data.
+    //
+    // This function only requires the idmap header (the first
+    // IDMAP_HEADER_SIZE_BYTES) bytes of an idmap file.
+    static bool getIdmapInfo(const void* idmap, size_t size,
+                             uint32_t* pOriginalCrc, uint32_t* pOverlayCrc);
+
 #ifndef HAVE_ANDROID_OS
     void print(bool inclValues) const;
+    static String8 normalizeForOutput(const char* input);
 #endif
 
 private:
@@ -1993,7 +2093,7 @@ private:
     struct bag_set;
 
     status_t add(const void* data, size_t size, void* cookie,
-                 Asset* asset, bool copyData);
+                 Asset* asset, bool copyData, const Asset* idmap);
 
     ssize_t getResourcePackageIndex(uint32_t resID) const;
     ssize_t getEntry(
@@ -2002,7 +2102,7 @@ private:
         const ResTable_type** outType, const ResTable_entry** outEntry,
         const Type** outTypeClass) const;
     status_t parsePackage(
-        const ResTable_package* const pkg, const Header* const header);
+        const ResTable_package* const pkg, const Header* const header, uint32_t idmap_id);
 
     void print_value(const Package* pkg, const Res_value& value) const;
     

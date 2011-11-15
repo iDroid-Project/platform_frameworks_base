@@ -14,169 +14,115 @@
  * limitations under the License.
  */
 
+ /**
+ * <p>The Renderscript vertex program, also known as a vertex shader, describes a stage in
+ * the graphics pipeline responsible for manipulating geometric data in a user-defined way.
+ * The object is constructed by providing the Renderscript system with the following data:</p>
+ * <ul>
+ *   <li>Element describing its varying inputs or attributes</li>
+ *   <li>GLSL shader string that defines the body of the program</li>
+ *   <li>a Type that describes the layout of an Allocation containing constant or uniform inputs</li>
+ * </ul>
+ *
+ * <p>Once the program is created, you bind it to the graphics context, RenderScriptGL, and it will be used for
+ * all subsequent draw calls until you bind a new program. If the program has constant inputs,
+ * the user needs to bind an allocation containing those inputs. The allocation's type must match
+ * the one provided during creation. The Renderscript library then does all the necessary plumbing
+ * to send those constants to the graphics hardware. Varying inputs to the shader, such as position, normal,
+ * and texture coordinates are matched by name between the input Element and the Mesh object being drawn.
+ * The signatures don't have to be exact or in any strict order. As long as the input name in the shader
+ * matches a channel name and size available on the mesh, the runtime takes care of connecting the
+ * two. Unlike OpenGL, there is no need to link the vertex and fragment programs.</p>
+ *
+ **/
 package android.renderscript;
 
 
-import android.util.Config;
+import android.graphics.Matrix;
 import android.util.Log;
 
 
 /**
- * @hide
+ * ProgramVertex, also know as a vertex shader, describes a
+ * stage in the graphics pipeline responsible for manipulating
+ * geometric data in a user-defined way.
  *
  **/
 public class ProgramVertex extends Program {
-    public static final int MAX_LIGHT = 8;
-
 
     ProgramVertex(int id, RenderScript rs) {
         super(id, rs);
     }
 
-    public void bindAllocation(MatrixAllocation va) {
-        mRS.validate();
-        bindConstants(va.mAlloc, 0);
-    }
-
-
-    public static class Builder {
-        RenderScript mRS;
-        boolean mTextureMatrixEnable;
-
-        public Builder(RenderScript rs, Element in, Element out) {
-            mRS = rs;
-        }
-
-        public void setTextureMatrixEnable(boolean enable) {
-            mTextureMatrixEnable = enable;
-        }
-
-        public ProgramVertex create() {
-            int id = mRS.nProgramVertexCreate(mTextureMatrixEnable);
-            return new ProgramVertex(id, mRS);
-        }
-    }
-
-    public static class ShaderBuilder extends BaseProgramBuilder {
-        public ShaderBuilder(RenderScript rs) {
+    /**
+    * Builder class for creating ProgramVertex objects.
+    * The builder starts empty and the user must minimally provide
+    * the GLSL shader code, and the varying inputs. Constant, or
+    * uniform parameters to the shader may optionally be provided as
+    * well.
+    *
+    **/
+    public static class Builder extends BaseProgramBuilder {
+        /**
+         * Create a builder object.
+         *
+         * @param rs Context to which the program will belong.
+         */
+        public Builder(RenderScript rs) {
             super(rs);
         }
 
+        /**
+         * Add varying inputs to the program
+         *
+         * @param e element describing the layout of the varying input
+         *          structure
+         * @return  self
+         */
+        public Builder addInput(Element e) throws IllegalStateException {
+            // Should check for consistant and non-conflicting names...
+            if(mInputCount >= MAX_INPUT) {
+                throw new RSIllegalArgumentException("Max input count exceeded.");
+            }
+            if (e.isComplex()) {
+                throw new RSIllegalArgumentException("Complex elements not allowed.");
+            }
+            mInputs[mInputCount++] = e;
+            return this;
+        }
+
+        /**
+         * Creates ProgramVertex from the current state of the builder
+         *
+         * @return  ProgramVertex
+         */
         public ProgramVertex create() {
             mRS.validate();
-            int[] tmp = new int[(mInputCount + mOutputCount + mConstantCount +1) * 2];
+            int[] tmp = new int[(mInputCount + mOutputCount + mConstantCount + mTextureCount) * 2];
             int idx = 0;
 
             for (int i=0; i < mInputCount; i++) {
-                tmp[idx++] = 0;
-                tmp[idx++] = mInputs[i].mID;
+                tmp[idx++] = ProgramParam.INPUT.mID;
+                tmp[idx++] = mInputs[i].getID();
             }
             for (int i=0; i < mOutputCount; i++) {
-                tmp[idx++] = 1;
-                tmp[idx++] = mOutputs[i].mID;
+                tmp[idx++] = ProgramParam.OUTPUT.mID;
+                tmp[idx++] = mOutputs[i].getID();
             }
             for (int i=0; i < mConstantCount; i++) {
-                tmp[idx++] = 2;
-                tmp[idx++] = mConstants[i].mID;
+                tmp[idx++] = ProgramParam.CONSTANT.mID;
+                tmp[idx++] = mConstants[i].getID();
             }
-            tmp[idx++] = 3;
-            tmp[idx++] = mTextureCount;
+            for (int i=0; i < mTextureCount; i++) {
+                tmp[idx++] = ProgramParam.TEXTURE_TYPE.mID;
+                tmp[idx++] = mTextureTypes[i].mID;
+            }
 
-            int id = mRS.nProgramVertexCreate2(mShader, tmp);
+            int id = mRS.nProgramVertexCreate(mShader, tmp);
             ProgramVertex pv = new ProgramVertex(id, mRS);
             initProgram(pv);
             return pv;
         }
     }
 
-
-
-    public static class MatrixAllocation {
-        static final int MODELVIEW_OFFSET = 0;
-        static final int PROJECTION_OFFSET = 16;
-        static final int TEXTURE_OFFSET = 32;
-
-        Matrix4f mModel;
-        Matrix4f mProjection;
-        Matrix4f mTexture;
-
-        public Allocation mAlloc;
-
-        public MatrixAllocation(RenderScript rs) {
-            mModel = new Matrix4f();
-            mProjection = new Matrix4f();
-            mTexture = new Matrix4f();
-
-            mAlloc = Allocation.createSized(rs, Element.createUser(rs, Element.DataType.FLOAT_32), 48);
-            mAlloc.subData1D(MODELVIEW_OFFSET, 16, mModel.mMat);
-            mAlloc.subData1D(PROJECTION_OFFSET, 16, mProjection.mMat);
-            mAlloc.subData1D(TEXTURE_OFFSET, 16, mTexture.mMat);
-        }
-
-        public void destroy() {
-            mAlloc.destroy();
-            mAlloc = null;
-        }
-
-        public void loadModelview(Matrix4f m) {
-            mModel = m;
-            mAlloc.subData1D(MODELVIEW_OFFSET, 16, m.mMat);
-        }
-
-        public void loadProjection(Matrix4f m) {
-            mProjection = m;
-            mAlloc.subData1D(PROJECTION_OFFSET, 16, m.mMat);
-        }
-
-        public void loadTexture(Matrix4f m) {
-            mTexture = m;
-            mAlloc.subData1D(TEXTURE_OFFSET, 16, m.mMat);
-        }
-
-        public void setupOrthoWindow(int w, int h) {
-            mProjection.loadOrtho(0,w, h,0, -1,1);
-            mAlloc.subData1D(PROJECTION_OFFSET, 16, mProjection.mMat);
-        }
-
-        public void setupOrthoNormalized(int w, int h) {
-            // range -1,1 in the narrow axis.
-            if(w > h) {
-                float aspect = ((float)w) / h;
-                mProjection.loadOrtho(-aspect,aspect,  -1,1,  -1,1);
-            } else {
-                float aspect = ((float)h) / w;
-                mProjection.loadOrtho(-1,1, -aspect,aspect,  -1,1);
-            }
-            mAlloc.subData1D(PROJECTION_OFFSET, 16, mProjection.mMat);
-        }
-
-        public void setupProjectionNormalized(int w, int h) {
-            // range -1,1 in the narrow axis at z = 0.
-            Matrix4f m1 = new Matrix4f();
-            Matrix4f m2 = new Matrix4f();
-
-            if(w > h) {
-                float aspect = ((float)w) / h;
-                m1.loadFrustum(-aspect,aspect,  -1,1,  1,100);
-            } else {
-                float aspect = ((float)h) / w;
-                m1.loadFrustum(-1,1, -aspect,aspect, 1,100);
-            }
-
-            m2.loadRotate(180, 0, 1, 0);
-            m1.loadMultiply(m1, m2);
-
-            m2.loadScale(-2, 2, 1);
-            m1.loadMultiply(m1, m2);
-
-            m2.loadTranslate(0, 0, 2);
-            m1.loadMultiply(m1, m2);
-
-            mProjection = m1;
-            mAlloc.subData1D(PROJECTION_OFFSET, 16, mProjection.mMat);
-        }
-
-    }
-
 }
-

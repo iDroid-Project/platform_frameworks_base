@@ -4,6 +4,7 @@
 #define LOG_TAG "EmojiFactory_jni"
 #include <utils/Log.h>
 #include <utils/String8.h>
+#include <utils/String16.h>
 
 #include "EmojiFactory.h"
 #include <nativehelper/JNIHelp.h>
@@ -92,8 +93,6 @@ static EmojiFactoryCaller* gCaller;
 static pthread_once_t g_once = PTHREAD_ONCE_INIT;
 static bool lib_emoji_factory_is_ready;
 
-static jclass    gString_class;
-
 static jclass    gBitmap_class;
 static jmethodID gBitmap_constructorMethodID;
 
@@ -107,15 +106,11 @@ static void InitializeCaller() {
 
 static jobject create_java_EmojiFactory(
     JNIEnv* env, EmojiFactory* factory, jstring name) {
-  jobject obj = env->AllocObject(gEmojiFactory_class);
-  if (obj) {
-    env->CallVoidMethod(obj, gEmojiFactory_constructorMethodID,
-                        (jint)factory, name);
-    if (env->ExceptionCheck() != 0) {
-      LOGE("*** Uncaught exception returned from Java call!\n");
-      env->ExceptionDescribe();
-      obj = NULL;
-    }
+  jobject obj = env->NewObject(gEmojiFactory_class, gEmojiFactory_constructorMethodID,
+      static_cast<jint>(reinterpret_cast<uintptr_t>(factory)), name);
+  if (env->ExceptionCheck() != 0) {
+    LOGE("*** Uncaught exception returned from Java call!\n");
+    env->ExceptionDescribe();
   }
   return obj;
 }
@@ -181,17 +176,12 @@ static jobject android_emoji_EmojiFactory_getBitmapFromAndroidPua(
     return NULL;
   }
 
-  jobject obj = env->AllocObject(gBitmap_class);
-  if (obj) {
-    env->CallVoidMethod(obj, gBitmap_constructorMethodID,
-                        reinterpret_cast<jint>(bitmap), false, NULL, -1);
-    if (env->ExceptionCheck() != 0) {
-      LOGE("*** Uncaught exception returned from Java call!\n");
-      env->ExceptionDescribe();
-      return NULL;
-    }
+  jobject obj = env->NewObject(gBitmap_class, gBitmap_constructorMethodID,
+      static_cast<jint>(reinterpret_cast<uintptr_t>(bitmap)), NULL, false, NULL, -1);
+  if (env->ExceptionCheck() != 0) {
+    LOGE("*** Uncaught exception returned from Java call!\n");
+    env->ExceptionDescribe();
   }
-
   return obj;
 }
 
@@ -297,7 +287,7 @@ static jfieldID getFieldIDCheck(JNIEnv* env, jclass clazz,
 int register_android_emoji_EmojiFactory(JNIEnv* env) {
   gBitmap_class = make_globalref(env, "android/graphics/Bitmap");
   gBitmap_constructorMethodID = env->GetMethodID(gBitmap_class, "<init>",
-                                                 "(IZ[BI)V");
+                                                 "(I[BZ[BI)V");
   gEmojiFactory_class = make_globalref(env, "android/emoji/EmojiFactory");
   gEmojiFactory_constructorMethodID = env->GetMethodID(
       gEmojiFactory_class, "<init>", "(ILjava/lang/String;)V");

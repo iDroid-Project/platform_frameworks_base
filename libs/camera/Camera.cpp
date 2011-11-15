@@ -19,11 +19,12 @@
 #define LOG_TAG "Camera"
 #include <utils/Log.h>
 #include <utils/threads.h>
-
+#include <binder/IPCThreadState.h>
 #include <binder/IServiceManager.h>
 #include <binder/IMemory.h>
 
 #include <camera/Camera.h>
+#include <camera/ICameraRecordingProxyListener.h>
 #include <camera/ICameraService.h>
 
 #include <surfaceflinger/Surface.h>
@@ -80,8 +81,9 @@ sp<Camera> Camera::create(const sp<ICamera>& camera)
         c->mStatus = NO_ERROR;
         c->mCamera = camera;
         camera->asBinder()->linkToDeath(c);
+        return c;
     }
-    return c;
+    return 0;
 }
 
 void Camera::init()
@@ -167,31 +169,33 @@ status_t Camera::unlock()
     return c->unlock();
 }
 
-// pass the buffered ISurface to the camera service
+// pass the buffered Surface to the camera service
 status_t Camera::setPreviewDisplay(const sp<Surface>& surface)
 {
-    LOGV("setPreviewDisplay");
+    LOGV("setPreviewDisplay(%p)", surface.get());
     sp <ICamera> c = mCamera;
     if (c == 0) return NO_INIT;
     if (surface != 0) {
-        return c->setPreviewDisplay(surface->getISurface());
+        return c->setPreviewDisplay(surface);
     } else {
         LOGD("app passed NULL surface");
         return c->setPreviewDisplay(0);
     }
 }
 
-status_t Camera::setPreviewDisplay(const sp<ISurface>& surface)
+// pass the buffered ISurfaceTexture to the camera service
+status_t Camera::setPreviewTexture(const sp<ISurfaceTexture>& surfaceTexture)
 {
-    LOGV("setPreviewDisplay");
-    if (surface == 0) {
-        LOGD("app passed NULL surface");
-    }
+    LOGV("setPreviewTexture(%p)", surfaceTexture.get());
     sp <ICamera> c = mCamera;
     if (c == 0) return NO_INIT;
-    return c->setPreviewDisplay(surface);
+    if (surfaceTexture != 0) {
+        return c->setPreviewTexture(surfaceTexture);
+    } else {
+        LOGD("app passed NULL surface");
+        return c->setPreviewTexture(0);
+    }
 }
-
 
 // start preview mode
 status_t Camera::startPreview()
@@ -200,6 +204,15 @@ status_t Camera::startPreview()
     sp <ICamera> c = mCamera;
     if (c == 0) return NO_INIT;
     return c->startPreview();
+}
+
+status_t Camera::storeMetaDataInBuffers(bool enabled)
+{
+    LOGV("storeMetaDataInBuffers: %s",
+            enabled? "true": "false");
+    sp <ICamera> c = mCamera;
+    if (c == 0) return NO_INIT;
+    return c->storeMetaDataInBuffers(enabled);
 }
 
 // start recording mode, must call setPreviewDisplay first
@@ -224,6 +237,10 @@ void Camera::stopPreview()
 void Camera::stopRecording()
 {
     LOGV("stopRecording");
+    {
+        Mutex::Autolock _l(mLock);
+        mRecordingProxyListener.clear();
+    }
     sp <ICamera> c = mCamera;
     if (c == 0) return;
     c->stopRecording();
@@ -273,12 +290,12 @@ status_t Camera::cancelAutoFocus()
 }
 
 // take a picture
-status_t Camera::takePicture()
+status_t Camera::takePicture(int msgType)
 {
-    LOGV("takePicture");
+    LOGV("takePicture: 0x%x", msgType);
     sp <ICamera> c = mCamera;
     if (c == 0) return NO_INIT;
-    return c->takePicture();
+    return c->takePicture(msgType);
 }
 
 // set preview/capture parameters - key/value pairs
@@ -315,6 +332,12 @@ void Camera::setListener(const sp<CameraListener>& listener)
     mListener = listener;
 }
 
+void Camera::setRecordingProxyListener(const sp<ICameraRecordingProxyListener>& listener)
+{
+    Mutex::Autolock _l(mLock);
+    mRecordingProxyListener = listener;
+}
+
 void Camera::setPreviewCallbackFlags(int flag)
 {
     LOGV("setPreviewCallbackFlags");
@@ -337,7 +360,8 @@ void Camera::notifyCallback(int32_t msgType, int32_t ext1, int32_t ext2)
 }
 
 // callback from camera service when frame or image is ready
-void Camera::dataCallback(int32_t msgType, const sp<IMemory>& dataPtr)
+void Camera::dataCallback(int32_t msgType, const sp<IMemory>& dataPtr,
+                          camera_frame_metadata_t *metadata)
 {
     sp<CameraListener> listener;
     {
@@ -345,13 +369,26 @@ void Camera::dataCallback(int32_t msgType, const sp<IMemory>& dataPtr)
         listener = mListener;
     }
     if (listener != NULL) {
-        listener->postData(msgType, dataPtr);
+        listener->postData(msgType, dataPtr, metadata);
     }
 }
 
 // callback from camera service when timestamped frame is ready
 void Camera::dataCallbackTimestamp(nsecs_t timestamp, int32_t msgType, const sp<IMemory>& dataPtr)
 {
+    // If recording proxy listener is registered, forward the frame and return.
+    // The other listener (mListener) is ignored because the receiver needs to
+    // call releaseRecordingFrame.
+    sp<ICameraRecordingProxyListener> proxylistener;
+    {
+        Mutex::Autolock _l(mLock);
+        proxylistener = mRecordingProxyListener;
+    }
+    if (proxylistener != NULL) {
+        proxylistener->dataCallbackTimestamp(timestamp, msgType, dataPtr);
+        return;
+    }
+
     sp<CameraListener> listener;
     {
         Mutex::Autolock _l(mLock);
@@ -377,5 +414,34 @@ void Camera::DeathNotifier::binderDied(const wp<IBinder>& who) {
     LOGW("Camera server died!");
 }
 
-}; // namespace android
+sp<ICameraRecordingProxy> Camera::getRecordingProxy() {
+    LOGV("getProxy");
+    return new RecordingProxy(this);
+}
 
+status_t Camera::RecordingProxy::startRecording(const sp<ICameraRecordingProxyListener>& listener)
+{
+    LOGV("RecordingProxy::startRecording");
+    mCamera->setRecordingProxyListener(listener);
+    mCamera->reconnect();
+    return mCamera->startRecording();
+}
+
+void Camera::RecordingProxy::stopRecording()
+{
+    LOGV("RecordingProxy::stopRecording");
+    mCamera->stopRecording();
+}
+
+void Camera::RecordingProxy::releaseRecordingFrame(const sp<IMemory>& mem)
+{
+    LOGV("RecordingProxy::releaseRecordingFrame");
+    mCamera->releaseRecordingFrame(mem);
+}
+
+Camera::RecordingProxy::RecordingProxy(const sp<Camera>& camera)
+{
+    mCamera = camera;
+}
+
+}; // namespace android

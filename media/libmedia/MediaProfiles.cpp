@@ -26,6 +26,7 @@
 #include <expat.h>
 #include <media/MediaProfiles.h>
 #include <media/stagefright/MediaDebug.h>
+#include <media/stagefright/openmax/OMX_Video.h>
 
 namespace android {
 
@@ -59,8 +60,23 @@ const MediaProfiles::NameToTagMap MediaProfiles::sAudioDecoderNameMap[] = {
 };
 
 const MediaProfiles::NameToTagMap MediaProfiles::sCamcorderQualityNameMap[] = {
+    {"low", CAMCORDER_QUALITY_LOW},
     {"high", CAMCORDER_QUALITY_HIGH},
-    {"low",  CAMCORDER_QUALITY_LOW}
+    {"qcif", CAMCORDER_QUALITY_QCIF},
+    {"cif", CAMCORDER_QUALITY_CIF},
+    {"480p", CAMCORDER_QUALITY_480P},
+    {"720p", CAMCORDER_QUALITY_720P},
+    {"1080p", CAMCORDER_QUALITY_1080P},
+    {"qvga", CAMCORDER_QUALITY_QVGA},
+
+    {"timelapselow",  CAMCORDER_QUALITY_TIME_LAPSE_LOW},
+    {"timelapsehigh", CAMCORDER_QUALITY_TIME_LAPSE_HIGH},
+    {"timelapseqcif", CAMCORDER_QUALITY_TIME_LAPSE_QCIF},
+    {"timelapsecif", CAMCORDER_QUALITY_TIME_LAPSE_CIF},
+    {"timelapse480p", CAMCORDER_QUALITY_TIME_LAPSE_480P},
+    {"timelapse720p", CAMCORDER_QUALITY_TIME_LAPSE_720P},
+    {"timelapse1080p", CAMCORDER_QUALITY_TIME_LAPSE_1080P},
+    {"timelapseqvga", CAMCORDER_QUALITY_TIME_LAPSE_QVGA},
 };
 
 /*static*/ void
@@ -117,6 +133,16 @@ MediaProfiles::logAudioDecoderCap(const MediaProfiles::AudioDecoderCap& cap)
 {
     LOGV("audio codec cap:");
     LOGV("codec = %d", cap.mCodec);
+}
+
+/*static*/ void
+MediaProfiles::logVideoEditorCap(const MediaProfiles::VideoEditorCap& cap)
+{
+    LOGV("videoeditor cap:");
+    LOGV("mMaxInputFrameWidth = %d", cap.mMaxInputFrameWidth);
+    LOGV("mMaxInputFrameHeight = %d", cap.mMaxInputFrameHeight);
+    LOGV("mMaxOutputFrameWidth = %d", cap.mMaxOutputFrameWidth);
+    LOGV("mMaxOutputFrameHeight = %d", cap.mMaxOutputFrameHeight);
 }
 
 /*static*/ int
@@ -271,8 +297,17 @@ MediaProfiles::createEncoderOutputFileFormat(const char **atts)
     return static_cast<output_format>(format);
 }
 
+static bool isCameraIdFound(int cameraId, const Vector<int>& cameraIds) {
+    for (int i = 0, n = cameraIds.size(); i < n; ++i) {
+        if (cameraId == cameraIds[i]) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /*static*/ MediaProfiles::CamcorderProfile*
-MediaProfiles::createCamcorderProfile(int cameraId, const char **atts)
+MediaProfiles::createCamcorderProfile(int cameraId, const char **atts, Vector<int>& cameraIds)
 {
     CHECK(!strcmp("quality",    atts[0]) &&
           !strcmp("fileFormat", atts[2]) &&
@@ -288,6 +323,9 @@ MediaProfiles::createCamcorderProfile(int cameraId, const char **atts)
 
     MediaProfiles::CamcorderProfile *profile = new MediaProfiles::CamcorderProfile;
     profile->mCameraId = cameraId;
+    if (!isCameraIdFound(cameraId, cameraIds)) {
+        cameraIds.add(cameraId);
+    }
     profile->mFileFormat = static_cast<output_format>(fileFormat);
     profile->mQuality = static_cast<camcorder_quality>(quality);
     profile->mDuration = atoi(atts[5]);
@@ -331,6 +369,53 @@ MediaProfiles::getCameraId(const char** atts)
     return atoi(atts[1]);
 }
 
+void MediaProfiles::addStartTimeOffset(int cameraId, const char** atts)
+{
+    int offsetTimeMs = 700;
+    if (atts[2]) {
+        CHECK(!strcmp("startOffsetMs", atts[2]));
+        offsetTimeMs = atoi(atts[3]);
+    }
+
+    LOGV("%s: cameraId=%d, offset=%d ms", __func__, cameraId, offsetTimeMs);
+    mStartTimeOffsets.replaceValueFor(cameraId, offsetTimeMs);
+}
+/*static*/ MediaProfiles::ExportVideoProfile*
+MediaProfiles::createExportVideoProfile(const char **atts)
+{
+    CHECK(!strcmp("name", atts[0]) &&
+          !strcmp("profile", atts[2]) &&
+          !strcmp("level", atts[4]));
+
+    const size_t nMappings =
+        sizeof(sVideoEncoderNameMap)/sizeof(sVideoEncoderNameMap[0]);
+    const int codec = findTagForName(sVideoEncoderNameMap, nMappings, atts[1]);
+    CHECK(codec != -1);
+
+    MediaProfiles::ExportVideoProfile *profile =
+        new MediaProfiles::ExportVideoProfile(
+            codec, atoi(atts[3]), atoi(atts[5]));
+
+    return profile;
+}
+/*static*/ MediaProfiles::VideoEditorCap*
+MediaProfiles::createVideoEditorCap(const char **atts, MediaProfiles *profiles)
+{
+    CHECK(!strcmp("maxInputFrameWidth", atts[0]) &&
+          !strcmp("maxInputFrameHeight", atts[2])  &&
+          !strcmp("maxOutputFrameWidth", atts[4]) &&
+          !strcmp("maxOutputFrameHeight", atts[6]));
+
+    MediaProfiles::VideoEditorCap *pVideoEditorCap =
+        new MediaProfiles::VideoEditorCap(atoi(atts[1]), atoi(atts[3]),
+                atoi(atts[5]), atoi(atts[7]));
+
+    logVideoEditorCap(*pVideoEditorCap);
+    profiles->mVideoEditorCap = pVideoEditorCap;
+
+    return pVideoEditorCap;
+}
+
 /*static*/ void
 MediaProfiles::startElementHandler(void *userData, const char *name, const char **atts)
 {
@@ -355,11 +440,171 @@ MediaProfiles::startElementHandler(void *userData, const char *name, const char 
         profiles->mEncoderOutputFileFormats.add(createEncoderOutputFileFormat(atts));
     } else if (strcmp("CamcorderProfiles", name) == 0) {
         profiles->mCurrentCameraId = getCameraId(atts);
+        profiles->addStartTimeOffset(profiles->mCurrentCameraId, atts);
     } else if (strcmp("EncoderProfile", name) == 0) {
         profiles->mCamcorderProfiles.add(
-            createCamcorderProfile(profiles->mCurrentCameraId, atts));
+            createCamcorderProfile(profiles->mCurrentCameraId, atts, profiles->mCameraIds));
     } else if (strcmp("ImageEncoding", name) == 0) {
         profiles->addImageEncodingQualityLevel(profiles->mCurrentCameraId, atts);
+    } else if (strcmp("VideoEditorCap", name) == 0) {
+        createVideoEditorCap(atts, profiles);
+    } else if (strcmp("ExportVideoProfile", name) == 0) {
+        profiles->mVideoEditorExportProfiles.add(createExportVideoProfile(atts));
+    }
+}
+
+static bool isCamcorderProfile(camcorder_quality quality) {
+    return quality >= CAMCORDER_QUALITY_LIST_START &&
+           quality <= CAMCORDER_QUALITY_LIST_END;
+}
+
+static bool isTimelapseProfile(camcorder_quality quality) {
+    return quality >= CAMCORDER_QUALITY_TIME_LAPSE_LIST_START &&
+           quality <= CAMCORDER_QUALITY_TIME_LAPSE_LIST_END;
+}
+
+void MediaProfiles::initRequiredProfileRefs(const Vector<int>& cameraIds) {
+    LOGV("Number of camera ids: %d", cameraIds.size());
+    CHECK(cameraIds.size() > 0);
+    mRequiredProfileRefs = new RequiredProfiles[cameraIds.size()];
+    for (size_t i = 0, n = cameraIds.size(); i < n; ++i) {
+        mRequiredProfileRefs[i].mCameraId = cameraIds[i];
+        for (size_t j = 0; j < kNumRequiredProfiles; ++j) {
+            mRequiredProfileRefs[i].mRefs[j].mHasRefProfile = false;
+            mRequiredProfileRefs[i].mRefs[j].mRefProfileIndex = -1;
+            if ((j & 1) == 0) {  // low resolution
+                mRequiredProfileRefs[i].mRefs[j].mResolutionProduct = 0x7FFFFFFF;
+            } else {             // high resolution
+                mRequiredProfileRefs[i].mRefs[j].mResolutionProduct = 0;
+            }
+        }
+    }
+}
+
+int MediaProfiles::getRequiredProfileRefIndex(int cameraId) {
+    for (size_t i = 0, n = mCameraIds.size(); i < n; ++i) {
+        if (mCameraIds[i] == cameraId) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void MediaProfiles::checkAndAddRequiredProfilesIfNecessary() {
+    if (sIsInitialized) {
+        return;
+    }
+
+    initRequiredProfileRefs(mCameraIds);
+
+    for (size_t i = 0, n = mCamcorderProfiles.size(); i < n; ++i) {
+        int product = mCamcorderProfiles[i]->mVideoCodec->mFrameWidth *
+                      mCamcorderProfiles[i]->mVideoCodec->mFrameHeight;
+
+        camcorder_quality quality = mCamcorderProfiles[i]->mQuality;
+        int cameraId = mCamcorderProfiles[i]->mCameraId;
+        int index = -1;
+        int refIndex = getRequiredProfileRefIndex(cameraId);
+        CHECK(refIndex != -1);
+        RequiredProfileRefInfo *info;
+        camcorder_quality refQuality;
+        VideoCodec *codec = NULL;
+
+        // Check high and low from either camcorder profile or timelapse profile
+        // but not both. Default, check camcorder profile
+        size_t j = 0;
+        size_t n = 2;
+        if (isTimelapseProfile(quality)) {
+            // Check timelapse profile instead.
+            j = 2;
+            n = kNumRequiredProfiles;
+        } else {
+            // Must be camcorder profile.
+            CHECK(isCamcorderProfile(quality));
+        }
+        for (; j < n; ++j) {
+            info = &(mRequiredProfileRefs[refIndex].mRefs[j]);
+            if ((j % 2 == 0 && product > info->mResolutionProduct) ||  // low
+                (j % 2 != 0 && product < info->mResolutionProduct)) {  // high
+                continue;
+            }
+            switch (j) {
+                case 0:
+                   refQuality = CAMCORDER_QUALITY_LOW;
+                   break;
+                case 1:
+                   refQuality = CAMCORDER_QUALITY_HIGH;
+                   break;
+                case 2:
+                   refQuality = CAMCORDER_QUALITY_TIME_LAPSE_LOW;
+                   break;
+                case 3:
+                   refQuality = CAMCORDER_QUALITY_TIME_LAPSE_HIGH;
+                   break;
+                default:
+                    CHECK(!"Should never reach here");
+            }
+
+            if (!info->mHasRefProfile) {
+                index = getCamcorderProfileIndex(cameraId, refQuality);
+            }
+            if (index == -1) {
+                // New high or low quality profile is found.
+                // Update its reference.
+                info->mHasRefProfile = true;
+                info->mRefProfileIndex = i;
+                info->mResolutionProduct = product;
+            }
+        }
+    }
+
+    for (size_t cameraId = 0; cameraId < mCameraIds.size(); ++cameraId) {
+        for (size_t j = 0; j < kNumRequiredProfiles; ++j) {
+            int refIndex = getRequiredProfileRefIndex(cameraId);
+            CHECK(refIndex != -1);
+            RequiredProfileRefInfo *info =
+                    &mRequiredProfileRefs[refIndex].mRefs[j];
+
+            if (info->mHasRefProfile) {
+
+                CamcorderProfile *profile =
+                    new CamcorderProfile(
+                            *mCamcorderProfiles[info->mRefProfileIndex]);
+
+                // Overwrite the quality
+                switch (j % kNumRequiredProfiles) {
+                    case 0:
+                        profile->mQuality = CAMCORDER_QUALITY_LOW;
+                        break;
+                    case 1:
+                        profile->mQuality = CAMCORDER_QUALITY_HIGH;
+                        break;
+                    case 2:
+                        profile->mQuality = CAMCORDER_QUALITY_TIME_LAPSE_LOW;
+                        break;
+                    case 3:
+                        profile->mQuality = CAMCORDER_QUALITY_TIME_LAPSE_HIGH;
+                        break;
+                    default:
+                        CHECK(!"Should never come here");
+                }
+
+                int index = getCamcorderProfileIndex(cameraId, profile->mQuality);
+                if (index != -1) {
+                    LOGV("Profile quality %d for camera %d already exists",
+                        profile->mQuality, cameraId);
+                    CHECK(index == refIndex);
+                    continue;
+                }
+
+                // Insert the new profile
+                LOGV("Add a profile: quality %d=>%d for camera %d",
+                        mCamcorderProfiles[info->mRefProfileIndex]->mQuality,
+                        profile->mQuality, cameraId);
+
+                mCamcorderProfiles.add(profile);
+            }
+        }
     }
 }
 
@@ -383,6 +628,9 @@ MediaProfiles::getInstance()
         } else {
             sInstance = createInstanceFromXmlFile(value);
         }
+        CHECK(sInstance != NULL);
+        sInstance->checkAndAddRequiredProfilesIfNecessary();
+        sIsInitialized = true;
     }
 
     return sInstance;
@@ -411,16 +659,16 @@ MediaProfiles::createDefaultVideoEncoders(MediaProfiles *profiles)
 }
 
 /*static*/ MediaProfiles::CamcorderProfile*
-MediaProfiles::createDefaultCamcorderHighProfile()
+MediaProfiles::createDefaultCamcorderTimeLapseQcifProfile(camcorder_quality quality)
 {
     MediaProfiles::VideoCodec *videoCodec =
-        new MediaProfiles::VideoCodec(VIDEO_ENCODER_H263, 360000, 352, 288, 20);
+        new MediaProfiles::VideoCodec(VIDEO_ENCODER_H263, 1000000, 176, 144, 20);
 
     AudioCodec *audioCodec = new AudioCodec(AUDIO_ENCODER_AMR_NB, 12200, 8000, 1);
     CamcorderProfile *profile = new MediaProfiles::CamcorderProfile;
     profile->mCameraId = 0;
     profile->mFileFormat = OUTPUT_FORMAT_THREE_GPP;
-    profile->mQuality = CAMCORDER_QUALITY_HIGH;
+    profile->mQuality = quality;
     profile->mDuration = 60;
     profile->mVideoCodec = videoCodec;
     profile->mAudioCodec = audioCodec;
@@ -428,7 +676,40 @@ MediaProfiles::createDefaultCamcorderHighProfile()
 }
 
 /*static*/ MediaProfiles::CamcorderProfile*
-MediaProfiles::createDefaultCamcorderLowProfile()
+MediaProfiles::createDefaultCamcorderTimeLapse480pProfile(camcorder_quality quality)
+{
+    MediaProfiles::VideoCodec *videoCodec =
+        new MediaProfiles::VideoCodec(VIDEO_ENCODER_H263, 20000000, 720, 480, 20);
+
+    AudioCodec *audioCodec = new AudioCodec(AUDIO_ENCODER_AMR_NB, 12200, 8000, 1);
+    CamcorderProfile *profile = new MediaProfiles::CamcorderProfile;
+    profile->mCameraId = 0;
+    profile->mFileFormat = OUTPUT_FORMAT_THREE_GPP;
+    profile->mQuality = quality;
+    profile->mDuration = 60;
+    profile->mVideoCodec = videoCodec;
+    profile->mAudioCodec = audioCodec;
+    return profile;
+}
+
+/*static*/ void
+MediaProfiles::createDefaultCamcorderTimeLapseLowProfiles(
+        MediaProfiles::CamcorderProfile **lowTimeLapseProfile,
+        MediaProfiles::CamcorderProfile **lowSpecificTimeLapseProfile) {
+    *lowTimeLapseProfile = createDefaultCamcorderTimeLapseQcifProfile(CAMCORDER_QUALITY_TIME_LAPSE_LOW);
+    *lowSpecificTimeLapseProfile = createDefaultCamcorderTimeLapseQcifProfile(CAMCORDER_QUALITY_TIME_LAPSE_QCIF);
+}
+
+/*static*/ void
+MediaProfiles::createDefaultCamcorderTimeLapseHighProfiles(
+        MediaProfiles::CamcorderProfile **highTimeLapseProfile,
+        MediaProfiles::CamcorderProfile **highSpecificTimeLapseProfile) {
+    *highTimeLapseProfile = createDefaultCamcorderTimeLapse480pProfile(CAMCORDER_QUALITY_TIME_LAPSE_HIGH);
+    *highSpecificTimeLapseProfile = createDefaultCamcorderTimeLapse480pProfile(CAMCORDER_QUALITY_TIME_LAPSE_480P);
+}
+
+/*static*/ MediaProfiles::CamcorderProfile*
+MediaProfiles::createDefaultCamcorderQcifProfile(camcorder_quality quality)
 {
     MediaProfiles::VideoCodec *videoCodec =
         new MediaProfiles::VideoCodec(VIDEO_ENCODER_H263, 192000, 176, 144, 20);
@@ -439,18 +720,77 @@ MediaProfiles::createDefaultCamcorderLowProfile()
     MediaProfiles::CamcorderProfile *profile = new MediaProfiles::CamcorderProfile;
     profile->mCameraId = 0;
     profile->mFileFormat = OUTPUT_FORMAT_THREE_GPP;
-    profile->mQuality = CAMCORDER_QUALITY_LOW;
+    profile->mQuality = quality;
     profile->mDuration = 30;
     profile->mVideoCodec = videoCodec;
     profile->mAudioCodec = audioCodec;
     return profile;
 }
 
+/*static*/ MediaProfiles::CamcorderProfile*
+MediaProfiles::createDefaultCamcorderCifProfile(camcorder_quality quality)
+{
+    MediaProfiles::VideoCodec *videoCodec =
+        new MediaProfiles::VideoCodec(VIDEO_ENCODER_H263, 360000, 352, 288, 20);
+
+    AudioCodec *audioCodec = new AudioCodec(AUDIO_ENCODER_AMR_NB, 12200, 8000, 1);
+    CamcorderProfile *profile = new MediaProfiles::CamcorderProfile;
+    profile->mCameraId = 0;
+    profile->mFileFormat = OUTPUT_FORMAT_THREE_GPP;
+    profile->mQuality = quality;
+    profile->mDuration = 60;
+    profile->mVideoCodec = videoCodec;
+    profile->mAudioCodec = audioCodec;
+    return profile;
+}
+
+/*static*/ void
+MediaProfiles::createDefaultCamcorderLowProfiles(
+        MediaProfiles::CamcorderProfile **lowProfile,
+        MediaProfiles::CamcorderProfile **lowSpecificProfile) {
+    *lowProfile = createDefaultCamcorderQcifProfile(CAMCORDER_QUALITY_LOW);
+    *lowSpecificProfile = createDefaultCamcorderQcifProfile(CAMCORDER_QUALITY_QCIF);
+}
+
+/*static*/ void
+MediaProfiles::createDefaultCamcorderHighProfiles(
+        MediaProfiles::CamcorderProfile **highProfile,
+        MediaProfiles::CamcorderProfile **highSpecificProfile) {
+    *highProfile = createDefaultCamcorderCifProfile(CAMCORDER_QUALITY_HIGH);
+    *highSpecificProfile = createDefaultCamcorderCifProfile(CAMCORDER_QUALITY_CIF);
+}
+
 /*static*/ void
 MediaProfiles::createDefaultCamcorderProfiles(MediaProfiles *profiles)
 {
-    profiles->mCamcorderProfiles.add(createDefaultCamcorderHighProfile());
-    profiles->mCamcorderProfiles.add(createDefaultCamcorderLowProfile());
+    // low camcorder profiles.
+    MediaProfiles::CamcorderProfile *lowProfile, *lowSpecificProfile;
+    createDefaultCamcorderLowProfiles(&lowProfile, &lowSpecificProfile);
+    profiles->mCamcorderProfiles.add(lowProfile);
+    profiles->mCamcorderProfiles.add(lowSpecificProfile);
+
+    // high camcorder profiles.
+    MediaProfiles::CamcorderProfile* highProfile, *highSpecificProfile;
+    createDefaultCamcorderHighProfiles(&highProfile, &highSpecificProfile);
+    profiles->mCamcorderProfiles.add(highProfile);
+    profiles->mCamcorderProfiles.add(highSpecificProfile);
+
+    // low camcorder time lapse profiles.
+    MediaProfiles::CamcorderProfile *lowTimeLapseProfile, *lowSpecificTimeLapseProfile;
+    createDefaultCamcorderTimeLapseLowProfiles(&lowTimeLapseProfile, &lowSpecificTimeLapseProfile);
+    profiles->mCamcorderProfiles.add(lowTimeLapseProfile);
+    profiles->mCamcorderProfiles.add(lowSpecificTimeLapseProfile);
+
+    // high camcorder time lapse profiles.
+    MediaProfiles::CamcorderProfile *highTimeLapseProfile, *highSpecificTimeLapseProfile;
+    createDefaultCamcorderTimeLapseHighProfiles(&highTimeLapseProfile, &highSpecificTimeLapseProfile);
+    profiles->mCamcorderProfiles.add(highTimeLapseProfile);
+    profiles->mCamcorderProfiles.add(highSpecificTimeLapseProfile);
+
+    // For emulator and other legacy devices which does not have a
+    // media_profiles.xml file, We assume that the default camera id
+    // is 0 and that is the only camera available.
+    profiles->mCameraIds.push(0);
 }
 
 /*static*/ void
@@ -502,6 +842,31 @@ MediaProfiles::createDefaultImageEncodingQualityLevels(MediaProfiles *profiles)
     profiles->mImageEncodingQualityLevels.add(levels);
 }
 
+/*static*/ void
+MediaProfiles::createDefaultVideoEditorCap(MediaProfiles *profiles)
+{
+    profiles->mVideoEditorCap =
+        new MediaProfiles::VideoEditorCap(
+                VIDEOEDITOR_DEFAULT_MAX_INPUT_FRAME_WIDTH,
+                VIDEOEDITOR_DEFUALT_MAX_INPUT_FRAME_HEIGHT,
+                VIDEOEDITOR_DEFAULT_MAX_OUTPUT_FRAME_WIDTH,
+                VIDEOEDITOR_DEFUALT_MAX_OUTPUT_FRAME_HEIGHT);
+}
+/*static*/ void
+MediaProfiles::createDefaultExportVideoProfiles(MediaProfiles *profiles)
+{
+    // Create default video export profiles
+    profiles->mVideoEditorExportProfiles.add(
+        new ExportVideoProfile(VIDEO_ENCODER_H263,
+            OMX_VIDEO_H263ProfileBaseline, OMX_VIDEO_H263Level10));
+    profiles->mVideoEditorExportProfiles.add(
+        new ExportVideoProfile(VIDEO_ENCODER_MPEG_4_SP,
+            OMX_VIDEO_MPEG4ProfileSimple, OMX_VIDEO_MPEG4Level1));
+    profiles->mVideoEditorExportProfiles.add(
+        new ExportVideoProfile(VIDEO_ENCODER_H264,
+            OMX_VIDEO_AVCProfileBaseline, OMX_VIDEO_AVCLevel13));
+}
+
 /*static*/ MediaProfiles*
 MediaProfiles::createDefaultInstance()
 {
@@ -513,7 +878,8 @@ MediaProfiles::createDefaultInstance()
     createDefaultAudioDecoders(profiles);
     createDefaultEncoderOutputFileFormats(profiles);
     createDefaultImageEncodingQualityLevels(profiles);
-    sIsInitialized = true;
+    createDefaultVideoEditorCap(profiles);
+    createDefaultExportVideoProfiles(profiles);
     return profiles;
 }
 
@@ -567,9 +933,6 @@ MediaProfiles::createInstanceFromXmlFile(const char *xml)
 exit:
     ::XML_ParserFree(parser);
     ::fclose(fp);
-    if (profiles) {
-        sIsInitialized = true;
-    }
     return profiles;
 }
 
@@ -612,6 +975,52 @@ int MediaProfiles::getVideoEncoderParamByName(const char *name, video_encoder co
     if (!strcmp("enc.vid.fps.max", name)) return mVideoEncoders[index]->mMaxFrameRate;
 
     LOGE("The given video encoder param name %s is not found", name);
+    return -1;
+}
+int MediaProfiles::getVideoEditorExportParamByName(
+    const char *name, int codec) const
+{
+    LOGV("getVideoEditorExportParamByName: name %s codec %d", name, codec);
+    ExportVideoProfile *exportProfile = NULL;
+    int index = -1;
+    for (size_t i =0; i < mVideoEditorExportProfiles.size(); i++) {
+        exportProfile = mVideoEditorExportProfiles[i];
+        if (exportProfile->mCodec == codec) {
+            index = i;
+            break;
+        }
+    }
+    if (index == -1) {
+        LOGE("The given video decoder %d is not found", codec);
+        return -1;
+    }
+    if (!strcmp("videoeditor.export.profile", name))
+        return exportProfile->mProfile;
+    if (!strcmp("videoeditor.export.level", name))
+        return exportProfile->mLevel;
+
+    LOGE("The given video editor export param name %s is not found", name);
+    return -1;
+}
+int MediaProfiles::getVideoEditorCapParamByName(const char *name) const
+{
+    LOGV("getVideoEditorCapParamByName: %s", name);
+
+    if (mVideoEditorCap == NULL) {
+        LOGE("The mVideoEditorCap is not created, then create default cap.");
+        createDefaultVideoEditorCap(sInstance);
+    }
+
+    if (!strcmp("videoeditor.input.width.max", name))
+        return mVideoEditorCap->mMaxInputFrameWidth;
+    if (!strcmp("videoeditor.input.height.max", name))
+        return mVideoEditorCap->mMaxInputFrameHeight;
+    if (!strcmp("videoeditor.output.width.max", name))
+        return mVideoEditorCap->mMaxOutputFrameWidth;
+    if (!strcmp("videoeditor.output.height.max", name))
+        return mVideoEditorCap->mMaxOutputFrameHeight;
+
+    LOGE("The given video editor param name %s is not found", name);
     return -1;
 }
 
@@ -668,13 +1077,8 @@ Vector<audio_decoder> MediaProfiles::getAudioDecoders() const
     return decoders;  // copy out
 }
 
-int MediaProfiles::getCamcorderProfileParamByName(const char *name,
-                                                  int cameraId,
-                                                  camcorder_quality quality) const
+int MediaProfiles::getCamcorderProfileIndex(int cameraId, camcorder_quality quality) const
 {
-    LOGV("getCamcorderProfileParamByName: %s for camera %d, quality %d",
-         name, cameraId, quality);
-
     int index = -1;
     for (size_t i = 0, n = mCamcorderProfiles.size(); i < n; ++i) {
         if (mCamcorderProfiles[i]->mCameraId == cameraId &&
@@ -683,6 +1087,17 @@ int MediaProfiles::getCamcorderProfileParamByName(const char *name,
             break;
         }
     }
+    return index;
+}
+
+int MediaProfiles::getCamcorderProfileParamByName(const char *name,
+                                                  int cameraId,
+                                                  camcorder_quality quality) const
+{
+    LOGV("getCamcorderProfileParamByName: %s for camera %d, quality %d",
+         name, cameraId, quality);
+
+    int index = getCamcorderProfileIndex(cameraId, quality);
     if (index == -1) {
         LOGE("The given camcorder profile camera %d quality %d is not found",
              cameraId, quality);
@@ -705,6 +1120,11 @@ int MediaProfiles::getCamcorderProfileParamByName(const char *name,
     return -1;
 }
 
+bool MediaProfiles::hasCamcorderProfile(int cameraId, camcorder_quality quality) const
+{
+    return (getCamcorderProfileIndex(cameraId, quality) != -1);
+}
+
 Vector<int> MediaProfiles::getImageEncodingQualityLevels(int cameraId) const
 {
     Vector<int> result;
@@ -713,6 +1133,16 @@ Vector<int> MediaProfiles::getImageEncodingQualityLevels(int cameraId) const
         result = levels->mLevels;  // copy out
     }
     return result;
+}
+
+int MediaProfiles::getStartTimeOffsetMs(int cameraId) const {
+    int offsetTimeMs = -1;
+    ssize_t index = mStartTimeOffsets.indexOfKey(cameraId);
+    if (index >= 0) {
+        offsetTimeMs = mStartTimeOffsets.valueFor(cameraId);
+    }
+    LOGV("offsetTime=%d ms and cameraId=%d", offsetTimeMs, cameraId);
+    return offsetTimeMs;
 }
 
 MediaProfiles::~MediaProfiles()

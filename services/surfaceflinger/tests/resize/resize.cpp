@@ -1,3 +1,19 @@
+/*
+ * Copyright (C) 2010 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #include <cutils/memory.h>
 
 #include <utils/Log.h>
@@ -10,18 +26,9 @@
 #include <surfaceflinger/ISurface.h>
 #include <surfaceflinger/SurfaceComposerClient.h>
 
-#include <ui/Overlay.h>
-
 using namespace android;
 
 namespace android {
-class Test {
-public:
-    static const sp<ISurface>& getISurface(const sp<Surface>& s) {
-        return s->getISurface();
-    }
-};
-};
 
 int main(int argc, char** argv)
 {
@@ -32,14 +39,13 @@ int main(int argc, char** argv)
     // create a client to surfaceflinger
     sp<SurfaceComposerClient> client = new SurfaceComposerClient();
     
-    // create pushbuffer surface
     sp<Surface> surface = client->createSurface(getpid(), 0, 160, 240, 
             PIXEL_FORMAT_RGB_565);
 
 
-    client->openTransaction();
+    SurfaceComposerClient::openGlobalTransaction();
     surface->setLayer(100000);
-    client->closeTransaction();
+    SurfaceComposerClient::closeGlobalTransaction();
 
     Surface::SurfaceInfo info;
     surface->lock(&info);
@@ -51,9 +57,9 @@ int main(int argc, char** argv)
     android_memset16((uint16_t*)info.bits, 0x07E0, bpr*info.h);
     surface->unlockAndPost();
 
-    client->openTransaction();
+    SurfaceComposerClient::openGlobalTransaction();
     surface->setSize(320, 240);
-    client->closeTransaction();
+    SurfaceComposerClient::closeGlobalTransaction();
 
     
     IPCThreadState::self()->joinThreadPool();

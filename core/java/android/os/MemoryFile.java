@@ -28,7 +28,7 @@ import java.io.OutputStream;
  * MemoryFile is a wrapper for the Linux ashmem driver.
  * MemoryFiles are backed by shared memory, which can be optionally
  * set to be purgeable.
- * Purgeable files may have their contents reclaimed by the kernel 
+ * Purgeable files may have their contents reclaimed by the kernel
  * in low memory conditions (only if allowPurging is set to true).
  * After a file is purged, attempts to read or write the file will
  * cause an IOException to be thrown.
@@ -58,7 +58,6 @@ public class MemoryFile
     private int mAddress;   // address of ashmem memory
     private int mLength;    // total length of our ashmem region
     private boolean mAllowPurging = false;  // true if our ashmem region is unpinned
-    private final boolean mOwnsRegion;  // false if this is a ref to an existing ashmem region
 
     /**
      * Allocates a new ashmem region. The region is initially not purgable.
@@ -70,38 +69,11 @@ public class MemoryFile
     public MemoryFile(String name, int length) throws IOException {
         mLength = length;
         mFD = native_open(name, length);
-        mAddress = native_mmap(mFD, length, PROT_READ | PROT_WRITE);
-        mOwnsRegion = true;
-    }
-
-    /**
-     * Creates a reference to an existing memory file. Changes to the original file
-     * will be available through this reference.
-     * Calls to {@link #allowPurging(boolean)} on the returned MemoryFile will fail.
-     *
-     * @param fd File descriptor for an existing memory file, as returned by
-     *        {@link #getFileDescriptor()}. This file descriptor will be closed
-     *        by {@link #close()}.
-     * @param length Length of the memory file in bytes.
-     * @param mode File mode. Currently only "r" for read-only access is supported.
-     * @throws NullPointerException if <code>fd</code> is null.
-     * @throws IOException If <code>fd</code> does not refer to an existing memory file,
-     *         or if the file mode of the existing memory file is more restrictive
-     *         than <code>mode</code>.
-     *
-     * @hide
-     */
-    public MemoryFile(FileDescriptor fd, int length, String mode) throws IOException {
-        if (fd == null) {
-            throw new NullPointerException("File descriptor is null.");
+        if (length > 0) {
+            mAddress = native_mmap(mFD, length, PROT_READ | PROT_WRITE);
+        } else {
+            mAddress = 0;
         }
-        if (!isMemoryFile(fd)) {
-            throw new IllegalArgumentException("Not a memory file.");
-        }
-        mLength = length;
-        mFD = fd;
-        mAddress = native_mmap(mFD, length, modeToProt(mode));
-        mOwnsRegion = false;
     }
 
     /**
@@ -122,7 +94,7 @@ public class MemoryFile
      *
      * @hide
      */
-    public void deactivate() {
+    void deactivate() {
         if (!isDeactivated()) {
             try {
                 native_munmap(mAddress, mLength);
@@ -154,7 +126,7 @@ public class MemoryFile
             close();
         }
     }
-   
+
     /**
      * Returns the length of the memory file.
      *
@@ -181,9 +153,6 @@ public class MemoryFile
      * @return previous value of allowPurging
      */
     synchronized public boolean allowPurging(boolean allowPurging) throws IOException {
-        if (!mOwnsRegion) {
-            throw new IOException("Only the owner can make ashmem regions purgable.");
-        }
         boolean oldValue = mAllowPurging;
         if (oldValue != allowPurging) {
             native_pin(mFD, !allowPurging);
@@ -221,7 +190,7 @@ public class MemoryFile
      * @return number of bytes read.
      * @throws IOException if the memory file has been purged or deactivated.
      */
-    public int readBytes(byte[] buffer, int srcOffset, int destOffset, int count) 
+    public int readBytes(byte[] buffer, int srcOffset, int destOffset, int count)
             throws IOException {
         if (isDeactivated()) {
             throw new IOException("Can't read from deactivated memory file.");
@@ -260,28 +229,7 @@ public class MemoryFile
     }
 
     /**
-     * Gets a ParcelFileDescriptor for the memory file. See {@link #getFileDescriptor()}
-     * for caveats. This must be here to allow classes outside <code>android.os</code< to
-     * make ParcelFileDescriptors from MemoryFiles, as
-     * {@link ParcelFileDescriptor#ParcelFileDescriptor(FileDescriptor)} is package private.
-     *
-     *
-     * @return The file descriptor owned by this memory file object.
-     *         The file descriptor is not duplicated.
-     * @throws IOException If the memory file has been closed.
-     *
-     * @hide
-     */
-    public ParcelFileDescriptor getParcelFileDescriptor() throws IOException {
-        FileDescriptor fd = getFileDescriptor();
-        return fd != null ? new ParcelFileDescriptor(fd) : null;
-    }
-
-    /**
-     * Gets a FileDescriptor for the memory file. Note that this file descriptor
-     * is only safe to pass to {@link #MemoryFile(FileDescriptor,int)}). It
-     * should not be used with file descriptor operations that expect a file descriptor
-     * for a normal file.
+     * Gets a FileDescriptor for the memory file.
      *
      * The returned file descriptor is not duplicated.
      *
@@ -294,17 +242,6 @@ public class MemoryFile
     }
 
     /**
-     * Checks whether the given file descriptor refers to a memory file.
-     *
-     * @throws IOException If <code>fd</code> is not a valid file descriptor.
-     *
-     * @hide
-     */
-    public static boolean isMemoryFile(FileDescriptor fd) throws IOException {
-        return (native_get_size(fd) >= 0);
-    }
-
-    /**
      * Returns the size of the memory file that the file descriptor refers to,
      * or -1 if the file descriptor does not refer to a memory file.
      *
@@ -314,20 +251,6 @@ public class MemoryFile
      */
     public static int getSize(FileDescriptor fd) throws IOException {
         return native_get_size(fd);
-    }
-
-    /**
-     * Converts a file mode string to a <code>prot</code> value as expected by
-     * native_mmap().
-     *
-     * @throws IllegalArgumentException if the file mode is invalid.
-     */
-    private static int modeToProt(String mode) {
-        if ("r".equals(mode)) {
-            return PROT_READ;
-        } else {
-            throw new IllegalArgumentException("Unsupported file mode: '" + mode + "'");
-        }
     }
 
     private class MemoryInputStream extends InputStream {
@@ -407,6 +330,7 @@ public class MemoryFile
         @Override
         public void write(byte buffer[], int offset, int count) throws IOException {
             writeBytes(buffer, offset, mOffset, count);
+            mOffset += count;
         }
 
         @Override

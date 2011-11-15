@@ -25,6 +25,8 @@ import android.os.Parcelable;
 import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.view.View;
+import android.view.Window;
+import android.widget.AbsListView;
 import android.widget.Adapter;
 import android.widget.AdapterView;
 import android.widget.ListAdapter;
@@ -80,6 +82,8 @@ public final class PreferenceScreen extends PreferenceGroup implements AdapterVi
     private ListAdapter mRootAdapter;
     
     private Dialog mDialog;
+
+    private ListView mListView;
     
     /**
      * Do NOT use this constructor, use {@link PreferenceManager#createPreferenceScreen(Context)}.
@@ -91,7 +95,8 @@ public final class PreferenceScreen extends PreferenceGroup implements AdapterVi
 
     /**
      * Returns an adapter that can be attached to a {@link PreferenceActivity}
-     * to show the preferences contained in this {@link PreferenceScreen}.
+     * or {@link PreferenceFragment} to show the preferences contained in this
+     * {@link PreferenceScreen}.
      * <p>
      * This {@link PreferenceScreen} will NOT appear in the returned adapter, instead
      * it appears in the hierarchy above this {@link PreferenceScreen}.
@@ -136,7 +141,7 @@ public final class PreferenceScreen extends PreferenceGroup implements AdapterVi
     
     @Override
     protected void onClick() {
-        if (getIntent() != null || getPreferenceCount() == 0) {
+        if (getIntent() != null || getFragment() != null || getPreferenceCount() == 0) {
             return;
         }
         
@@ -145,18 +150,21 @@ public final class PreferenceScreen extends PreferenceGroup implements AdapterVi
     
     private void showDialog(Bundle state) {
         Context context = getContext();
-        ListView listView = new ListView(context);
-        bind(listView);
+        if (mListView != null) {
+            mListView.setAdapter(null);
+        }
+        mListView = new ListView(context);
+        bind(mListView);
 
         // Set the title bar if title is available, else no title bar
         final CharSequence title = getTitle();
-        Dialog dialog = mDialog = new Dialog(context, TextUtils.isEmpty(title)
-                ? com.android.internal.R.style.Theme_NoTitleBar
-                : com.android.internal.R.style.Theme);
-        dialog.setContentView(listView);
-        if (!TextUtils.isEmpty(title)) {
+        Dialog dialog = mDialog = new Dialog(context, context.getThemeResId());
+        if (TextUtils.isEmpty(title)) {
+            dialog.getWindow().requestFeature(Window.FEATURE_NO_TITLE);
+        } else {
             dialog.setTitle(title);
         }
+        dialog.setContentView(mListView);
         dialog.setOnDismissListener(this);
         if (state != null) {
             dialog.onRestoreInstanceState(state);
@@ -183,9 +191,13 @@ public final class PreferenceScreen extends PreferenceGroup implements AdapterVi
     }
 
     public void onItemClick(AdapterView parent, View view, int position, long id) {
+        // If the list has headers, subtract them from the index.
+        if (parent instanceof ListView) {
+            position -= ((ListView) parent).getHeaderViewsCount();
+        }
         Object item = getRootAdapter().getItem(position);
         if (!(item instanceof Preference)) return;
-        
+
         final Preference preference = (Preference) item; 
         preference.performClick(this);
     }

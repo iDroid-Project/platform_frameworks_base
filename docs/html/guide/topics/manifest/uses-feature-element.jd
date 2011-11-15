@@ -1,5 +1,33 @@
 page.title=&lt;uses-feature&gt;
+parent.title=The AndroidManifest.xml File
+parent.link=manifest-intro.html
 @jd:body
+
+<div id="qv-wrapper">
+<div id="qv">
+
+
+<h2>In this document</h2>
+<ol>
+  <li><a href="#market-feature-filtering">Android Market and Feature-Based Filtering</a>
+    <ol>
+      <li><a href="#declared">Filtering based on explicitly declared features</a></li>
+      <li><a href="#implicit">Filtering based on implicit features</a></li>
+      <li><a href="#bt-permission-handling">Special handling for Bluetooth feature</a></li>
+      <li><a href="#testing">Testing the features required by your application</a></li>
+    </ol>
+  </li>
+  <li><a href="#features-reference">Features Reference</a>
+    <ol>
+      <li><a href="#hw-features">Hardware features</a></li>
+      <li><a href="#sw-features">Software features</a></li>
+      <li><a href="#permissions">Permissions that Imply Feature Requirements</a></li>
+    </ol>
+  </li>
+</ol>
+</div>
+</div>
+
 
 <dl class="xml">
 
@@ -83,7 +111,7 @@ the device before installing an application. However, other services
 with your application. For this reason, it's very important that you declare all of
 the features (from the list below) that your application uses. </p>
 
-<p>For some features, there may exist a specfic attribute that allows you to define
+<p>For some features, there may exist a specific attribute that allows you to define
 a version of the feature, such as the version of Open GL used (declared with
 <a href="#glEsVersion"><code>glEsVersion</code></a>). Other features that either do or do not
 exist for a device, such as a camera, are declared using the
@@ -249,7 +277,7 @@ application absolutely requires the feature and cannot function properly without
 it (<code>"true"</code>), or whether the application prefers to use the feature
 if available, but is designed to run without it (<code>"false"</code>).</p>
 
-<p>Android Market handles explictly declared features in this way: </p>
+<p>Android Market handles explicitly declared features in this way: </p>
 
 <ul>
 <li>If a feature is explicitly declared as being required, Android Market adds
@@ -259,7 +287,7 @@ For example:
 <pre>&lt;uses-feature android:name="android.hardware.camera" android:required="true" /&gt;</pre></li>
 <li>If a feature is explicitly declared as <em>not</em> being required, Android
 Market <em>does not</em> add the feature to the list of required features. For
-that reason, an explicity declared non-required feature is never considered when
+that reason, an explicitly declared non-required feature is never considered when
 filtering the application. Even if the device does not provide the declared
 feature, Android Market will still consider the application compatible with the
 device and will show it to the user, unless other filtering rules apply. For
@@ -450,7 +478,7 @@ feature support, for all devices.</dd>
 
 
 
-<h3>Testing the features required by your application</h3>
+<h3 id="testing">Testing the features required by your application</h3>
 
 <p>You can use the <code>aapt</code> tool, included in the Android SDK, to
 determine how Android Market will filter your application, based on its declared
@@ -514,7 +542,7 @@ in a separate <code>&lt;uses-feature&gt;</code> element. </p>
     <tr>
        <th>Feature Type</th>
        <th>Feature Descriptor</th>
-       <th>Description</th>
+       <th style="min-width:170px">Description</th>
        <th>Comments</th>
     </tr>
     <tr>
@@ -543,9 +571,9 @@ is sensitive to delays or lag in sound input or output.</td>
 <tr>
   <td><code>android.hardware.camera.autofocus</code></td>
   <td>Subfeature. The application uses the device camera's autofocus capability.</td>
-  <td rowspan="3">If declared with the <code>"android:required="true"</code>
-attribute, these subfeatures implicitly declare the
-<code>android.hardware.camera</code> parent feature. </td>
+  <td rowspan="3">These subfeatures implicitly declare the
+<code>android.hardware.camera</code> parent feature, unless declared with
+<code>android:required="false"</code>.</td>
 </tr>
 <tr>
   <td><code>android.hardware.camera.flash</code></td>
@@ -567,9 +595,9 @@ location, such as GPS location, network location, or cell location.</td>
   <td><code>android.hardware.location.network</code></td>
   <td>Subfeature. The application uses coarse location coordinates obtained from
 a network-based geolocation system supported on the device.</td>
-  <td rowspan="2">If declared with the <code>"android:required="true"</code>
-attribute, these subfeatures implicitly declare the
-<code>android.hardware.location</code> parent feature. </td>
+  <td rowspan="2">These subfeatures implicitly declare the
+<code>android.hardware.location</code> parent feature, unless declared with
+<code>android:required="false"</code>. </td>
 </tr>
 <tr>
   <td><code>android.hardware.location.gps</code></td>
@@ -584,9 +612,9 @@ from a Global Positioning System receiver on the device. </td>
   <td></td>
 </tr>
 <tr>
-  <td>Near Field Communications</td>
+  <td>NFC</td>
   <td><code>android.hardware.nfc</td>
-  <td>The application uses NFC radio features in the device.</td>
+  <td>The application uses Near Field Communications radio features in the device.</td>
   <td></td>
 </tr>
 <tr>
@@ -622,6 +650,40 @@ the device.</td>
   <td>The application uses the device's proximity sensor.</td>
   <td></td>
 </tr>
+
+<tr>
+  <td rowspan="2">Screen</td>
+  <td><code>android.hardware.screen.landscape</code></td>
+  <td>The application requires landscape orientation.</td>
+  <td rowspan="2">
+     <p>For example, if your app requires portrait orientation, you should declare
+<code>&lt;uses-feature android:name="android.hardware.screen.portrait"/></code> so that only devices
+that support portrait orientation (whether always or by user choice) can install your app. If your
+application <em>supports</em> both orientations, then you don't need to declare either.</p>
+    <p>Both orientations are assumed <em>not required</em>, by default, so your app may be installed
+on devices that support one or both orientations. However, if any of your activities request that
+they run in a specific orientation, using the <a
+href="{@docRoot}guide/topics/manifest/activity-element.html#screen">{@code
+android:screenOrientation}</a> attribute, then this also declares that the application requires that
+orientation. For example, if you declare <a
+href="{@docRoot}guide/topics/manifest/activity-element.html#screen">{@code
+android:screenOrientation}</a> with either {@code "landscape"}, {@code "reverseLandscape"}, or
+{@code "sensorLandscape"}, then your application will be available only to devices that support
+landscape orientation. As a best practice, you should still declare your requirement for this
+orientation using a {@code &lt;uses-feature&gt;} element. If you declare an orientation for your
+activity using <a href="{@docRoot}guide/topics/manifest/activity-element.html#screen">{@code
+android:screenOrientation}</a>, but don't actually <em>require</em> it, you can disable the
+requirement by declaring the orientation with a {@code &lt;uses-feature&gt;} element and include
+{@code android:required="false"}.</p>
+    <p>For backwards compatibility, any device running a platform version that supports only API
+level 12 or lower is assumed to support both landscape and portrait.</p>
+  </td>
+</tr>
+<tr>
+  <td><code>android.hardware.screen.portrait</code></td>
+  <td>The application requires portrait orientation.</td>
+</tr>
+
 <tr>
   <td rowspan="3">Telephony</td>
   <td><code>android.hardware.telephony</code></td>
@@ -633,9 +695,9 @@ radio with data communication services.</td>
   <td><code>android.hardware.telephony.cdma</code></td>
   <td>Subfeature. The application uses CDMA telephony radio features on the
 device. </td>
-  <td rowspan="2">If declared with the <code>"android:required="true"</code>
-attribute, these subfeatures implicitly declare the
-<code>android.hardware.telephony</code> parent feature. </td>
+  <td rowspan="2">These subfeatures implicitly declare the
+<code>android.hardware.telephony</code> parent feature, unless declared with
+<code>android:required="false"</code>. </td>
 </tr>
 <tr>
   <td><code>android.hardware.telephony.gsm</code></td>
@@ -644,33 +706,114 @@ device.</td>
 </tr>
 
 <tr>
-  <td rowspan="4">Touchscreen</td>
+  <td rowspan="7">Touchscreen</td>
+  <td><code>android.hardware.faketouch</code></td>
+  <td>The application uses basic touch interaction events, such as "click down", "click
+up", and drag.</td>
+  <td><p>When declared as required, this indicates that the application is compatible with a device
+only if it offers an emulated touchscreen ("fake touch" interface), or better. A device that offers
+a fake touch interface provides a user input system that emulates a subset of touchscreen
+capabilities. For example, a mouse or remote control that drives an on-screen cursor provides a fake
+touch interface. If your application requires basic point and click interaction (in other
+words, it won't work with <em>only</em> a d-pad controller), you should declare this feature.
+Because this is the minimum level of touch interaction, your app will also be compatible with
+devices that offer more complex touch interfaces.</p>
+  <p class="note"><strong>Note:</strong> Because applications require the {@code
+android.hardware.touchscreen} feature by default, if you want your application to be available to
+devices that provide a fake touch interface, you must also explicitly declare that a touch screen is
+<em>not</em> required by declaring {@code &lt;uses-feature
+android:name="android.hardware.touchscreen" <strong>android:required="false"</strong>
+/&gt;}</p></td>
+</tr>
+
+<tr>
+  <td><code>android.hardware.faketouch.multitouch.distinct</code></td>
+  <td>The application performs distinct tracking of two or more "fingers" on a fake touch
+interface. This is a superset of the faketouch feature.</td>
+  <td><p>When declared as required, this indicates that the application is compatible with a device
+only if it supports touch emulation for events that supports distinct tracking of two or more
+fingers, or better.</p>
+  <p>Unlike the distinct multitouch defined by {@code
+android.hardware.touchscreen.multitouch.distinct}, input devices that support distinct multi-touch
+with a fake touch interface will not support all two-finger gestures, because the input is
+being transformed to cursor movement on the screen. That is, single finger gestures on such a device
+move a cursor; two-finger swipes will result in single-finger touch events; other two-finger
+gestures will result in the corresponding two-finger touch event. An example device that supports
+distinct multi-touch with a fake touch interface is one that provides a trackpad for cursor movement
+which also supports two or more fingers.</p></td>
+</tr>
+
+<tr>
+  <td><code>android.hardware.faketouch.multitouch.jazzhand</code></td>
+  <td>The application performs distinct tracking of five or more "fingers" on a fake touch
+interface. This is a superset of the faketouch feature.</td>
+  <td><p>When declared as required, this indicates that the application is compatible with a device
+only if it supports touch emulation for events that supports distinct tracking of five or more
+fingers.</p>
+  <p>Unlike the distinct multitouch defined by {@code
+android.hardware.touchscreen.multitouch.jazzhand}, input devices that support jazzhand multi-touch
+with a fake touch interface will not support all five-finger gestures, because the input is being
+transformed to cursor movement on the screen. That is, single finger gestures on such a device move
+a cursor; multi-finger gestures will result in single-finger touch events; other multi-finger
+gestures will result in the corresponding multi-finger touch event. An example device that supports
+distinct multi-touch with a fake touch interface is one that provides a trackpad for cursor movement
+which also supports five or more fingers.</p></td>
+</tr>
+
+<tr>
   <td><code>android.hardware.touchscreen</code></td>
-  <td>The application uses touchscreen capabilities on the device.</td>
-  <td></td>
+  <td>The application uses touchscreen capabilities for gestures that are more interactive
+than basic touch events, such as a fling. This is a superset of the basic faketouch feature.</td>
+  <td><p>By default, your application requires this. As such, your application is <em>not</em>
+available to devices that provide only an emulated touch interface ("fake touch"), by default. If
+you want your application available to devices that provide a fake touch interface (or even devices
+that provide only a d-pad controller), you must explicitly declare that a touch screen is not
+required, by declaring {@code android.hardware.touchscreen} with {@code android:required="false"}.
+You should do so even if your application uses&mdash;but does not <em>require</em>&mdash;a real
+touch screen interface.</p>
+<p>If your application <em>does require</em> a touch interface (in order to perform touch
+gestures such as a fling), then you don't need to do anything, because this is required by default.
+However, it's best if you explicitly declare all features used by your application, so you should
+still declare this if your app uses it.</p>
+  <p>If you require more complex touch interaction, such as multi-finger gestures, you
+should declare the advanced touch screen features below.</p></td>
 </tr>
 <tr>
   <td><code>android.hardware.touchscreen.multitouch</code></td>
-  <td>Subfeature. The application uses basic two-point multitouch capabilities on the device
-screen.</td>
-  <td>If declared with the <code>"android:required="true"</code> attribute, this
-subfeature implicitly declares the <code>android.hardware.touchscreen</code>
-parent feature. </td>
+  <td>The application uses basic two-point multitouch capabilities on the device
+screen, such as for pinch gestures, but does not need to track touches independently. This
+is a superset of touchscreen feature.</td>
+  <td>This implicitly declares the <code>android.hardware.touchscreen</code> parent feature, unless
+declared with <code>android:required="false"</code>. </td>
 </tr>
 <tr>
   <td><code>android.hardware.touchscreen.multitouch.distinct</code></td>
   <td>Subfeature. The application uses advanced multipoint multitouch
 capabilities on the device screen, such as for tracking two or more points fully
-independently.</td>
-  <td rowspan="2">If declared with the <code>"android:required="true"</code> attribute, this
-subfeature implicitly declares the
-<code>android.hardware.touchscreen.multitouch</code> parent feature. </td>
+independently. This is a superset of multitouch feature.</td>
+  <td rowspan="2">This implicitly declares the <code>android.hardware.touchscreen.multitouch</code>
+parent feature, unless declared with <code>android:required="false"</code>. </td>
 </tr>
 <tr>
   <td><code>android.hardware.touchscreen.multitouch.jazzhand</code></td>
-  <td>Subfeature. The application uses advanced multipoint multitouch
+  <td>The application uses advanced multipoint multitouch
 capabilities on the device screen, for tracking up to five points fully
-independently.</td>
+independently. This is a superset of distinct multitouch feature.</td>
+</tr>
+
+<tr>
+  <td rowspan="2">USB</td>
+  <td><code>android.hardware.usb.host</code></td>
+  <td>The application uses USB host mode features (behaves as the host and connects to USB
+devices).</td>
+  <td></td>
+</tr>
+
+<tr>
+  <td><code>android.hardware.usb.accessory</code></td>
+  <td>The application uses USB accessory features (behaves as the USB device and connects to USB
+hosts).</td>
+  <td></td>
 </tr>
 
 <tr>
@@ -714,9 +857,8 @@ in a separate <code>&lt;uses-feature&gt;</code> element. </p>
   <td><code>android.software.sip.voip</code></td>
   <td>Subfeature. The application uses SIP-based VOIP service on the device.
   </td>
-  <td>If declared with the <code>"android:required="true"</code> attribute, this
-subfeature implicitly declares the <code>android.software.sip</code>
-parent feature.</td>
+  <td>This subfeature implicitly declares the <code>android.software.sip</code> parent feature,
+unless declared with <code>android:required="false"</code>.</td>
 </tr>
   </table>
 

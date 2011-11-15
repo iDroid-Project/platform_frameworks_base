@@ -26,11 +26,11 @@ namespace android {
 
 // ----------------------------------------------------------------------------
 
-#define THREAD_PRIORITY_AUDIO_CLIENT (ANDROID_PRIORITY_AUDIO)
 // Maximum cumulated timeout milliseconds before restarting audioflinger thread
 #define MAX_STARTUP_TIMEOUT_MS  3000    // Longer timeout period at startup to cope with A2DP init time
 #define MAX_RUN_TIMEOUT_MS      1000
 #define WAIT_PERIOD_MS          10
+#define RESTORE_TIMEOUT_MS      5000    // Maximum waiting time for a track to be restored
 
 #define CBLK_UNDERRUN_MSK       0x0001
 #define CBLK_UNDERRUN_ON        0x0001  // underrun (out) or overrrun (in) indication
@@ -47,6 +47,12 @@ namespace android {
 #define CBLK_DISABLED_MSK       0x0010
 #define CBLK_DISABLED_ON        0x0010  // track disabled by AudioFlinger due to underrun:
 #define CBLK_DISABLED_OFF       0x0000  // must be re-started
+#define CBLK_RESTORING_MSK      0x0020
+#define CBLK_RESTORING_ON       0x0020  // track is being restored after invalidation
+#define CBLK_RESTORING_OFF      0x0000  // by AudioFlinger
+#define CBLK_RESTORED_MSK       0x0040
+#define CBLK_RESTORED_ON        0x0040  // track has been restored after invalidation
+#define CBLK_RESTORED_OFF       0x0040  // by AudioFlinger
 
 struct audio_track_cblk_t
 {
@@ -75,15 +81,15 @@ struct audio_track_cblk_t
                 // 16 bit because data is converted to 16 bit before being stored in buffer
 
                 uint8_t     frameSize;
-                uint8_t     channelCount;
-                uint16_t    flags;
-
+                uint8_t     pad1;
                 uint16_t    bufferTimeoutMs; // Maximum cumulated timeout before restarting audioflinger
-                uint16_t    waitTimeMs;      // Cumulated wait time
 
+                uint16_t    waitTimeMs;      // Cumulated wait time
                 uint16_t    sendLevel;
-                uint16_t    reserved;
+    volatile    int32_t     flags;
+
                 // Cache line boundary (32 bytes)
+
                             audio_track_cblk_t();
                 uint32_t    stepUser(uint32_t frameCount);
                 bool        stepServer(uint32_t frameCount);
@@ -91,6 +97,7 @@ struct audio_track_cblk_t
                 uint32_t    framesAvailable();
                 uint32_t    framesAvailable_l();
                 uint32_t    framesReady();
+                bool        tryLock();
 };
 
 

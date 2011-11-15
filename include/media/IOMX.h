@@ -19,6 +19,7 @@
 #define ANDROID_IOMX_H_
 
 #include <binder/IInterface.h>
+#include <ui/GraphicBuffer.h>
 #include <utils/List.h>
 #include <utils/String8.h>
 
@@ -32,7 +33,6 @@ namespace android {
 class IMemory;
 class IOMXObserver;
 class IOMXRenderer;
-class ISurface;
 class Surface;
 
 class IOMX : public IInterface {
@@ -78,9 +78,25 @@ public:
             node_id node, OMX_INDEXTYPE index,
             const void *params, size_t size) = 0;
 
+    virtual status_t getState(
+            node_id node, OMX_STATETYPE* state) = 0;
+
+    virtual status_t storeMetaDataInBuffers(
+            node_id node, OMX_U32 port_index, OMX_BOOL enable) = 0;
+
+    virtual status_t enableGraphicBuffers(
+            node_id node, OMX_U32 port_index, OMX_BOOL enable) = 0;
+
+    virtual status_t getGraphicBufferUsage(
+            node_id node, OMX_U32 port_index, OMX_U32* usage) = 0;
+
     virtual status_t useBuffer(
             node_id node, OMX_U32 port_index, const sp<IMemory> &params,
             buffer_id *buffer) = 0;
+
+    virtual status_t useGraphicBuffer(
+            node_id node, OMX_U32 port_index,
+            const sp<GraphicBuffer> &graphicBuffer, buffer_id *buffer) = 0;
 
     // This API clearly only makes sense if the caller lives in the
     // same process as the callee, i.e. is the media_server, as the
@@ -109,33 +125,6 @@ public:
             node_id node,
             const char *parameter_name,
             OMX_INDEXTYPE *index) = 0;
-
-    virtual sp<IOMXRenderer> createRenderer(
-            const sp<ISurface> &surface,
-            const char *componentName,
-            OMX_COLOR_FORMATTYPE colorFormat,
-            size_t encodedWidth, size_t encodedHeight,
-            size_t displayWidth, size_t displayHeight,
-            int32_t rotationDegrees) = 0;
-
-    // Note: These methods are _not_ virtual, it exists as a wrapper around
-    // the virtual "createRenderer" method above facilitating extraction
-    // of the ISurface from a regular Surface or a java Surface object.
-    sp<IOMXRenderer> createRenderer(
-            const sp<Surface> &surface,
-            const char *componentName,
-            OMX_COLOR_FORMATTYPE colorFormat,
-            size_t encodedWidth, size_t encodedHeight,
-            size_t displayWidth, size_t displayHeight,
-            int32_t rotationDegrees);
-
-    sp<IOMXRenderer> createRendererFromJavaSurface(
-            JNIEnv *env, jobject javaSurface,
-            const char *componentName,
-            OMX_COLOR_FORMATTYPE colorFormat,
-            size_t encodedWidth, size_t encodedHeight,
-            size_t displayWidth, size_t displayHeight,
-            int32_t rotationDegrees);
 };
 
 struct omx_message {
@@ -182,13 +171,6 @@ public:
     virtual void onMessage(const omx_message &msg) = 0;
 };
 
-class IOMXRenderer : public IInterface {
-public:
-    DECLARE_META_INTERFACE(OMXRenderer);
-
-    virtual void render(IOMX::buffer_id buffer) = 0;
-};
-
 ////////////////////////////////////////////////////////////////////////////////
 
 class BnOMX : public BnInterface<IOMX> {
@@ -205,11 +187,9 @@ public:
             uint32_t flags = 0);
 };
 
-class BnOMXRenderer : public BnInterface<IOMXRenderer> {
-public:
-    virtual status_t onTransact(
-            uint32_t code, const Parcel &data, Parcel *reply,
-            uint32_t flags = 0);
+struct CodecProfileLevel {
+    OMX_U32 mProfile;
+    OMX_U32 mLevel;
 };
 
 }  // namespace android

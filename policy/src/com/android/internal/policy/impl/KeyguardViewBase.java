@@ -18,6 +18,11 @@ package com.android.internal.policy.impl;
 
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Canvas;
+import android.graphics.ColorFilter;
+import android.graphics.PixelFormat;
+import android.graphics.PorterDuff;
+import android.graphics.drawable.Drawable;
 import android.media.AudioManager;
 import android.telephony.TelephonyManager;
 import android.view.KeyEvent;
@@ -37,19 +42,39 @@ import android.util.AttributeSet;
  */
 public abstract class KeyguardViewBase extends FrameLayout {
 
+    private static final int BACKGROUND_COLOR = 0x70000000;
     private KeyguardViewCallback mCallback;
     private AudioManager mAudioManager;
     private TelephonyManager mTelephonyManager = null;
 
+    // This is a faster way to draw the background on devices without hardware acceleration
+    Drawable mBackgroundDrawable = new Drawable() {
+        @Override
+        public void draw(Canvas canvas) {
+            canvas.drawColor(BACKGROUND_COLOR, PorterDuff.Mode.SRC);
+        }
+
+        @Override
+        public void setAlpha(int alpha) {
+        }
+
+        @Override
+        public void setColorFilter(ColorFilter cf) {
+        }
+
+        @Override
+        public int getOpacity() {
+            return PixelFormat.TRANSLUCENT;
+        }
+    };
+
     public KeyguardViewBase(Context context) {
         super(context);
+        resetBackground();
+    }
 
-        // drop shadow below status bar in keyguard too
-        mForegroundInPadding = false;
-        setForegroundGravity(Gravity.FILL_HORIZONTAL | Gravity.TOP);
-        setForeground(
-                context.getResources().getDrawable(
-                        com.android.internal.R.drawable.title_bar_shadow));
+    public void resetBackground() {
+        setBackgroundDrawable(mBackgroundDrawable);
     }
 
     // used to inject callback
@@ -77,6 +102,11 @@ public abstract class KeyguardViewBase extends FrameLayout {
     abstract public void onScreenTurnedOn();
 
     /**
+     * Called when the view needs to be shown.
+     */
+    abstract public void show();
+
+    /**
      * Called when a key has woken the device to give us a chance to adjust our
      * state according the the key.  We are responsible for waking the device
      * (by poking the wake lock) once we are ready.
@@ -86,7 +116,8 @@ public abstract class KeyguardViewBase extends FrameLayout {
      * action should be posted to a handler.
      *
      * @param keyCode The wake key, which may be relevant for configuring the
-     *   keyguard.
+     *   keyguard.  May be {@link KeyEvent#KEYCODE_UNKNOWN} if waking for a reason
+     *   other than a key press.
      */
     abstract public void wakeWhenReadyTq(int keyCode);
 
@@ -142,8 +173,10 @@ public abstract class KeyguardViewBase extends FrameLayout {
         final int keyCode = event.getKeyCode();
         if (event.getAction() == KeyEvent.ACTION_DOWN) {
             switch (keyCode) {
+                case KeyEvent.KEYCODE_MEDIA_PLAY:
+                case KeyEvent.KEYCODE_MEDIA_PAUSE:
                 case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
-                    /* Suppress PLAYPAUSE toggle when phone is ringing or
+                    /* Suppress PLAY/PAUSE toggle when phone is ringing or
                      * in-call to avoid music playback */
                     if (mTelephonyManager == null) {
                         mTelephonyManager = (TelephonyManager) getContext().getSystemService(
@@ -153,11 +186,13 @@ public abstract class KeyguardViewBase extends FrameLayout {
                             mTelephonyManager.getCallState() != TelephonyManager.CALL_STATE_IDLE) {
                         return true;  // suppress key event
                     }
-                case KeyEvent.KEYCODE_HEADSETHOOK: 
-                case KeyEvent.KEYCODE_MEDIA_STOP: 
-                case KeyEvent.KEYCODE_MEDIA_NEXT: 
-                case KeyEvent.KEYCODE_MEDIA_PREVIOUS: 
-                case KeyEvent.KEYCODE_MEDIA_REWIND: 
+                case KeyEvent.KEYCODE_MUTE:
+                case KeyEvent.KEYCODE_HEADSETHOOK:
+                case KeyEvent.KEYCODE_MEDIA_STOP:
+                case KeyEvent.KEYCODE_MEDIA_NEXT:
+                case KeyEvent.KEYCODE_MEDIA_PREVIOUS:
+                case KeyEvent.KEYCODE_MEDIA_REWIND:
+                case KeyEvent.KEYCODE_MEDIA_RECORD:
                 case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD: {
                     Intent intent = new Intent(Intent.ACTION_MEDIA_BUTTON, null);
                     intent.putExtra(Intent.EXTRA_KEY_EVENT, event);
@@ -166,7 +201,8 @@ public abstract class KeyguardViewBase extends FrameLayout {
                 }
 
                 case KeyEvent.KEYCODE_VOLUME_UP:
-                case KeyEvent.KEYCODE_VOLUME_DOWN: {
+                case KeyEvent.KEYCODE_VOLUME_DOWN:
+                case KeyEvent.KEYCODE_VOLUME_MUTE: {
                     synchronized (this) {
                         if (mAudioManager == null) {
                             mAudioManager = (AudioManager) getContext().getSystemService(
@@ -175,6 +211,7 @@ public abstract class KeyguardViewBase extends FrameLayout {
                     }
                     // Volume buttons should only function for music.
                     if (mAudioManager.isMusicActive()) {
+                        // TODO: Actually handle MUTE.
                         mAudioManager.adjustStreamVolume(
                                     AudioManager.STREAM_MUSIC,
                                     keyCode == KeyEvent.KEYCODE_VOLUME_UP
@@ -189,12 +226,15 @@ public abstract class KeyguardViewBase extends FrameLayout {
         } else if (event.getAction() == KeyEvent.ACTION_UP) {
             switch (keyCode) {
                 case KeyEvent.KEYCODE_MUTE:
-                case KeyEvent.KEYCODE_HEADSETHOOK: 
-                case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE: 
-                case KeyEvent.KEYCODE_MEDIA_STOP: 
-                case KeyEvent.KEYCODE_MEDIA_NEXT: 
-                case KeyEvent.KEYCODE_MEDIA_PREVIOUS: 
-                case KeyEvent.KEYCODE_MEDIA_REWIND: 
+                case KeyEvent.KEYCODE_HEADSETHOOK:
+                case KeyEvent.KEYCODE_MEDIA_PLAY:
+                case KeyEvent.KEYCODE_MEDIA_PAUSE:
+                case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
+                case KeyEvent.KEYCODE_MEDIA_STOP:
+                case KeyEvent.KEYCODE_MEDIA_NEXT:
+                case KeyEvent.KEYCODE_MEDIA_PREVIOUS:
+                case KeyEvent.KEYCODE_MEDIA_REWIND:
+                case KeyEvent.KEYCODE_MEDIA_RECORD:
                 case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD: {
                     Intent intent = new Intent(Intent.ACTION_MEDIA_BUTTON, null);
                     intent.putExtra(Intent.EXTRA_KEY_EVENT, event);
@@ -206,4 +246,9 @@ public abstract class KeyguardViewBase extends FrameLayout {
         return false;
     }
 
+    @Override
+    public void dispatchSystemUiVisibilityChanged(int visibility) {
+        super.dispatchSystemUiVisibilityChanged(visibility);
+        setSystemUiVisibility(STATUS_BAR_DISABLE_BACK);
+    }
 }

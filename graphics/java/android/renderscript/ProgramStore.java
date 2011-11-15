@@ -17,23 +17,67 @@
 package android.renderscript;
 
 
-import android.util.Config;
 import android.util.Log;
 
 
 /**
- * @hide
+ * <p>ProgramStore contains a set of parameters that control how
+ * the graphics hardware handles writes to the framebuffer.
+ * It could be used to:</p>
+ * <ul>
+ *   <li>enable/disable depth testing</li>
+ *   <li>specify wheather depth writes are performed</li>
+ *   <li>setup various blending modes for use in effects like
+ *     transparency</li>
+ *   <li>define write masks for color components written into the
+ *     framebuffer</li>
+ *  </ul>
  *
  **/
 public class ProgramStore extends BaseObj {
-        public enum DepthFunc {
+    /**
+    * Specifies the function used to determine whether a fragment
+    * will be drawn during the depth testing stage in the rendering
+    * pipeline by comparing its value with that already in the depth
+    * buffer. DepthFunc is only valid when depth buffer is present
+    * and depth testing is enabled
+    */
+    public enum DepthFunc {
+
+        /**
+        * Always drawn
+        */
         ALWAYS (0),
+        /**
+        * Drawn if the incoming depth value is less than that in the
+        * depth buffer
+        */
         LESS (1),
-        LEQUAL (2),
+        /**
+        * Drawn if the incoming depth value is less or equal to that in
+        * the depth buffer
+        */
+        LESS_OR_EQUAL (2),
+        /**
+        * Drawn if the incoming depth value is greater than that in the
+        * depth buffer
+        */
         GREATER (3),
-        GEQUAL (4),
+        /**
+        * Drawn if the incoming depth value is greater or equal to that
+        * in the depth buffer
+        */
+        GREATER_OR_EQUAL (4),
+        /**
+        * Drawn if the incoming depth value is equal to that in the
+        * depth buffer
+        */
         EQUAL (5),
-        NOTEQUAL (6);
+        /**
+        * Drawn if the incoming depth value is not equal to that in the
+        * depth buffer
+        */
+        NOT_EQUAL (6);
 
         int mID;
         DepthFunc(int id) {
@@ -41,6 +85,14 @@ public class ProgramStore extends BaseObj {
         }
     }
 
+    /**
+    * Specifies the functions used to combine incoming pixels with
+    * those already in the frame buffer.
+    *
+    * BlendSrcFunc describes how the coefficient used to scale the
+    * source pixels during the blending operation is computed
+    *
+    */
     public enum BlendSrcFunc {
         ZERO (0),
         ONE (1),
@@ -58,6 +110,15 @@ public class ProgramStore extends BaseObj {
         }
     }
 
+    /**
+    * Specifies the functions used to combine incoming pixels with
+    * those already in the frame buffer.
+    *
+    * BlendDstFunc describes how the coefficient used to scale the
+    * pixels already in the framebuffer is computed during the
+    * blending operation
+    *
+    */
     public enum BlendDstFunc {
         ZERO (0),
         ONE (1),
@@ -76,16 +137,106 @@ public class ProgramStore extends BaseObj {
 
 
     ProgramStore(int id, RenderScript rs) {
-        super(rs);
-        mID = id;
+        super(id, rs);
     }
 
+    /**
+    * Returns a pre-defined program store object with the following
+    * characteristics:
+    *  - incoming pixels are drawn if their depth value is less than
+    *    the stored value in the depth buffer. If the pixel is
+    *    drawn, its value is also stored in the depth buffer
+    *  - incoming pixels override the value stored in the color
+    *    buffer if it passes the depth test
+    *
+    *  @param rs Context to which the program will belong.
+    **/
+    public static ProgramStore BLEND_NONE_DEPTH_TEST(RenderScript rs) {
+        if(rs.mProgramStore_BLEND_NONE_DEPTH_TEST == null) {
+            ProgramStore.Builder builder = new ProgramStore.Builder(rs);
+            builder.setDepthFunc(ProgramStore.DepthFunc.LESS);
+            builder.setBlendFunc(BlendSrcFunc.ONE, BlendDstFunc.ZERO);
+            builder.setDitherEnabled(false);
+            builder.setDepthMaskEnabled(true);
+            rs.mProgramStore_BLEND_NONE_DEPTH_TEST = builder.create();
+        }
+        return rs.mProgramStore_BLEND_NONE_DEPTH_TEST;
+    }
+    /**
+    * Returns a pre-defined program store object with the following
+    * characteristics:
+    *  - incoming pixels always pass the depth test and their value
+    *    is not stored in the depth buffer
+    *  - incoming pixels override the value stored in the color
+    *    buffer
+    *
+    *  @param rs Context to which the program will belong.
+    **/
+    public static ProgramStore BLEND_NONE_DEPTH_NONE(RenderScript rs) {
+        if(rs.mProgramStore_BLEND_NONE_DEPTH_NO_DEPTH == null) {
+            ProgramStore.Builder builder = new ProgramStore.Builder(rs);
+            builder.setDepthFunc(ProgramStore.DepthFunc.ALWAYS);
+            builder.setBlendFunc(BlendSrcFunc.ONE, BlendDstFunc.ZERO);
+            builder.setDitherEnabled(false);
+            builder.setDepthMaskEnabled(false);
+            rs.mProgramStore_BLEND_NONE_DEPTH_NO_DEPTH = builder.create();
+        }
+        return rs.mProgramStore_BLEND_NONE_DEPTH_NO_DEPTH;
+    }
+    /**
+    * Returns a pre-defined program store object with the following
+    * characteristics:
+    *  - incoming pixels are drawn if their depth value is less than
+    *    the stored value in the depth buffer. If the pixel is
+    *    drawn, its value is also stored in the depth buffer
+    *  - if the incoming (Source) pixel passes depth test, its value
+    *    is combined with the stored color (Dest) using the
+    *    following formula
+    *  Final.RGB = Source.RGB * Source.A + Dest.RGB * (1 - Source.A)
+    *
+    *  @param rs Context to which the program will belong.
+    **/
+    public static ProgramStore BLEND_ALPHA_DEPTH_TEST(RenderScript rs) {
+        if(rs.mProgramStore_BLEND_ALPHA_DEPTH_TEST == null) {
+            ProgramStore.Builder builder = new ProgramStore.Builder(rs);
+            builder.setDepthFunc(ProgramStore.DepthFunc.LESS);
+            builder.setBlendFunc(BlendSrcFunc.SRC_ALPHA, BlendDstFunc.ONE_MINUS_SRC_ALPHA);
+            builder.setDitherEnabled(false);
+            builder.setDepthMaskEnabled(true);
+            rs.mProgramStore_BLEND_ALPHA_DEPTH_TEST = builder.create();
+        }
+        return rs.mProgramStore_BLEND_ALPHA_DEPTH_TEST;
+    }
+    /**
+    * Returns a pre-defined program store object with the following
+    * characteristics:
+    *  - incoming pixels always pass the depth test and their value
+    *    is not stored in the depth buffer
+    *  - incoming pixel's value is combined with the stored color
+    *    (Dest) using the following formula
+    *  Final.RGB = Source.RGB * Source.A + Dest.RGB * (1 - Source.A)
+    *
+    *  @param rs Context to which the program will belong.
+    **/
+    public static ProgramStore BLEND_ALPHA_DEPTH_NONE(RenderScript rs) {
+        if(rs.mProgramStore_BLEND_ALPHA_DEPTH_NO_DEPTH == null) {
+            ProgramStore.Builder builder = new ProgramStore.Builder(rs);
+            builder.setDepthFunc(ProgramStore.DepthFunc.ALWAYS);
+            builder.setBlendFunc(BlendSrcFunc.SRC_ALPHA, BlendDstFunc.ONE_MINUS_SRC_ALPHA);
+            builder.setDitherEnabled(false);
+            builder.setDepthMaskEnabled(false);
+            rs.mProgramStore_BLEND_ALPHA_DEPTH_NO_DEPTH = builder.create();
+        }
+        return rs.mProgramStore_BLEND_ALPHA_DEPTH_NO_DEPTH;
+    }
 
-
+    /**
+    * Builder class for ProgramStore object. If the builder is left
+    * empty, the equivalent of BLEND_NONE_DEPTH_NONE would be
+    * returned
+    */
     public static class Builder {
         RenderScript mRS;
-        Element mIn;
-        Element mOut;
         DepthFunc mDepthFunc;
         boolean mDepthMask;
         boolean mColorMaskR;
@@ -96,12 +247,8 @@ public class ProgramStore extends BaseObj {
         BlendDstFunc mBlendDst;
         boolean mDither;
 
-
-
-        public Builder(RenderScript rs, Element in, Element out) {
+        public Builder(RenderScript rs) {
             mRS = rs;
-            mIn = in;
-            mOut = out;
             mDepthFunc = DepthFunc.ALWAYS;
             mDepthMask = false;
             mColorMaskR = true;
@@ -110,60 +257,90 @@ public class ProgramStore extends BaseObj {
             mColorMaskA = true;
             mBlendSrc = BlendSrcFunc.ONE;
             mBlendDst = BlendDstFunc.ZERO;
-
-
         }
 
-        public void setDepthFunc(DepthFunc func) {
+        /**
+        * Specifies the depth testing behavior
+        *
+        * @param func function used for depth testing
+        *
+        * @return this
+        */
+        public Builder setDepthFunc(DepthFunc func) {
             mDepthFunc = func;
+            return this;
         }
 
-        public void setDepthMask(boolean enable) {
+        /**
+        * Enables writes into the depth buffer
+        *
+        * @param enable specifies whether depth writes are
+        *         enabled or disabled
+        *
+        * @return this
+        */
+        public Builder setDepthMaskEnabled(boolean enable) {
             mDepthMask = enable;
+            return this;
         }
 
-        public void setColorMask(boolean r, boolean g, boolean b, boolean a) {
+        /**
+        * Enables writes into the color buffer
+        *
+        * @param r specifies whether red channel is written
+        * @param g specifies whether green channel is written
+        * @param b specifies whether blue channel is written
+        * @param a specifies whether alpha channel is written
+        *
+        * @return this
+        */
+        public Builder setColorMaskEnabled(boolean r, boolean g, boolean b, boolean a) {
             mColorMaskR = r;
             mColorMaskG = g;
             mColorMaskB = b;
             mColorMaskA = a;
+            return this;
         }
 
-        public void setBlendFunc(BlendSrcFunc src, BlendDstFunc dst) {
+        /**
+        * Specifies how incoming pixels are combined with the pixels
+        * stored in the framebuffer
+        *
+        * @param src specifies how the source blending factor is
+        *            computed
+        * @param dst specifies how the destination blending factor is
+        *            computed
+        *
+        * @return this
+        */
+        public Builder setBlendFunc(BlendSrcFunc src, BlendDstFunc dst) {
             mBlendSrc = src;
             mBlendDst = dst;
+            return this;
         }
 
-        public void setDitherEnable(boolean enable) {
+        /**
+        * Enables dithering
+        *
+        * @param enable specifies whether dithering is enabled or
+        *               disabled
+        *
+        * @return this
+        */
+        public Builder setDitherEnabled(boolean enable) {
             mDither = enable;
+            return this;
         }
 
-        static synchronized ProgramStore internalCreate(RenderScript rs, Builder b) {
-            int inID = 0;
-            int outID = 0;
-            if (b.mIn != null) {
-                inID = b.mIn.mID;
-            }
-            if (b.mOut != null) {
-                outID = b.mOut.mID;
-            }
-            rs.nProgramFragmentStoreBegin(inID, outID);
-            rs.nProgramFragmentStoreDepthFunc(b.mDepthFunc.mID);
-            rs.nProgramFragmentStoreDepthMask(b.mDepthMask);
-            rs.nProgramFragmentStoreColorMask(b.mColorMaskR,
-                                              b.mColorMaskG,
-                                              b.mColorMaskB,
-                                              b.mColorMaskA);
-            rs.nProgramFragmentStoreBlendFunc(b.mBlendSrc.mID, b.mBlendDst.mID);
-            rs.nProgramFragmentStoreDither(b.mDither);
-
-            int id = rs.nProgramFragmentStoreCreate();
-            return new ProgramStore(id, rs);
-        }
-
+        /**
+        * Creates a program store from the current state of the builder
+        */
         public ProgramStore create() {
             mRS.validate();
-            return internalCreate(mRS, this);
+            int id = mRS.nProgramStoreCreate(mColorMaskR, mColorMaskG, mColorMaskB, mColorMaskA,
+                                             mDepthMask, mDither,
+                                             mBlendSrc.mID, mBlendDst.mID, mDepthFunc.mID);
+            return new ProgramStore(id, mRS);
         }
     }
 

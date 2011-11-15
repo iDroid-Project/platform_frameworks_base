@@ -34,6 +34,7 @@ static struct {
     { AID_MEDIA, "media.player" },
     { AID_MEDIA, "media.camera" },
     { AID_MEDIA, "media.audio_policy" },
+    { AID_DRM,   "drm.drmManager" },
     { AID_NFC,   "nfc" },
     { AID_RADIO, "radio.phone" },
     { AID_RADIO, "radio.sms" },
@@ -159,9 +160,9 @@ int do_add_service(struct binder_state *bs,
     si = find_svc(s, len);
     if (si) {
         if (si->ptr) {
-            LOGE("add_service('%s',%p) uid=%d - ALREADY REGISTERED\n",
+            LOGE("add_service('%s',%p) uid=%d - ALREADY REGISTERED, OVERRIDE\n",
                  str8(s), ptr, uid);
-            return -1;
+            svcinfo_death(bs, si);
         }
         si->ptr = ptr;
     } else {

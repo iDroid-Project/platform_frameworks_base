@@ -14,9 +14,6 @@
  * limitations under the License.
  */
 
-#include <GLES/gl.h>
-#include <GLES/glext.h>
-
 #include "rsContext.h"
 #include "rsSampler.h"
 
@@ -25,10 +22,7 @@ using namespace android;
 using namespace android::renderscript;
 
 
-Sampler::Sampler(Context *rsc) : ObjectBase(rsc)
-{
-    mAllocFile = __FILE__;
-    mAllocLine = __LINE__;
+Sampler::Sampler(Context *rsc) : ObjectBase(rsc) {
     // Should not get called.
     rsAssert(0);
 }
@@ -38,134 +32,98 @@ Sampler::Sampler(Context *rsc,
                  RsSamplerValue minFilter,
                  RsSamplerValue wrapS,
                  RsSamplerValue wrapT,
-                 RsSamplerValue wrapR) : ObjectBase(rsc)
-{
-    mAllocFile = __FILE__;
-    mAllocLine = __LINE__;
-    mMagFilter = magFilter;
-    mMinFilter = minFilter;
-    mWrapS = wrapS;
-    mWrapT = wrapT;
-    mWrapR = wrapR;
+                 RsSamplerValue wrapR,
+                 float aniso) : ObjectBase(rsc) {
+    mHal.state.magFilter = magFilter;
+    mHal.state.minFilter = minFilter;
+    mHal.state.wrapS = wrapS;
+    mHal.state.wrapT = wrapT;
+    mHal.state.wrapR = wrapR;
+    mHal.state.aniso = aniso;
+
+    mRSC->mHal.funcs.sampler.init(mRSC, this);
 }
 
-Sampler::~Sampler()
-{
+Sampler::~Sampler() {
+    mRSC->mHal.funcs.sampler.destroy(mRSC, this);
 }
 
-void Sampler::setupGL(const Context *rsc, bool npot)
-{
-    GLenum trans[] = {
-        GL_NEAREST, //RS_SAMPLER_NEAREST,
-        GL_LINEAR, //RS_SAMPLER_LINEAR,
-        GL_LINEAR_MIPMAP_LINEAR, //RS_SAMPLER_LINEAR_MIP_LINEAR,
-        GL_REPEAT, //RS_SAMPLER_WRAP,
-        GL_CLAMP_TO_EDGE, //RS_SAMPLER_CLAMP
-
-    };
-
-    bool forceNonMip = false;
-    if (!rsc->ext_OES_texture_npot() && npot) {
-        forceNonMip = true;
-    }
-
-    if ((mMinFilter == RS_SAMPLER_LINEAR_MIP_LINEAR) && forceNonMip) {
-        if (rsc->ext_GL_IMG_texture_npot()) {
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST);
-        } else {
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+void Sampler::preDestroy() const {
+    for (uint32_t ct = 0; ct < mRSC->mStateSampler.mAllSamplers.size(); ct++) {
+        if (mRSC->mStateSampler.mAllSamplers[ct] == this) {
+            mRSC->mStateSampler.mAllSamplers.removeAt(ct);
+            break;
         }
-    } else {
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, trans[mMinFilter]);
     }
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, trans[mMagFilter]);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, trans[mWrapS]);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, trans[mWrapT]);
-
-
-    rsc->checkError("ProgramFragment::setupGL2 tex env");
 }
 
-void Sampler::bindToContext(SamplerState *ss, uint32_t slot)
-{
+void Sampler::bindToContext(SamplerState *ss, uint32_t slot) {
     ss->mSamplers[slot].set(this);
     mBoundSlot = slot;
 }
 
-void Sampler::unbindFromContext(SamplerState *ss)
-{
+void Sampler::unbindFromContext(SamplerState *ss) {
     int32_t slot = mBoundSlot;
     mBoundSlot = -1;
     ss->mSamplers[slot].clear();
 }
-/*
-void SamplerState::setupGL()
-{
-    for (uint32_t ct=0; ct < RS_MAX_SAMPLER_SLOT; ct++) {
-        Sampler *s = mSamplers[ct].get();
-        if (s) {
-            s->setupGL(rsc);
-        } else {
-            glBindTexture(GL_TEXTURE_2D, 0);
-        }
+
+void Sampler::serialize(OStream *stream) const {
+}
+
+Sampler *Sampler::createFromStream(Context *rsc, IStream *stream) {
+    return NULL;
+}
+
+ObjectBaseRef<Sampler> Sampler::getSampler(Context *rsc,
+                                           RsSamplerValue magFilter,
+                                           RsSamplerValue minFilter,
+                                           RsSamplerValue wrapS,
+                                           RsSamplerValue wrapT,
+                                           RsSamplerValue wrapR,
+                                           float aniso) {
+    ObjectBaseRef<Sampler> returnRef;
+    ObjectBase::asyncLock();
+    for (uint32_t ct = 0; ct < rsc->mStateSampler.mAllSamplers.size(); ct++) {
+        Sampler *existing = rsc->mStateSampler.mAllSamplers[ct];
+        if (existing->mHal.state.magFilter != magFilter) continue;
+        if (existing->mHal.state.minFilter != minFilter ) continue;
+        if (existing->mHal.state.wrapS != wrapS) continue;
+        if (existing->mHal.state.wrapT != wrapT) continue;
+        if (existing->mHal.state.wrapR != wrapR) continue;
+        if (existing->mHal.state.aniso != aniso) continue;
+        returnRef.set(existing);
+        ObjectBase::asyncUnlock();
+        return returnRef;
     }
-}*/
+    ObjectBase::asyncUnlock();
+
+    Sampler *s = new Sampler(rsc, magFilter, minFilter, wrapS, wrapT, wrapR, aniso);
+    returnRef.set(s);
+
+    ObjectBase::asyncLock();
+    rsc->mStateSampler.mAllSamplers.push(s);
+    ObjectBase::asyncUnlock();
+
+    return returnRef;
+}
 
 ////////////////////////////////
 
 namespace android {
 namespace renderscript {
 
-
-void rsi_SamplerBegin(Context *rsc)
-{
-    SamplerState * ss = &rsc->mStateSampler;
-
-    ss->mMagFilter = RS_SAMPLER_LINEAR;
-    ss->mMinFilter = RS_SAMPLER_LINEAR;
-    ss->mWrapS = RS_SAMPLER_WRAP;
-    ss->mWrapT = RS_SAMPLER_WRAP;
-    ss->mWrapR = RS_SAMPLER_WRAP;
-}
-
-void rsi_SamplerSet(Context *rsc, RsSamplerParam param, RsSamplerValue value)
-{
-    SamplerState * ss = &rsc->mStateSampler;
-
-    switch(param) {
-    case RS_SAMPLER_MAG_FILTER:
-        ss->mMagFilter = value;
-        break;
-    case RS_SAMPLER_MIN_FILTER:
-        ss->mMinFilter = value;
-        break;
-    case RS_SAMPLER_WRAP_S:
-        ss->mWrapS = value;
-        break;
-    case RS_SAMPLER_WRAP_T:
-        ss->mWrapT = value;
-        break;
-    case RS_SAMPLER_WRAP_R:
-        ss->mWrapR = value;
-        break;
-    }
-
-}
-
-RsSampler rsi_SamplerCreate(Context *rsc)
-{
-    SamplerState * ss = &rsc->mStateSampler;
-
-
-    Sampler * s = new Sampler(rsc,
-                              ss->mMagFilter,
-                              ss->mMinFilter,
-                              ss->mWrapS,
-                              ss->mWrapT,
-                              ss->mWrapR);
+RsSampler rsi_SamplerCreate(Context * rsc,
+                            RsSamplerValue magFilter,
+                            RsSamplerValue minFilter,
+                            RsSamplerValue wrapS,
+                            RsSamplerValue wrapT,
+                            RsSamplerValue wrapR,
+                            float aniso) {
+    ObjectBaseRef<Sampler> s = Sampler::getSampler(rsc, magFilter, minFilter,
+                                                   wrapS, wrapT, wrapR, aniso);
     s->incUserRef();
-    return s;
+    return s.get();
 }
-
 
 }}

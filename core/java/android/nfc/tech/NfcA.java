@@ -16,9 +16,11 @@
 
 package android.nfc.tech;
 
+import android.nfc.ErrorCodes;
 import android.nfc.Tag;
 import android.os.Bundle;
 import android.os.RemoteException;
+import android.util.Log;
 
 import java.io.IOException;
 
@@ -33,6 +35,8 @@ import java.io.IOException;
  * require the {@link android.Manifest.permission#NFC} permission.
  */
 public final class NfcA extends BasicTagTechnology {
+    private static final String TAG = "NFC";
+
     /** @hide */
     public static final String EXTRA_SAK = "sak";
     /** @hide */
@@ -98,6 +102,9 @@ public final class NfcA extends BasicTagTechnology {
      * for example a SENS_REQ is not possible (these are used to
      * manage tag polling and initialization).
      *
+     * <p>Use {@link #getMaxTransceiveLength} to retrieve the maximum number of bytes
+     * that can be sent with {@link #transceive}.
+     *
      * <p>This is an I/O operation and will block until complete. It must
      * not be called from the main application thread. A blocked call will be canceled with
      * {@link IOException} if {@link #close} is called from another thread.
@@ -111,5 +118,54 @@ public final class NfcA extends BasicTagTechnology {
      */
     public byte[] transceive(byte[] data) throws IOException {
         return transceive(data, true);
+    }
+
+    /**
+     * Return the maximum number of bytes that can be sent with {@link #transceive}.
+     * @return the maximum number of bytes that can be sent with {@link #transceive}.
+     */
+    public int getMaxTransceiveLength() {
+        return getMaxTransceiveLengthInternal();
+    }
+
+    /**
+     * Set the {@link #transceive} timeout in milliseconds.
+     *
+     * <p>The timeout only applies to {@link #transceive} on this object,
+     * and is reset to a default value when {@link #close} is called.
+     *
+     * <p>Setting a longer timeout may be useful when performing
+     * transactions that require a long processing time on the tag
+     * such as key generation.
+     *
+     * <p class="note">Requires the {@link android.Manifest.permission#NFC} permission.
+     *
+     * @param timeout timeout value in milliseconds
+     */
+    public void setTimeout(int timeout) {
+        try {
+            int err = mTag.getTagService().setTimeout(TagTechnology.NFC_A, timeout);
+            if (err != ErrorCodes.SUCCESS) {
+                throw new IllegalArgumentException("The supplied timeout is not valid");
+            }
+        } catch (RemoteException e) {
+            Log.e(TAG, "NFC service dead", e);
+        }
+    }
+
+    /**
+     * Get the current {@link #transceive} timeout in milliseconds.
+     *
+     * <p class="note">Requires the {@link android.Manifest.permission#NFC} permission.
+     *
+     * @return timeout value in milliseconds
+     */
+    public int getTimeout() {
+        try {
+            return mTag.getTagService().getTimeout(TagTechnology.NFC_A);
+        } catch (RemoteException e) {
+            Log.e(TAG, "NFC service dead", e);
+            return 0;
+        }
     }
 }

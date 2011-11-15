@@ -70,7 +70,7 @@ public class RecoverySystem {
     private static File RECOVERY_DIR = new File("/cache/recovery");
     private static File COMMAND_FILE = new File(RECOVERY_DIR, "command");
     private static File LOG_FILE = new File(RECOVERY_DIR, "log");
-    private static String LAST_LOG_FILENAME = "last_log";
+    private static String LAST_PREFIX = "last_";
 
     // Length limits for reading files.
     private static int LOG_FILE_MAX_LENGTH = 64 * 1024;
@@ -246,7 +246,7 @@ public class RecoverySystem {
             // algorithm is used by the signature (which should be
             // SHA1withRSA).
 
-            String da = sigInfo.getdigestAlgorithm();
+            String da = sigInfo.getDigestAlgorithm();
             String dea = sigInfo.getDigestEncryptionAlgorithm();
             String alg = null;
             if (da == null || dea == null) {
@@ -357,20 +357,11 @@ public class RecoverySystem {
     }
 
     /**
-     * Reboot into the recovery system to wipe the /data partition and toggle
-     * Encrypted File Systems on/off.
-     * @param extras to add to the RECOVERY_COMPLETED intent after rebooting.
+     * Reboot into the recovery system to wipe the /cache partition.
      * @throws IOException if something goes wrong.
-     *
-     * @hide
      */
-    public static void rebootToggleEFS(Context context, boolean efsEnabled)
-        throws IOException {
-        if (efsEnabled) {
-            bootCommand(context, "--set_encrypted_filesystem=on");
-        } else {
-            bootCommand(context, "--set_encrypted_filesystem=off");
-        }
+    public static void rebootWipeCache(Context context) throws IOException {
+        bootCommand(context, "--wipe_cache");
     }
 
     /**
@@ -415,10 +406,11 @@ public class RecoverySystem {
             Log.e(TAG, "Error reading recovery log", e);
         }
 
-        // Delete everything in RECOVERY_DIR except LAST_LOG_FILENAME
+        // Delete everything in RECOVERY_DIR except those beginning
+        // with LAST_PREFIX
         String[] names = RECOVERY_DIR.list();
         for (int i = 0; names != null && i < names.length; i++) {
-            if (names[i].equals(LAST_LOG_FILENAME)) continue;
+            if (names[i].startsWith(LAST_PREFIX)) continue;
             File f = new File(RECOVERY_DIR, names[i]);
             if (!f.delete()) {
                 Log.e(TAG, "Can't delete: " + f);

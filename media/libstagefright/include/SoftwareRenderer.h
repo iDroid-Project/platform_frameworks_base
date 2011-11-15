@@ -19,40 +19,35 @@
 #define SOFTWARE_RENDERER_H_
 
 #include <media/stagefright/ColorConverter.h>
-#include <media/stagefright/VideoRenderer.h>
 #include <utils/RefBase.h>
+#include <ui/android_native_buffer.h>
 
 namespace android {
 
-class ISurface;
-class MemoryHeapBase;
+struct MetaData;
 
-class SoftwareRenderer : public VideoRenderer {
+class SoftwareRenderer {
 public:
     SoftwareRenderer(
-            OMX_COLOR_FORMATTYPE colorFormat,
-            const sp<ISurface> &surface,
-            size_t displayWidth, size_t displayHeight,
-            size_t decodedWidth, size_t decodedHeight,
-            int32_t rotationDegrees = 0);
+            const sp<ANativeWindow> &nativeWindow, const sp<MetaData> &meta);
 
-    virtual ~SoftwareRenderer();
+    ~SoftwareRenderer();
 
-    status_t initCheck() const;
-
-    virtual void render(
+    void render(
             const void *data, size_t size, void *platformPrivate);
 
 private:
-    status_t mInitCheck;
+    enum YUVMode {
+        None,
+    };
+
     OMX_COLOR_FORMATTYPE mColorFormat;
-    ColorConverter mConverter;
-    sp<ISurface> mISurface;
-    size_t mDisplayWidth, mDisplayHeight;
-    size_t mDecodedWidth, mDecodedHeight;
-    size_t mFrameSize;
-    sp<MemoryHeapBase> mMemoryHeap;
-    int mIndex;
+    ColorConverter *mConverter;
+    YUVMode mYUVMode;
+    sp<ANativeWindow> mNativeWindow;
+    int32_t mWidth, mHeight;
+    int32_t mCropLeft, mCropTop, mCropRight, mCropBottom;
+    int32_t mCropWidth, mCropHeight;
 
     SoftwareRenderer(const SoftwareRenderer &);
     SoftwareRenderer &operator=(const SoftwareRenderer &);

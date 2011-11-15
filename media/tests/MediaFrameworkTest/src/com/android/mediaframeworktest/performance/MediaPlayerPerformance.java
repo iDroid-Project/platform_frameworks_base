@@ -17,22 +17,26 @@
 package com.android.mediaframeworktest.performance;
 
 import com.android.mediaframeworktest.MediaFrameworkTest;
+import com.android.mediaframeworktest.MediaFrameworkPerfTestRunner;
 import com.android.mediaframeworktest.MediaNames;
+import com.android.mediaframeworktest.MediaTestUtil;
 
 import android.database.sqlite.SQLiteDatabase;
 import android.hardware.Camera;
 import android.hardware.Camera.PreviewCallback;
 import android.media.MediaPlayer;
 import android.media.MediaRecorder;
+import android.media.EncoderCapabilities.VideoEncoderCap;
 import android.os.ConditionVariable;
 import android.os.Looper;
 import android.os.SystemClock;
-import android.test.ActivityInstrumentationTestCase;
+import android.test.ActivityInstrumentationTestCase2;
 import android.test.suitebuilder.annotation.LargeTest;
 import android.test.suitebuilder.annotation.Suppress;
 import android.util.Log;
 import android.view.SurfaceHolder;
 
+import java.util.List;
 import java.io.FileDescriptor;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -46,13 +50,14 @@ import java.io.BufferedWriter;
 import android.media.MediaMetadataRetriever;
 import com.android.mediaframeworktest.MediaProfileReader;
 
-import android.hardware.Camera.PreviewCallback;
-
 /**
  * Junit / Instrumentation - performance measurement for media player and 
  * recorder
+ *
+ * FIXME:
+ * Add tests on H264 video encoder
  */
-public class MediaPlayerPerformance extends ActivityInstrumentationTestCase<MediaFrameworkTest> {
+public class MediaPlayerPerformance extends ActivityInstrumentationTestCase2<MediaFrameworkTest> {
 
     private String TAG = "MediaPlayerPerformance";
 
@@ -79,6 +84,8 @@ public class MediaPlayerPerformance extends ActivityInstrumentationTestCase<Medi
     private static int DECODER_LIMIT = 150;
     private static int CAMERA_LIMIT = 80;
 
+    private static List<VideoEncoderCap> videoEncoders = MediaProfileReader.getVideoEncoders();
+
     Camera mCamera;
 
     public MediaPlayerPerformance() {
@@ -87,109 +94,15 @@ public class MediaPlayerPerformance extends ActivityInstrumentationTestCase<Medi
 
     protected void setUp() throws Exception {
         super.setUp();
+        getActivity();
+        if (MediaFrameworkPerfTestRunner.mGetNativeHeapDump)
+            MediaTestUtil.getNativeHeapDump(this.getName() + "_before");
     }
 
-    public void createDB() {
-        mDB = SQLiteDatabase.openOrCreateDatabase("/sdcard/perf.db", null);
-        mDB.execSQL("CREATE TABLE IF NOT EXISTS perfdata (_id INTEGER PRIMARY KEY," + 
-                "file TEXT," + "setdatatime LONG," + "preparetime LONG," +
-                "playtime LONG" + ");");
-        //clean the table before adding new data
-        mDB.execSQL("DELETE FROM perfdata");
-    }
-
-    public void audioPlaybackStartupTime(String[] testFile) {
-        long t1 = 0;
-        long t2 = 0;
-        long t3 = 0;
-        long t4 = 0;
-        long setDataSourceDuration = 0;
-        long prepareDuration = 0;
-        long startDuration = 0;
-        long totalSetDataTime = 0;
-        long totalPrepareTime = 0;
-        long totalStartDuration = 0;
-
-        int numberOfFiles = testFile.length;
-        Log.v(TAG, "File length " + numberOfFiles);
-        for (int k = 0; k < numberOfFiles; k++) {
-            MediaPlayer mp = new MediaPlayer();
-            try {
-                t1 = SystemClock.uptimeMillis();
-                FileInputStream fis = new FileInputStream(testFile[k]);
-                FileDescriptor fd = fis.getFD();
-                mp.setDataSource(fd);
-                fis.close();
-                t2 = SystemClock.uptimeMillis();
-                mp.prepare();
-                t3 = SystemClock.uptimeMillis();
-                mp.start();
-                t4 = SystemClock.uptimeMillis();
-            } catch (Exception e) {
-                Log.v(TAG, e.toString());
-            }
-            setDataSourceDuration = t2 - t1;
-            prepareDuration = t3 - t2;
-            startDuration = t4 - t3;
-            totalSetDataTime = totalSetDataTime + setDataSourceDuration;
-            totalPrepareTime = totalPrepareTime + prepareDuration;
-            totalStartDuration = totalStartDuration + startDuration;
-            mDB.execSQL("INSERT INTO perfdata (file, setdatatime, preparetime," +
-                    " playtime) VALUES (" + '"' + testFile[k] + '"' + ',' +
-                    setDataSourceDuration + ',' + prepareDuration +
-            		',' + startDuration + ");");
-            Log.v(TAG, "File name " + testFile[k]);
-            mp.stop();
-            mp.release();
-        }
-        Log.v(TAG, "setDataSource average " + totalSetDataTime / numberOfFiles);
-        Log.v(TAG, "prepare average " + totalPrepareTime / numberOfFiles);
-        Log.v(TAG, "start average " + totalStartDuration / numberOfFiles);
-
-    }
-
-    @Suppress
-    public void testStartUpTime() throws Exception {
-        createDB();
-        audioPlaybackStartupTime(MediaNames.MP3FILES);
-        audioPlaybackStartupTime(MediaNames.AACFILES);
-
-        //close the database after all transactions
-        if (mDB.isOpen()) {
-            mDB.close();
-        }
-    }
-
-    public void wmametadatautility(String[] testFile) {
-        long t1 = 0;
-        long t2 = 0;
-        long sum = 0;
-        long duration = 0;
-        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
-        String value;
-        for (int i = 0, n = testFile.length; i < n; ++i) {
-            try {
-                t1 = SystemClock.uptimeMillis();
-                retriever.setDataSource(testFile[i]);
-                value = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM);
-                value = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST);
-                value = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_COMPOSER);
-                value = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE);
-                value = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE);
-                value = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_YEAR);
-                value =
-                    retriever
-                    .extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER);
-                t2 = SystemClock.uptimeMillis();
-                duration = t2 - t1;
-                Log.v(TAG, "Time taken = " + duration);
-                sum = sum + duration;
-            } catch (Exception e) {
-                Log.v(TAG, e.getMessage());
-            }
-
-        }
-        Log.v(TAG, "Average duration = " + sum / testFile.length);
+    protected void tearDown() throws Exception {
+        super.tearDown();
+        if (MediaFrameworkPerfTestRunner.mGetNativeHeapDump)
+            MediaTestUtil.getNativeHeapDump(this.getName() + "_after");
     }
 
     private void initializeMessageLooper() {
@@ -273,9 +186,10 @@ public class MediaPlayerPerformance extends ActivityInstrumentationTestCase<Medi
     }
 
     // Note: This test is to assume the mediaserver's pid is 34
-    private void stressVideoRecord(int frameRate, int width, int height, int videoFormat,
+    private boolean stressVideoRecord(int frameRate, int width, int height, int videoFormat,
             int outFormat, String outFile, boolean videoOnly) {
         // Video recording
+        boolean doesTestFail = false;
         for (int i = 0; i < NUM_PLAYBACk_IN_EACH_LOOP; i++) {
             MediaRecorder mRecorder = new MediaRecorder();
             try {
@@ -304,8 +218,11 @@ public class MediaPlayerPerformance extends ActivityInstrumentationTestCase<Medi
             } catch (Exception e) {
                 Log.v("record video failed ", e.toString());
                 mRecorder.release();
+                doesTestFail = true;
+                break;
             }
         }
+        return !doesTestFail;
     }
 
     public void stressAudioRecord(String filePath) {
@@ -410,13 +327,6 @@ public class MediaPlayerPerformance extends ActivityInstrumentationTestCase<Medi
         return true;
     }
 
-    @Suppress
-    public void testWmaParseTime() throws Exception {
-        // createDB();
-        wmametadatautility(MediaNames.WMASUPPORTED);
-    }
-
-
     // Test case 1: Capture the memory usage after every 20 h263 playback
     @LargeTest
     public void testH263VideoPlaybackMemoryUsage() throws Exception {
@@ -455,26 +365,6 @@ public class MediaPlayerPerformance extends ActivityInstrumentationTestCase<Medi
         assertTrue("H264 playback memory test", memoryResult);
     }
 
-    // Test case 3: Capture the memory usage after each 20 WMV playback
-    @LargeTest
-    public void testWMVVideoPlaybackMemoryUsage() throws Exception {
-        boolean memoryResult = false;
-        if (MediaProfileReader.getWMVEnable()){
-            mStartPid = getMediaserverPid();
-            File wmvMemoryOut = new File(MEDIA_MEMORY_OUTPUT);
-            Writer output = new BufferedWriter(new FileWriter(wmvMemoryOut, true));
-            output.write("WMV video playback only\n");
-            for (int i = 0; i < NUM_STRESS_LOOP; i++) {
-                mediaStressPlayback(MediaNames.VIDEO_WMV);
-                getMemoryWriteToLog(output, i);
-            }
-            output.write("\n");
-            memoryResult = validateMemoryResult(mStartPid, mStartMemory, output, DECODER_LIMIT);
-            output.close();
-            assertTrue("wmv playback memory test", memoryResult);
-        }
-    }
-
     // Test case 4: Capture the memory usage after every 20 video only recorded
     @LargeTest
     public void testH263RecordVideoOnlyMemoryUsage() throws Exception {
@@ -484,9 +374,11 @@ public class MediaPlayerPerformance extends ActivityInstrumentationTestCase<Medi
         File videoH263RecordOnlyMemoryOut = new File(MEDIA_MEMORY_OUTPUT);
         Writer output = new BufferedWriter(new FileWriter(videoH263RecordOnlyMemoryOut, true));
         output.write("H263 video record only\n");
+        int frameRate = MediaProfileReader.getMaxFrameRateForCodec(MediaRecorder.VideoEncoder.H263);
+        assertTrue("H263 video recording frame rate", frameRate != -1);
         for (int i = 0; i < NUM_STRESS_LOOP; i++) {
-            stressVideoRecord(20, 352, 288, MediaRecorder.VideoEncoder.H263,
-                    MediaRecorder.OutputFormat.MPEG_4, MediaNames.RECORDED_VIDEO_3GP, true);
+            assertTrue(stressVideoRecord(frameRate, 352, 288, MediaRecorder.VideoEncoder.H263,
+                    MediaRecorder.OutputFormat.MPEG_4, MediaNames.RECORDED_VIDEO_3GP, true));
             getMemoryWriteToLog(output, i);
         }
         output.write("\n");
@@ -504,9 +396,11 @@ public class MediaPlayerPerformance extends ActivityInstrumentationTestCase<Medi
         File videoMp4RecordOnlyMemoryOut = new File(MEDIA_MEMORY_OUTPUT);
         Writer output = new BufferedWriter(new FileWriter(videoMp4RecordOnlyMemoryOut, true));
         output.write("MPEG4 video record only\n");
+        int frameRate = MediaProfileReader.getMaxFrameRateForCodec(MediaRecorder.VideoEncoder.MPEG_4_SP);
+        assertTrue("MPEG4 video recording frame rate", frameRate != -1);
         for (int i = 0; i < NUM_STRESS_LOOP; i++) {
-            stressVideoRecord(20, 352, 288, MediaRecorder.VideoEncoder.MPEG_4_SP,
-                    MediaRecorder.OutputFormat.MPEG_4, MediaNames.RECORDED_VIDEO_3GP, true);
+            assertTrue(stressVideoRecord(frameRate, 352, 288, MediaRecorder.VideoEncoder.MPEG_4_SP,
+                    MediaRecorder.OutputFormat.MPEG_4, MediaNames.RECORDED_VIDEO_3GP, true));
             getMemoryWriteToLog(output, i);
         }
         output.write("\n");
@@ -524,10 +418,12 @@ public class MediaPlayerPerformance extends ActivityInstrumentationTestCase<Medi
 
         File videoRecordAudioMemoryOut = new File(MEDIA_MEMORY_OUTPUT);
         Writer output = new BufferedWriter(new FileWriter(videoRecordAudioMemoryOut, true));
+        int frameRate = MediaProfileReader.getMaxFrameRateForCodec(MediaRecorder.VideoEncoder.H263);
+        assertTrue("H263 video recording frame rate", frameRate != -1);
         output.write("Audio and h263 video record\n");
         for (int i = 0; i < NUM_STRESS_LOOP; i++) {
-            stressVideoRecord(20, 352, 288, MediaRecorder.VideoEncoder.H263,
-                    MediaRecorder.OutputFormat.MPEG_4, MediaNames.RECORDED_VIDEO_3GP, false);
+            assertTrue(stressVideoRecord(frameRate, 352, 288, MediaRecorder.VideoEncoder.H263,
+                    MediaRecorder.OutputFormat.MPEG_4, MediaNames.RECORDED_VIDEO_3GP, false));
             getMemoryWriteToLog(output, i);
         }
         output.write("\n");

@@ -19,8 +19,10 @@
 
 
 #include "rsUtils.h"
+#include "rsSignal.h"
 
 namespace android {
+namespace renderscript {
 
 
 // A simple FIFO to be used as a producer / consumer between two
@@ -28,44 +30,28 @@ namespace android {
 // will not require locking.  It is not threadsafe for multiple
 // readers or writers by design.
 
-class LocklessCommandFifo
-{
+class LocklessCommandFifo {
 public:
     bool init(uint32_t size);
     void shutdown();
+    void setTimoutCallback(void (*)(void *), void *, uint64_t timeout);
+
+    void printDebugData() const;
 
     LocklessCommandFifo();
     ~LocklessCommandFifo();
 
-
 protected:
-    class Signal {
-    public:
-        Signal();
-        ~Signal();
-
-        bool init();
-
-        void set();
-        void wait();
-
-    protected:
-        bool mSet;
-        pthread_mutex_t mMutex;
-        pthread_cond_t mCondition;
-    };
-
     uint8_t * volatile mPut;
     uint8_t * volatile mGet;
     uint8_t * mBuffer;
     uint8_t * mEnd;
     uint8_t mSize;
     bool mInShutdown;
+    bool mInitialized;
 
     Signal mSignalToWorker;
     Signal mSignalToControl;
-
-
 
 public:
     void * reserve(uint32_t bytes);
@@ -73,19 +59,26 @@ public:
     void commitSync(uint32_t command, uint32_t bytes);
 
     void flush();
-    const void * get(uint32_t *command, uint32_t *bytesData);
+    bool wait(uint64_t timeout = 0);
+
+    const void * get(uint32_t *command, uint32_t *bytesData, uint64_t timeout = 0);
     void next();
 
     void makeSpace(uint32_t bytes);
+    bool makeSpaceNonBlocking(uint32_t bytes);
 
     bool isEmpty() const;
     uint32_t getFreeSpace() const;
 
-
 private:
     void dumpState(const char *) const;
+
+    void (*mTimeoutCallback)(void *);
+    void * mTimeoutCallbackData;
+    uint64_t mTimeoutWait;
 };
 
 
+}
 }
 #endif

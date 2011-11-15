@@ -19,6 +19,7 @@ package android.net.http;
 
 import com.android.internal.net.DomainNameValidator;
 
+import org.apache.harmony.security.provider.cert.X509CertImpl;
 import org.apache.harmony.xnet.provider.jsse.SSLParametersImpl;
 
 import java.io.IOException;
@@ -78,136 +79,93 @@ class CertificateChainValidator {
     public SslError doHandshakeAndValidateServerCertificates(
             HttpsConnection connection, SSLSocket sslSocket, String domain)
             throws IOException {
-        X509Certificate[] serverCertificates = null;
-
-        // start handshake, close the socket if we fail
-        try {
-            sslSocket.setUseClientMode(true);
-            sslSocket.startHandshake();
-        } catch (IOException e) {
-            closeSocketThrowException(
-                sslSocket, e.getMessage(),
-                "failed to perform SSL handshake");
+        // get a valid SSLSession, close the socket if we fail
+        SSLSession sslSession = sslSocket.getSession();
+        if (!sslSession.isValid()) {
+            closeSocketThrowException(sslSocket, "failed to perform SSL handshake");
         }
 
         // retrieve the chain of the server peer certificates
         Certificate[] peerCertificates =
             sslSocket.getSession().getPeerCertificates();
 
-        if (peerCertificates == null || peerCertificates.length <= 0) {
+        if (peerCertificates == null || peerCertificates.length == 0) {
             closeSocketThrowException(
                 sslSocket, "failed to retrieve peer certificates");
         } else {
-            serverCertificates =
-                new X509Certificate[peerCertificates.length];
-            for (int i = 0; i < peerCertificates.length; ++i) {
-                serverCertificates[i] =
-                    (X509Certificate)(peerCertificates[i]);
-            }
-
             // update the SSL certificate associated with the connection
             if (connection != null) {
-                if (serverCertificates[0] != null) {
+                if (peerCertificates[0] != null) {
                     connection.setCertificate(
-                        new SslCertificate(serverCertificates[0]));
+                        new SslCertificate((X509Certificate)peerCertificates[0]));
                 }
             }
         }
 
+        return verifyServerDomainAndCertificates((X509Certificate[]) peerCertificates, domain, "RSA");
+    }
+
+    /**
+     * Similar to doHandshakeAndValidateServerCertificates but exposed to JNI for use
+     * by Chromium HTTPS stack to validate the cert chain.
+     * @param certChain The bytes for certificates in ASN.1 DER encoded certificates format.
+     * @param domain The full website hostname and domain
+     * @param authType The authentication type for the cert chain
+     * @return An SSL error object if there is an error and null otherwise
+     */
+    public static SslError verifyServerCertificates(
+        byte[][] certChain, String domain, String authType)
+        throws IOException {
+
+        if (certChain == null || certChain.length == 0) {
+            throw new IllegalArgumentException("bad certificate chain");
+        }
+
+        X509Certificate[] serverCertificates = new X509Certificate[certChain.length];
+
+        for (int i = 0; i < certChain.length; ++i) {
+            serverCertificates[i] = new X509CertImpl(certChain[i]);
+        }
+
+        return verifyServerDomainAndCertificates(serverCertificates, domain, authType);
+    }
+
+    /**
+     * Common code of doHandshakeAndValidateServerCertificates and verifyServerCertificates.
+     * Calls DomainNamevalidator to verify the domain, and TrustManager to verify the certs.
+     * @param chain the cert chain in X509 cert format.
+     * @param domain The full website hostname and domain
+     * @param authType The authentication type for the cert chain
+     * @return An SSL error object if there is an error and null otherwise
+     */
+    private static SslError verifyServerDomainAndCertificates(
+            X509Certificate[] chain, String domain, String authType)
+            throws IOException {
         // check if the first certificate in the chain is for this site
-        X509Certificate currCertificate = serverCertificates[0];
+        X509Certificate currCertificate = chain[0];
         if (currCertificate == null) {
-            closeSocketThrowException(
-                sslSocket, "certificate for this site is null");
-        } else {
-            if (!DomainNameValidator.match(currCertificate, domain)) {
-                String errorMessage = "certificate not for this host: " + domain;
-
-                if (HttpLog.LOGV) {
-                    HttpLog.v(errorMessage);
-                }
-
-                sslSocket.getSession().invalidate();
-                return new SslError(
-                    SslError.SSL_IDMISMATCH, currCertificate);
-            }
+            throw new IllegalArgumentException("certificate for this site is null");
         }
 
-        // Clean up the certificates chain and build a new one.
-        // Theoretically, we shouldn't have to do this, but various web servers
-        // in practice are mis-configured to have out-of-order certificates or
-        // expired self-issued root certificate.
-        int chainLength = serverCertificates.length;
-        if (serverCertificates.length > 1) {
-          // 1. we clean the received certificates chain.
-          // We start from the end-entity certificate, tracing down by matching
-          // the "issuer" field and "subject" field until we can't continue.
-          // This helps when the certificates are out of order or
-          // some certificates are not related to the site.
-          int currIndex;
-          for (currIndex = 0; currIndex < serverCertificates.length; ++currIndex) {
-            boolean foundNext = false;
-            for (int nextIndex = currIndex + 1;
-                 nextIndex < serverCertificates.length;
-                 ++nextIndex) {
-              if (serverCertificates[currIndex].getIssuerDN().equals(
-                  serverCertificates[nextIndex].getSubjectDN())) {
-                foundNext = true;
-                // Exchange certificates so that 0 through currIndex + 1 are in proper order
-                if (nextIndex != currIndex + 1) {
-                  X509Certificate tempCertificate = serverCertificates[nextIndex];
-                  serverCertificates[nextIndex] = serverCertificates[currIndex + 1];
-                  serverCertificates[currIndex + 1] = tempCertificate;
-                }
-                break;
-              }
-            }
-            if (!foundNext) break;
-          }
-
-          // 2. we exam if the last traced certificate is self issued and it is expired.
-          // If so, we drop it and pass the rest to checkServerTrusted(), hoping we might
-          // have a similar but unexpired trusted root.
-          chainLength = currIndex + 1;
-          X509Certificate lastCertificate = serverCertificates[chainLength - 1];
-          Date now = new Date();
-          if (lastCertificate.getSubjectDN().equals(lastCertificate.getIssuerDN())
-              && now.after(lastCertificate.getNotAfter())) {
-            --chainLength;
-          }
-        }
-
-        // 3. Now we copy the newly built chain into an appropriately sized array.
-        X509Certificate[] newServerCertificates = null;
-        newServerCertificates = new X509Certificate[chainLength];
-        for (int i = 0; i < chainLength; ++i) {
-          newServerCertificates[i] = serverCertificates[i];
-        }
-
-        // first, we validate the new chain using the standard validation
-        // solution; if we do not find any errors, we are done; if we
-        // fail the standard validation, we re-validate again below,
-        // this time trying to retrieve any individual errors we can
-        // report back to the user.
-        //
-        try {
-            SSLParametersImpl.getDefaultTrustManager().checkServerTrusted(
-                newServerCertificates, "RSA");
-
-            // no errors!!!
-            return null;
-        } catch (CertificateException e) {
-            sslSocket.getSession().invalidate();
-
+        if (!DomainNameValidator.match(currCertificate, domain)) {
             if (HttpLog.LOGV) {
-                HttpLog.v(
-                    "failed to pre-validate the certificate chain, error: " +
+                HttpLog.v("certificate not for this host: " + domain);
+            }
+            return new SslError(SslError.SSL_IDMISMATCH, currCertificate);
+        }
+
+        try {
+            SSLParametersImpl.getDefaultTrustManager().checkServerTrusted(chain, authType);
+            return null;  // No errors.
+        } catch (CertificateException e) {
+            if (HttpLog.LOGV) {
+                HttpLog.v("failed to validate the certificate chain, error: " +
                     e.getMessage());
             }
-            return new SslError(
-                SslError.SSL_UNTRUSTED, currCertificate);
+            return new SslError(SslError.SSL_UNTRUSTED, currCertificate);
         }
     }
+
 
     private void closeSocketThrowException(
             SSLSocket socket, String errorMessage, String defaultErrorMessage)

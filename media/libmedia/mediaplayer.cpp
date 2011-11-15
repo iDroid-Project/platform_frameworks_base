@@ -27,6 +27,8 @@
 #include <binder/IServiceManager.h>
 #include <binder/IPCThreadState.h>
 
+#include <gui/SurfaceTextureClient.h>
+
 #include <media/mediaplayer.h>
 #include <media/AudioTrack.h>
 
@@ -37,6 +39,9 @@
 #include <utils/KeyedVector.h>
 #include <utils/String8.h>
 
+#include <system/audio.h>
+#include <system/window.h>
+
 namespace android {
 
 MediaPlayer::MediaPlayer()
@@ -45,7 +50,7 @@ MediaPlayer::MediaPlayer()
     mListener = NULL;
     mCookie = NULL;
     mDuration = -1;
-    mStreamType = AudioSystem::MUSIC;
+    mStreamType = AUDIO_STREAM_MUSIC;
     mCurrentPosition = -1;
     mSeekPosition = -1;
     mCurrentState = MEDIA_PLAYER_IDLE;
@@ -56,12 +61,14 @@ MediaPlayer::MediaPlayer()
     mVideoWidth = mVideoHeight = 0;
     mLockThreadId = 0;
     mAudioSessionId = AudioSystem::newAudioSessionId();
+    AudioSystem::acquireAudioSessionId(mAudioSessionId);
     mSendLevel = 0;
 }
 
 MediaPlayer::~MediaPlayer()
 {
     LOGV("destructor");
+    AudioSystem::releaseAudioSessionId(mAudioSessionId);
     disconnect();
     IPCThreadState::self()->flushCommands();
 }
@@ -99,7 +106,7 @@ status_t MediaPlayer::setListener(const sp<MediaPlayerListener>& listener)
 }
 
 
-status_t MediaPlayer::setDataSource(const sp<IMediaPlayer>& player)
+status_t MediaPlayer::attachNewPlayer(const sp<IMediaPlayer>& player)
 {
     status_t err = UNKNOWN_ERROR;
     sp<IMediaPlayer> p;
@@ -108,7 +115,7 @@ status_t MediaPlayer::setDataSource(const sp<IMediaPlayer>& player)
 
         if ( !( (mCurrentState & MEDIA_PLAYER_IDLE) ||
                 (mCurrentState == MEDIA_PLAYER_STATE_ERROR ) ) ) {
-            LOGE("setDataSource called in state %d", mCurrentState);
+            LOGE("attachNewPlayer called in state %d", mCurrentState);
             return INVALID_OPERATION;
         }
 
@@ -138,9 +145,11 @@ status_t MediaPlayer::setDataSource(
     if (url != NULL) {
         const sp<IMediaPlayerService>& service(getMediaPlayerService());
         if (service != 0) {
-            sp<IMediaPlayer> player(
-                    service->create(getpid(), this, url, headers, mAudioSessionId));
-            err = setDataSource(player);
+            sp<IMediaPlayer> player(service->create(getpid(), this, mAudioSessionId));
+            if (NO_ERROR != player->setDataSource(url, headers)) {
+                player.clear();
+            }
+            err = attachNewPlayer(player);
         }
     }
     return err;
@@ -152,8 +161,26 @@ status_t MediaPlayer::setDataSource(int fd, int64_t offset, int64_t length)
     status_t err = UNKNOWN_ERROR;
     const sp<IMediaPlayerService>& service(getMediaPlayerService());
     if (service != 0) {
-        sp<IMediaPlayer> player(service->create(getpid(), this, fd, offset, length, mAudioSessionId));
-        err = setDataSource(player);
+        sp<IMediaPlayer> player(service->create(getpid(), this, mAudioSessionId));
+        if (NO_ERROR != player->setDataSource(fd, offset, length)) {
+            player.clear();
+        }
+        err = attachNewPlayer(player);
+    }
+    return err;
+}
+
+status_t MediaPlayer::setDataSource(const sp<IStreamSource> &source)
+{
+    LOGV("setDataSource");
+    status_t err = UNKNOWN_ERROR;
+    const sp<IMediaPlayerService>& service(getMediaPlayerService());
+    if (service != 0) {
+        sp<IMediaPlayer> player(service->create(getpid(), this, mAudioSessionId));
+        if (NO_ERROR != player->setDataSource(source)) {
+            player.clear();
+        }
+        err = attachNewPlayer(player);
     }
     return err;
 }
@@ -170,16 +197,6 @@ status_t MediaPlayer::invoke(const Parcel& request, Parcel *reply)
     }
     LOGE("invoke failed: wrong state %X", mCurrentState);
     return INVALID_OPERATION;
-}
-
-status_t MediaPlayer::suspend() {
-    Mutex::Autolock _l(mLock);
-    return mPlayer->suspend();
-}
-
-status_t MediaPlayer::resume() {
-    Mutex::Autolock _l(mLock);
-    return mPlayer->resume();
 }
 
 status_t MediaPlayer::setMetadataFilter(const Parcel& filter)
@@ -207,10 +224,16 @@ status_t MediaPlayer::setVideoSurface(const sp<Surface>& surface)
     LOGV("setVideoSurface");
     Mutex::Autolock _l(mLock);
     if (mPlayer == 0) return NO_INIT;
-    if (surface != NULL)
-        return  mPlayer->setVideoSurface(surface->getISurface());
-    else
-        return  mPlayer->setVideoSurface(NULL);
+    return mPlayer->setVideoSurface(surface);
+}
+
+status_t MediaPlayer::setVideoSurfaceTexture(
+        const sp<ISurfaceTexture>& surfaceTexture)
+{
+    LOGV("setVideoSurfaceTexture");
+    Mutex::Autolock _l(mLock);
+    if (mPlayer == 0) return NO_INIT;
+    return mPlayer->setVideoSurfaceTexture(surfaceTexture);
 }
 
 // must call with lock held
@@ -434,10 +457,8 @@ status_t MediaPlayer::seekTo(int msec)
     return result;
 }
 
-status_t MediaPlayer::reset()
+status_t MediaPlayer::reset_l()
 {
-    LOGV("reset");
-    Mutex::Autolock _l(mLock);
     mLoop = false;
     if (mCurrentState == MEDIA_PLAYER_IDLE) return NO_ERROR;
     mPrepareSync = false;
@@ -449,10 +470,20 @@ status_t MediaPlayer::reset()
         } else {
             mCurrentState = MEDIA_PLAYER_IDLE;
         }
+        // setDataSource has to be called again to create a
+        // new mediaplayer.
+        mPlayer = 0;
         return ret;
     }
     clear_l();
     return NO_ERROR;
+}
+
+status_t MediaPlayer::reset()
+{
+    LOGV("reset");
+    Mutex::Autolock _l(mLock);
+    return reset_l();
 }
 
 status_t MediaPlayer::setAudioStreamType(int type)
@@ -515,7 +546,11 @@ status_t MediaPlayer::setAudioSessionId(int sessionId)
     if (sessionId < 0) {
         return BAD_VALUE;
     }
-    mAudioSessionId = sessionId;
+    if (sessionId != mAudioSessionId) {
+      AudioSystem::releaseAudioSessionId(mAudioSessionId);
+      AudioSystem::acquireAudioSessionId(sessionId);
+      mAudioSessionId = sessionId;
+    }
     return NO_ERROR;
 }
 
@@ -550,7 +585,29 @@ status_t MediaPlayer::attachAuxEffect(int effectId)
     return mPlayer->attachAuxEffect(effectId);
 }
 
-void MediaPlayer::notify(int msg, int ext1, int ext2)
+status_t MediaPlayer::setParameter(int key, const Parcel& request)
+{
+    LOGV("MediaPlayer::setParameter(%d)", key);
+    Mutex::Autolock _l(mLock);
+    if (mPlayer != NULL) {
+        return  mPlayer->setParameter(key, request);
+    }
+    LOGV("setParameter: no active player");
+    return INVALID_OPERATION;
+}
+
+status_t MediaPlayer::getParameter(int key, Parcel *reply)
+{
+    LOGV("MediaPlayer::getParameter(%d)", key);
+    Mutex::Autolock _l(mLock);
+    if (mPlayer != NULL) {
+         return  mPlayer->getParameter(key, reply);
+    }
+    LOGV("getParameter: no active player");
+    return INVALID_OPERATION;
+}
+
+void MediaPlayer::notify(int msg, int ext1, int ext2, const Parcel *obj)
 {
     LOGV("message received msg=%d, ext1=%d, ext2=%d", msg, ext1, ext2);
     bool send = true;
@@ -616,7 +673,9 @@ void MediaPlayer::notify(int msg, int ext1, int ext2)
     case MEDIA_INFO:
         // ext1: Media framework error code.
         // ext2: Implementation dependant error code.
-        LOGW("info/warning (%d, %d)", ext1, ext2);
+        if (ext1 != MEDIA_INFO_VIDEO_TRACK_LAGGING) {
+            LOGW("info/warning (%d, %d)", ext1, ext2);
+        }
         break;
     case MEDIA_SEEK_COMPLETE:
         LOGV("Received seek complete");
@@ -638,6 +697,9 @@ void MediaPlayer::notify(int msg, int ext1, int ext2)
         mVideoWidth = ext1;
         mVideoHeight = ext2;
         break;
+    case MEDIA_TIMED_TEXT:
+        LOGV("Received timed text message");
+        break;
     default:
         LOGV("unrecognized message: (%d, %d, %d)", msg, ext1, ext2);
         break;
@@ -650,7 +712,7 @@ void MediaPlayer::notify(int msg, int ext1, int ext2)
     if ((listener != 0) && send) {
         Mutex::Autolock _l(mNotifyLock);
         LOGV("callback application");
-        listener->notify(msg, ext1, ext2);
+        listener->notify(msg, ext1, ext2, obj);
         LOGV("back from callback");
     }
 }

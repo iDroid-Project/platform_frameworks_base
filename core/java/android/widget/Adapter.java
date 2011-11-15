@@ -17,7 +17,6 @@
 package android.widget;
 
 import android.database.DataSetObserver;
-import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 
@@ -72,7 +71,7 @@ public interface Adapter {
     long getItemId(int position);
     
     /**
-     * Indicated whether the item ids are stable across changes to the
+     * Indicates whether the item ids are stable across changes to the
      * underlying data.
      * 
      * @return True if the same id always refers to the same object.
@@ -91,6 +90,9 @@ public interface Adapter {
      * @param convertView The old view to reuse, if possible. Note: You should check that this view
      *        is non-null and of an appropriate type before using. If it is not possible to convert
      *        this view to display the correct data, this method can create a new view.
+     *        Heterogeneous lists can specify their number of view types, so that this View is
+     *        always of the right type (see {@link #getViewTypeCount()} and
+     *        {@link #getItemViewType(int)}).
      * @param parent The parent that this view will eventually be attached to
      * @return A View corresponding to the data at the specified position.
      */

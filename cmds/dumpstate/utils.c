@@ -96,6 +96,15 @@ out_close:
     return;
 }
 
+void do_showmap(int pid, const char *name) {
+    char title[255];
+    char arg[255];
+
+    sprintf(title, "SHOW MAP %d (%s)", pid, name);
+    sprintf(arg, "%d", pid);
+    run_command(title, 10, "su", "root", "showmap", arg, NULL);
+}
+
 /* prints the contents of a file */
 int dump_file(const char *title, const char* path) {
     char buffer[32768];
@@ -167,6 +176,7 @@ int run_command(const char *title, int timeout_seconds, const char *command, ...
 
         execvp(command, (char**) args);
         printf("*** exec(%s): %s\n", command, strerror(errno));
+        fflush(stdout);
         _exit(-1);
     }
 
@@ -178,7 +188,7 @@ int run_command(const char *title, int timeout_seconds, const char *command, ...
         if (p == pid) {
             if (WIFSIGNALED(status)) {
                 printf("*** %s: Killed by signal %d\n", command, WTERMSIG(status));
-            } else if (WEXITSTATUS(status) > 0) {
+            } else if (WIFEXITED(status) && WEXITSTATUS(status) > 0) {
                 printf("*** %s: Exit code %d\n", command, WEXITSTATUS(status));
             }
             if (title) printf("[%s: %.1fs elapsed]\n\n", command, elapsed);
@@ -428,4 +438,8 @@ const char *dump_vm_traces() {
     /* replace the saved [ANR] traces.txt file */
     rename(anr_traces_path, traces_path);
     return dump_traces_path;
+}
+
+void play_sound(const char* path) {
+    run_command(NULL, 5, "/system/bin/stagefright", "-o", "-a", path, NULL);
 }

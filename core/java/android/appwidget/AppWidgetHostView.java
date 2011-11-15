@@ -16,25 +16,33 @@
 
 package android.appwidget;
 
+import android.content.ComponentName;
 import android.content.Context;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
+import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
-import android.os.SystemClock;
-import android.os.Parcelable;
+import android.os.Build;
 import android.os.Parcel;
+import android.os.Parcelable;
+import android.os.SystemClock;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.util.SparseArray;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.widget.Adapter;
+import android.widget.AdapterView;
+import android.widget.BaseAdapter;
 import android.widget.FrameLayout;
 import android.widget.RemoteViews;
 import android.widget.TextView;
+import android.widget.RemoteViewsAdapter.RemoteAdapterConnectionCallback;
 
 /**
  * Provides the glue to show AppWidget views. This class offers automatic animation
@@ -91,14 +99,66 @@ public class AppWidgetHostView extends FrameLayout {
     public AppWidgetHostView(Context context, int animationIn, int animationOut) {
         super(context);
         mContext = context;
+
+        // We want to segregate the view ids within AppWidgets to prevent
+        // problems when those ids collide with view ids in the AppWidgetHost.
+        setIsRootNamespace(true);
     }
-    
+
     /**
      * Set the AppWidget that will be displayed by this view.
      */
     public void setAppWidget(int appWidgetId, AppWidgetProviderInfo info) {
         mAppWidgetId = appWidgetId;
         mInfo = info;
+
+        // Sometimes the AppWidgetManager returns a null AppWidgetProviderInfo object for
+        // a widget, eg. for some widgets in safe mode.
+        if (info != null) {
+            // We add padding to the AppWidgetHostView if necessary
+            Padding padding = getPaddingForWidget(info.provider);
+            setPadding(padding.left, padding.top, padding.right, padding.bottom);
+        }
+    }
+
+    private static class Padding {
+        int left = 0;
+        int right = 0;
+        int top = 0;
+        int bottom = 0;
+    }
+
+    /**
+     * As of ICE_CREAM_SANDWICH we are automatically adding padding to widgets targeting
+     * ICE_CREAM_SANDWICH and higher. The new widget design guidelines strongly recommend
+     * that widget developers do not add extra padding to their widgets. This will help
+     * achieve consistency among widgets.
+     */
+    private Padding getPaddingForWidget(ComponentName component) {
+        PackageManager packageManager = mContext.getPackageManager();
+        Padding p = new Padding();
+        ApplicationInfo appInfo;
+
+        try {
+            appInfo = packageManager.getApplicationInfo(component.getPackageName(), 0);
+        } catch (Exception e) {
+            // if we can't find the package, return 0 padding
+            return p;
+        }
+
+        if (appInfo.targetSdkVersion >= Build.VERSION_CODES.ICE_CREAM_SANDWICH) {
+            Resources r = getResources();
+            p.left = r.getDimensionPixelSize(com.android.internal.
+                    R.dimen.default_app_widget_padding_left);
+            p.right = r.getDimensionPixelSize(com.android.internal.
+                    R.dimen.default_app_widget_padding_right);
+            p.top = r.getDimensionPixelSize(com.android.internal.
+                    R.dimen.default_app_widget_padding_top);
+            p.bottom = r.getDimensionPixelSize(com.android.internal.
+                    R.dimen.default_app_widget_padding_bottom);
+        }
+
+        return p;
     }
 
     public int getAppWidgetId() {
@@ -258,6 +318,27 @@ public class AppWidgetHostView extends FrameLayout {
     }
 
     /**
+     * Process data-changed notifications for the specified view in the specified
+     * set of {@link RemoteViews} views.
+     */
+    void viewDataChanged(int viewId) {
+        View v = findViewById(viewId);
+        if ((v != null) && (v instanceof AdapterView<?>)) {
+            AdapterView<?> adapterView = (AdapterView<?>) v;
+            Adapter adapter = adapterView.getAdapter();
+            if (adapter instanceof BaseAdapter) {
+                BaseAdapter baseAdapter = (BaseAdapter) adapter;
+                baseAdapter.notifyDataSetChanged();
+            }  else if (adapter == null && adapterView instanceof RemoteAdapterConnectionCallback) {
+                // If the adapter is null, it may mean that the RemoteViewsAapter has not yet
+                // connected to its associated service, and hence the adapter hasn't been set.
+                // In this case, we need to defer the notify call until it has been set.
+                ((RemoteAdapterConnectionCallback) adapterView).deferNotifyDataSetChanged();
+            }
+        }
+    }
+
+    /**
      * Build a {@link Context} cloned into another package name, usually for the
      * purposes of reading remote resources.
      */
@@ -275,6 +356,7 @@ public class AppWidgetHostView extends FrameLayout {
         }
     }
 
+    @Override
     protected boolean drawChild(Canvas canvas, View child, long drawingTime) {
         if (CROSSFADE) {
             int alpha;

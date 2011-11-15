@@ -1,11 +1,80 @@
 
+ContextDestroy {
+    direct
+}
+
+ContextGetMessage {
+    direct
+    param void *data
+    param size_t *receiveLen
+    param uint32_t *usrID
+    ret RsMessageToClientType
+}
+
+ContextPeekMessage {
+    direct
+    param size_t *receiveLen
+    param uint32_t *usrID
+    ret RsMessageToClientType
+}
+
+ContextInitToClient {
+    direct
+}
+
+ContextDeinitToClient {
+    direct
+}
+
+TypeCreate {
+    direct
+    param RsElement e
+    param uint32_t dimX
+    param uint32_t dimY
+    param uint32_t dimZ
+    param bool mips
+    param bool faces
+    ret RsType
+}
+
+AllocationCreateTyped {
+    direct
+    param RsType vtype
+    param RsAllocationMipmapControl mips
+    param uint32_t usages
+    ret RsAllocation
+}
+
+AllocationCreateFromBitmap {
+    direct
+    param RsType vtype
+    param RsAllocationMipmapControl mips
+    param const void *data
+    param uint32_t usages
+    ret RsAllocation
+}
+
+AllocationCubeCreateFromBitmap {
+    direct
+    param RsType vtype
+    param RsAllocationMipmapControl mips
+    param const void *data
+    param uint32_t usages
+    ret RsAllocation
+}
+
+
+
+ContextFinish {
+	sync
+	}
 
 ContextBindRootScript {
 	param RsScript sampler
 	}
 
-ContextBindProgramFragmentStore {
-	param RsProgramFragmentStore pgm
+ContextBindProgramStore {
+	param RsProgramStore pgm
 	}
 
 ContextBindProgramFragment {
@@ -20,6 +89,10 @@ ContextBindProgramRaster {
 	param RsProgramRaster pgm
 	}
 
+ContextBindFont {
+	param RsFont pgm
+	}
+
 ContextPause {
 	}
 
@@ -29,33 +102,32 @@ ContextResume {
 ContextSetSurface {
 	param uint32_t width
 	param uint32_t height
-	param ANativeWindow *sur
+	param RsNativeWindow sur
+        sync
 	}
 
 ContextDump {
 	param int32_t bits
 }
 
-ContextGetError {
-	param RsError *err
-	ret const char *
-	}
-
 ContextSetPriority {
 	param int32_t priority
 	}
 
+ContextDestroyWorker {
+}
+
 AssignName {
-	param void *obj
+	param RsObjectBase obj
 	param const char *name
-	param size_t len
 	}
 
 ObjDestroy {
-	param void *obj
+	param RsAsyncVoidPtr objPtr
 	}
 
 ElementCreate {
+        direct
 	param RsDataType mType
 	param RsDataKind mKind
 	param bool mNormalized
@@ -64,179 +136,107 @@ ElementCreate {
 	}
 
 ElementCreate2 {
-	param size_t count
+        direct
 	param const RsElement * elements
 	param const char ** names
-	param const size_t * nameLengths
+	param const uint32_t * arraySize
 	ret RsElement
 	}
 
-TypeBegin {
-	param RsElement type
-	}
-
-TypeAdd {
-	param RsDimension dim
-	param size_t value
-	}
-
-TypeCreate {
-	ret RsType
-	}
-
-AllocationCreateTyped {
-	param RsType type
-	ret RsAllocation
-	}
-
-AllocationCreateSized {
-	param RsElement e
-	param size_t count
-	ret RsAllocation
-	}
-
-AllocationCreateBitmapRef {
-	param RsType type
-	param void * bmpPtr
-	param void * callbackData
-	param RsBitmapCallback_t callback
-	ret RsAllocation
-	}
-
-AllocationCreateFromBitmap {
-	param uint32_t width
-	param uint32_t height
-	param RsElement dstFmt
-	param RsElement srcFmt
-	param bool genMips
-	param const void * data
-	ret RsAllocation
-	}
-
-AllocationCreateFromBitmapBoxed {
-	param uint32_t width
-	param uint32_t height
-	param RsElement dstFmt
-	param RsElement srcFmt
-	param bool genMips
-	param const void * data
-	ret RsAllocation
-	}
-
-
-AllocationUploadToTexture {
+AllocationCopyToBitmap {
 	param RsAllocation alloc
-	param bool genMipMaps
-	param uint32_t baseMipLevel
-	}
-
-AllocationUploadToBufferObject {
-	param RsAllocation alloc
+	param void * data
 	}
 
 
-AllocationData {
-	param RsAllocation va
-	param const void * data
-	param uint32_t bytes
-	handcodeApi
-	togglePlay
-	}
-
-Allocation1DSubData {
+Allocation1DData {
 	param RsAllocation va
 	param uint32_t xoff
+	param uint32_t lod
 	param uint32_t count
 	param const void *data
-	param uint32_t bytes
-	handcodeApi
-	togglePlay
 	}
 
-Allocation2DSubData {
+Allocation1DElementData {
+	param RsAllocation va
+	param uint32_t x
+	param uint32_t lod
+	param const void *data
+	param uint32_t comp_offset
+	}
+
+Allocation2DData {
 	param RsAllocation va
 	param uint32_t xoff
 	param uint32_t yoff
+	param uint32_t lod
+	param RsAllocationCubemapFace face
 	param uint32_t w
 	param uint32_t h
 	param const void *data
-	param uint32_t bytes
 	}
+
+Allocation2DElementData {
+	param RsAllocation va
+	param uint32_t x
+	param uint32_t y
+	param uint32_t lod
+	param RsAllocationCubemapFace face
+	param const void *data
+	param uint32_t element_offset
+	}
+
+AllocationGenerateMipmaps {
+	param RsAllocation va
+}
 
 AllocationRead {
 	param RsAllocation va
 	param void * data
 	}
 
-Adapter1DCreate {
-	ret RsAdapter1D
+AllocationSyncAll {
+	param RsAllocation va
+	param RsAllocationUsageType src
+}
+
+
+AllocationResize1D {
+	param RsAllocation va
+	param uint32_t dimX
 	}
 
-Adapter1DBindAllocation {
-	param RsAdapter1D adapt
-	param RsAllocation alloc
+AllocationResize2D {
+	param RsAllocation va
+	param uint32_t dimX
+	param uint32_t dimY
 	}
 
-Adapter1DSetConstraint {
-	param RsAdapter1D adapter
-	param RsDimension dim
-	param uint32_t value
-	}
-
-Adapter1DData {
-	param RsAdapter1D adapter
-	param const void * data
-	}
-
-Adapter1DSubData {
-	param RsAdapter1D adapter
-	param uint32_t xoff
-	param uint32_t count
-	param const void *data
-	}
-
-Adapter2DCreate {
-	ret RsAdapter2D
-	}
-
-Adapter2DBindAllocation {
-	param RsAdapter2D adapt
-	param RsAllocation alloc
-	}
-
-Adapter2DSetConstraint {
-	param RsAdapter2D adapter
-	param RsDimension dim
-	param uint32_t value
-	}
-
-Adapter2DData {
-	param RsAdapter2D adapter
-	param const void *data
-	}
-
-Adapter2DSubData {
-	param RsAdapter2D adapter
-	param uint32_t xoff
-	param uint32_t yoff
-	param uint32_t w
-	param uint32_t h
-	param const void *data
-	}
-
-SamplerBegin {
-	}
-
-SamplerSet {
-	param RsSamplerParam p
-	param RsSamplerValue value
+AllocationCopy2DRange {
+	param RsAllocation dest
+	param uint32_t destXoff
+	param uint32_t destYoff
+	param uint32_t destMip
+	param uint32_t destFace
+	param uint32_t width
+	param uint32_t height
+	param RsAllocation src
+	param uint32_t srcXoff
+	param uint32_t srcYoff
+	param uint32_t srcMip
+	param uint32_t srcFace
 	}
 
 SamplerCreate {
-	ret RsSampler
-	}
-
-
+    direct
+    param RsSamplerValue magFilter
+    param RsSamplerValue minFilter
+    param RsSamplerValue wrapS
+    param RsSamplerValue wrapT
+    param RsSamplerValue wrapR
+    param float mAniso
+    ret RsSampler
+}
 
 ScriptBindAllocation {
 	param RsScript vtm
@@ -244,44 +244,9 @@ ScriptBindAllocation {
 	param uint32_t slot
 	}
 
-
-ScriptCBegin {
-	}
-
-ScriptSetClearColor {
-	param RsScript s
-	param float r
-	param float g
-	param float b
-	param float a
-	}
-
 ScriptSetTimeZone {
 	param RsScript s
 	param const char * timeZone
-	param uint32_t length
-	}
-
-ScriptSetClearDepth {
-	param RsScript s
-	param float depth
-	}
-
-ScriptSetClearStencil {
-	param RsScript s
-	param uint32_t stencil
-	}
-
-ScriptSetType {
-	param RsType type
-	param uint32_t slot
-	param bool isWritable
-	param const char * name
-	}
-
-ScriptSetInvoke {
-	param const char * name
-	param uint32_t slot
 	}
 
 ScriptInvoke {
@@ -289,87 +254,85 @@ ScriptInvoke {
 	param uint32_t slot
 	}
 
-ScriptSetRoot {
-	param bool isRoot
+ScriptInvokeV {
+	param RsScript s
+	param uint32_t slot
+	param const void * data
 	}
 
+ScriptForEach {
+    param RsScript s
+    param uint32_t slot
+    param RsAllocation ain
+    param RsAllocation aout
+    param const void * usr
+}
 
-
-ScriptCSetScript {
-	param void * codePtr
+ScriptSetVarI {
+	param RsScript s
+	param uint32_t slot
+	param int value
 	}
 
-ScriptCSetText {
-	param const char * text
-	param uint32_t length
+ScriptSetVarObj {
+	param RsScript s
+	param uint32_t slot
+	param RsObjectBase value
 	}
+
+ScriptSetVarJ {
+	param RsScript s
+	param uint32_t slot
+	param int64_t value
+	}
+
+ScriptSetVarF {
+	param RsScript s
+	param uint32_t slot
+	param float value
+	}
+
+ScriptSetVarD {
+	param RsScript s
+	param uint32_t slot
+	param double value
+	}
+
+ScriptSetVarV {
+	param RsScript s
+	param uint32_t slot
+	param const void * data
+	}
+
 
 ScriptCCreate {
+        param const char * resName
+        param const char * cacheDir
+	param const char * text
 	ret RsScript
 	}
 
-ScriptCSetDefineF {
-    param const char* name
-    param float value
-    }
 
-ScriptCSetDefineI32 {
-    param const char* name
-    param int32_t value
-    }
-
-ProgramFragmentStoreBegin {
-	param RsElement in
-	param RsElement out
-	}
-
-ProgramFragmentStoreColorMask {
-	param bool r
-	param bool g
-	param bool b
-	param bool a
-	}
-
-ProgramFragmentStoreBlendFunc {
+ProgramStoreCreate {
+	direct
+	param bool colorMaskR
+	param bool colorMaskG
+	param bool colorMaskB
+	param bool colorMaskA
+        param bool depthMask
+        param bool ditherEnable
 	param RsBlendSrcFunc srcFunc
 	param RsBlendDstFunc destFunc
-	}
-
-ProgramFragmentStoreDepthMask {
-	param bool enable
-}
-
-ProgramFragmentStoreDither {
-	param bool enable
-}
-
-ProgramFragmentStoreDepthFunc {
-	param RsDepthFunc func
-}
-
-ProgramFragmentStoreCreate {
-	ret RsProgramFragmentStore
+        param RsDepthFunc depthFunc
+	ret RsProgramStore
 	}
 
 ProgramRasterCreate {
-	param RsElement in
-	param RsElement out
-	param bool pointSmooth
-	param bool lineSmooth
+	direct
 	param bool pointSprite
+	param RsCullMode cull
 	ret RsProgramRaster
 }
-
-ProgramRasterSetLineWidth {
-	param RsProgramRaster pr
-	param float lw
-}
-
-ProgramRasterSetPointSize{
-	param RsProgramRaster pr
-	param float ps
-}
-
 
 ProgramBindConstants {
 	param RsProgram vp
@@ -391,92 +354,37 @@ ProgramBindSampler {
 	}
 
 ProgramFragmentCreate {
-	param const uint32_t * params
-	param uint32_t paramLength
-	ret RsProgramFragment
-	}
-
-ProgramFragmentCreate2 {
+	direct
 	param const char * shaderText
-	param uint32_t shaderLength
 	param const uint32_t * params
-	param uint32_t paramLength
 	ret RsProgramFragment
 	}
 
 ProgramVertexCreate {
-	param bool texMat
-	ret RsProgramVertex
-	}
-
-ProgramVertexCreate2 {
+	direct
 	param const char * shaderText
-	param uint32_t shaderLength
 	param const uint32_t * params
-	param uint32_t paramLength
 	ret RsProgramVertex
 	}
 
-LightBegin {
-	}
-
-LightSetLocal {
-	param bool isLocal
-	}
-
-LightSetMonochromatic {
-	param bool isMono
-	}
-
-LightCreate {
-	ret RsLight light
-	}
-
-
-LightSetPosition {
-	param RsLight light
-	param float x
-	param float y
-	param float z
-	}
-
-LightSetColor {
-	param RsLight light
-	param float r
-	param float g
-	param float b
-	}
-
-FileOpen {
-	ret RsFile
+FontCreateFromFile {
 	param const char *name
-	param size_t len
+	param float fontSize
+	param uint32_t dpi
+	ret RsFont
 	}
 
+FontCreateFromMemory {
+	param const char *name
+	param float fontSize
+	param uint32_t dpi
+	param const void *data
+	ret RsFont
+	}
 
-SimpleMeshCreate {
-	ret RsSimpleMesh
-	param RsAllocation prim
-	param RsAllocation index
+MeshCreate {
 	param RsAllocation *vtx
-	param uint32_t vtxCount
-	param uint32_t primType
+	param RsAllocation *idx
+	param uint32_t *primType
+	ret RsMesh
 	}
-
-
-SimpleMeshBindIndex {
-	param RsSimpleMesh mesh
-	param RsAllocation idx
-	}
-
-SimpleMeshBindPrimitive {
-	param RsSimpleMesh mesh
-	param RsAllocation prim
-	}
-
-SimpleMeshBindVertex {
-	param RsSimpleMesh mesh
-	param RsAllocation vtx
-	param uint32_t slot
-	}
-

@@ -58,7 +58,7 @@ import java.lang.reflect.Modifier;
  * they create.  You can create your own threads, and communicate back with
  * the main application thread through a Handler.  This is done by calling
  * the same <em>post</em> or <em>sendMessage</em> methods as before, but from
- * your new thread.  The given Runnable or Message will than be scheduled
+ * your new thread.  The given Runnable or Message will then be scheduled
  * in the Handler's message queue and processed when appropriate.
  */
 public class Handler {
@@ -166,6 +166,21 @@ public class Handler {
         mLooper = looper;
         mQueue = looper.mQueue;
         mCallback = callback;
+    }
+
+    /**
+     * Returns a string representing the name of the specified message.
+     * The default implementation will either return the class name of the
+     * message callback if any, or the hexadecimal representation of the
+     * message "what" field.
+     *  
+     * @param message The message whose name is being queried 
+     */
+    public String getMessageName(Message message) {
+        if (message.callback != null) {
+            return message.callback.getClass().getName();
+        }
+        return "0x" + Integer.toHexString(message.what);
     }
 
     /**
@@ -346,7 +361,8 @@ public class Handler {
 
     /**
      * Remove any pending posts of Runnable <var>r</var> with Object
-     * <var>token</var> that are in the message queue.
+     * <var>token</var> that are in the message queue.  If <var>token</var> is null,
+     * all callbacks will be removed.
      */
     public final void removeCallbacks(Runnable r, Object token)
     {
@@ -502,7 +518,8 @@ public class Handler {
 
     /**
      * Remove any pending posts of messages with code 'what' and whose obj is
-     * 'object' that are in the message queue.
+     * 'object' that are in the message queue.  If <var>token</var> is null,
+     * all messages will be removed.
      */
     public final void removeMessages(int what, Object object) {
         mQueue.removeMessages(this, what, object, true);
@@ -510,7 +527,8 @@ public class Handler {
 
     /**
      * Remove any pending posts of callbacks and sent messages whose
-     * <var>obj</var> is <var>token</var>.
+     * <var>obj</var> is <var>token</var>.  If <var>token</var> is null,
+     * all callbacks and messages will be removed.
      */
     public final void removeCallbacksAndMessages(Object token) {
         mQueue.removeCallbacksAndMessages(this, token);
@@ -549,7 +567,7 @@ public class Handler {
 
     @Override
     public String toString() {
-        return "Handler{"
+        return "Handler (" + getClass().getName() + ") {"
         + Integer.toHexString(System.identityHashCode(this))
         + "}";
     }

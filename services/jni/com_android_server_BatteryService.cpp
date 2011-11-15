@@ -32,10 +32,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <dirent.h>
-
-#if HAVE_ANDROID_OS
 #include <linux/ioctl.h>
-#endif
 
 namespace android {
 
@@ -67,6 +64,7 @@ struct BatteryManagerConstants {
     jint healthDead;
     jint healthOverVoltage;
     jint healthUnspecifiedFailure;
+    jint healthCold;
 };
 static BatteryManagerConstants gConstants;
 
@@ -104,6 +102,7 @@ static jint getBatteryStatus(const char* status)
 static jint getBatteryHealth(const char* status)
 {
     switch (status[0]) {
+        case 'C': return gConstants.healthCold;         // Cold
         case 'D': return gConstants.healthDead;         // Dead
         case 'G': return gConstants.healthGood;         // Good
         case 'O': {
@@ -142,10 +141,10 @@ static int readFromFile(const char* path, char* buf, size_t size)
         return -1;
     }
     
-    size_t count = read(fd, buf, size);
+    ssize_t count = read(fd, buf, size);
     if (count > 0) {
-        count = (count < size) ? count : size - 1;
-        while (count > 0 && buf[count-1] == '\n') count--;
+        while (count > 0 && buf[count-1] == '\n')
+            count--;
         buf[count] = '\0';
     } else {
         buf[0] = '\0';
@@ -162,7 +161,7 @@ static void setBooleanField(JNIEnv* env, jobject obj, const char* path, jfieldID
     
     jboolean value = false;
     if (readFromFile(path, buf, SIZE) > 0) {
-        if (buf[0] == '1') {
+        if (buf[0] != '0') {
             value = true;
         }
     }
@@ -390,6 +389,9 @@ int register_android_server_BatteryService(JNIEnv* env)
     gConstants.healthUnspecifiedFailure = env->GetStaticIntField(clazz, 
             env->GetStaticFieldID(clazz, "BATTERY_HEALTH_UNSPECIFIED_FAILURE", "I"));
     
+    gConstants.healthCold = env->GetStaticIntField(clazz,
+            env->GetStaticFieldID(clazz, "BATTERY_HEALTH_COLD", "I"));
+
     return jniRegisterNativeMethods(env, "com/android/server/BatteryService", sMethods, NELEM(sMethods));
 }
 

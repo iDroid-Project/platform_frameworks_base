@@ -17,53 +17,125 @@
 package android.renderscript;
 
 
-import android.util.Config;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UnsupportedEncodingException;
+
+import android.content.res.Resources;
 import android.util.Log;
 
 
 /**
- * @hide
+ *
+ * Program is a base class for all the objects that modify
+ * various stages of the graphics pipeline
  *
  **/
 public class Program extends BaseObj {
-    public static final int MAX_INPUT = 8;
-    public static final int MAX_OUTPUT = 8;
-    public static final int MAX_CONSTANT = 8;
-    public static final int MAX_TEXTURE = 8;
+    static final int MAX_INPUT = 8;
+    static final int MAX_OUTPUT = 8;
+    static final int MAX_CONSTANT = 8;
+    static final int MAX_TEXTURE = 8;
+
+    /**
+     *
+     * TextureType specifies what textures are attached to Program
+     * objects
+     *
+     **/
+    public enum TextureType {
+        TEXTURE_2D (0),
+        TEXTURE_CUBE (1);
+
+        int mID;
+        TextureType(int id) {
+            mID = id;
+        }
+    }
+
+    enum ProgramParam {
+        INPUT (0),
+        OUTPUT (1),
+        CONSTANT (2),
+        TEXTURE_TYPE (3);
+
+        int mID;
+        ProgramParam(int id) {
+            mID = id;
+        }
+    };
 
     Element mInputs[];
     Element mOutputs[];
     Type mConstants[];
+    TextureType mTextures[];
     int mTextureCount;
     String mShader;
 
     Program(int id, RenderScript rs) {
-        super(rs);
-        mID = id;
+        super(id, rs);
     }
 
+    /**
+     * Binds a constant buffer to be used as uniform inputs to the
+     * program
+     *
+     * @param a allocation containing uniform data
+     * @param slot index within the program's list of constant
+     *             buffer allocations
+     */
     public void bindConstants(Allocation a, int slot) {
-        mRS.nProgramBindConstants(mID, slot, a.mID);
+        if (slot < 0 || slot >= mConstants.length) {
+            throw new IllegalArgumentException("Slot ID out of range.");
+        }
+        if (a != null &&
+            a.getType().getID() != mConstants[slot].getID()) {
+            throw new IllegalArgumentException("Allocation type does not match slot type.");
+        }
+        int id = a != null ? a.getID() : 0;
+        mRS.nProgramBindConstants(getID(), slot, id);
     }
 
+    /**
+     * Binds a texture to be used in the program
+     *
+     * @param va allocation containing texture data
+     * @param slot index within the program's list of textures
+     *
+     */
     public void bindTexture(Allocation va, int slot)
         throws IllegalArgumentException {
         mRS.validate();
-        if((slot < 0) || (slot >= mTextureCount)) {
+        if ((slot < 0) || (slot >= mTextureCount)) {
             throw new IllegalArgumentException("Slot ID out of range.");
         }
+        if (va != null && va.getType().hasFaces() &&
+            mTextures[slot] != TextureType.TEXTURE_CUBE) {
+            throw new IllegalArgumentException("Cannot bind cubemap to 2d texture slot");
+        }
 
-        mRS.nProgramBindTexture(mID, slot, va.mID);
+        int id = va != null ? va.getID() : 0;
+        mRS.nProgramBindTexture(getID(), slot, id);
     }
 
+    /**
+     * Binds an object that describes how a texture at the
+     * corresponding location is sampled
+     *
+     * @param vs sampler for a corresponding texture
+     * @param slot index within the program's list of textures to
+     *             use the sampler on
+     *
+     */
     public void bindSampler(Sampler vs, int slot)
         throws IllegalArgumentException {
         mRS.validate();
-        if((slot < 0) || (slot >= mTextureCount)) {
+        if ((slot < 0) || (slot >= mTextureCount)) {
             throw new IllegalArgumentException("Slot ID out of range.");
         }
 
-        mRS.nProgramBindSampler(mID, slot, vs.mID);
+        int id = vs != null ? vs.getID() : 0;
+        mRS.nProgramBindSampler(getID(), slot, id);
     }
 
 
@@ -73,6 +145,7 @@ public class Program extends BaseObj {
         Element mOutputs[];
         Type mConstants[];
         Type mTextures[];
+        TextureType mTextureTypes[];
         int mInputCount;
         int mOutputCount;
         int mConstantCount;
@@ -89,43 +162,115 @@ public class Program extends BaseObj {
             mOutputCount = 0;
             mConstantCount = 0;
             mTextureCount = 0;
+            mTextureTypes = new TextureType[MAX_TEXTURE];
         }
 
-        public void setShader(String s) {
+        /**
+         * Sets the GLSL shader code to be used in the program
+         *
+         * @param s GLSL shader string
+         * @return  self
+         */
+        public BaseProgramBuilder setShader(String s) {
             mShader = s;
+            return this;
         }
 
-        public void addInput(Element e) throws IllegalStateException {
-            // Should check for consistant and non-conflicting names...
-            if(mInputCount >= MAX_INPUT) {
-                throw new IllegalArgumentException("Max input count exceeded.");
+        /**
+         * Sets the GLSL shader code to be used in the program
+         *
+         * @param resources application resources
+         * @param resourceID id of the file containing GLSL shader code
+         *
+         * @return  self
+         */
+        public BaseProgramBuilder setShader(Resources resources, int resourceID) {
+            byte[] str;
+            int strLength;
+            InputStream is = resources.openRawResource(resourceID);
+            try {
+                try {
+                    str = new byte[1024];
+                    strLength = 0;
+                    while(true) {
+                        int bytesLeft = str.length - strLength;
+                        if (bytesLeft == 0) {
+                            byte[] buf2 = new byte[str.length * 2];
+                            System.arraycopy(str, 0, buf2, 0, str.length);
+                            str = buf2;
+                            bytesLeft = str.length - strLength;
+                        }
+                        int bytesRead = is.read(str, strLength, bytesLeft);
+                        if (bytesRead <= 0) {
+                            break;
+                        }
+                        strLength += bytesRead;
+                    }
+                } finally {
+                    is.close();
+                }
+            } catch(IOException e) {
+                throw new Resources.NotFoundException();
             }
-            mInputs[mInputCount++] = e;
-        }
 
-        public void addOutput(Element e) throws IllegalStateException {
-            // Should check for consistant and non-conflicting names...
-            if(mOutputCount >= MAX_OUTPUT) {
-                throw new IllegalArgumentException("Max output count exceeded.");
+            try {
+                mShader = new String(str, 0, strLength, "UTF-8");
+            } catch (UnsupportedEncodingException e) {
+                Log.e("Renderscript shader creation", "Could not decode shader string");
             }
-            mOutputs[mOutputCount++] = e;
+
+            return this;
         }
 
-        public int addConstant(Type t) throws IllegalStateException {
+        /**
+         * Queries the index of the last added constant buffer type
+         *
+         */
+        public int getCurrentConstantIndex() {
+            return mConstantCount - 1;
+        }
+
+        /**
+         * Queries the index of the last added texture type
+         *
+         */
+        public int getCurrentTextureIndex() {
+            return mTextureCount - 1;
+        }
+
+        /**
+         * Adds constant (uniform) inputs to the program
+         *
+         * @param t Type that describes the layout of the Allocation
+         *          object to be used as constant inputs to the Program
+         * @return  self
+         */
+        public BaseProgramBuilder addConstant(Type t) throws IllegalStateException {
             // Should check for consistant and non-conflicting names...
             if(mConstantCount >= MAX_CONSTANT) {
-                throw new IllegalArgumentException("Max input count exceeded.");
+                throw new RSIllegalArgumentException("Max input count exceeded.");
+            }
+            if (t.getElement().isComplex()) {
+                throw new RSIllegalArgumentException("Complex elements not allowed.");
             }
             mConstants[mConstantCount] = t;
-            return mConstantCount++;
+            mConstantCount++;
+            return this;
         }
 
-        public void setTextureCount(int count) throws IllegalArgumentException {
-            // Should check for consistant and non-conflicting names...
-            if(count >= MAX_CONSTANT) {
+        /**
+         * Adds a texture input to the Program
+         *
+         * @param texType describes that the texture to append it (2D,
+         *                Cubemap, etc.)
+         * @return  self
+         */
+        public BaseProgramBuilder addTexture(TextureType texType) throws IllegalArgumentException {
+            if(mTextureCount >= MAX_TEXTURE) {
                 throw new IllegalArgumentException("Max texture count exceeded.");
             }
-            mTextureCount = count;
+            mTextureTypes[mTextureCount ++] = texType;
+            return this;
         }
 
         protected void initProgram(Program p) {
@@ -136,6 +281,8 @@ public class Program extends BaseObj {
             p.mConstants = new Type[mConstantCount];
             System.arraycopy(mConstants, 0, p.mConstants, 0, mConstantCount);
             p.mTextureCount = mTextureCount;
+            p.mTextures = new TextureType[mTextureCount];
+            System.arraycopy(mTextureTypes, 0, p.mTextures, 0, mTextureCount);
         }
     }
 

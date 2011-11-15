@@ -80,9 +80,14 @@ public class Gravity
     /** Flag to clip the edges of the object to its container along the
      *  horizontal axis. */
     public static final int CLIP_HORIZONTAL = AXIS_CLIP<<AXIS_X_SHIFT;
-    
+
+    /** Raw bit controlling whether the layout direction is relative or not (START/END instead of
+     * absolute LEFT/RIGHT).
+     */
+    public static final int RELATIVE_LAYOUT_DIRECTION = 0x00800000;
+
     /**
-     * Binary mask to get the horizontal gravity of a gravity.
+     * Binary mask to get the absolute horizontal gravity of a gravity.
      */
     public static final int HORIZONTAL_GRAVITY_MASK = (AXIS_SPECIFIED |
             AXIS_PULL_BEFORE | AXIS_PULL_AFTER) << AXIS_X_SHIFT;
@@ -106,8 +111,19 @@ public class Gravity
      */
     public static final int DISPLAY_CLIP_HORIZONTAL = 0x01000000;
     
+    /** Push object to x-axis position at the start of its container, not changing its size. */
+    public static final int START = RELATIVE_LAYOUT_DIRECTION | LEFT;
+
+    /** Push object to x-axis position at the end of its container, not changing its size. */
+    public static final int END = RELATIVE_LAYOUT_DIRECTION | RIGHT;
+
     /**
-     * Apply a gravity constant to an object.
+     * Binary mask for the horizontal gravity and script specific direction bit.
+     */
+    public static final int RELATIVE_HORIZONTAL_GRAVITY_MASK = START | END;
+
+    /**
+     * Apply a gravity constant to an object. This suppose that the layout direction is LTR.
      * 
      * @param gravity The desired placement of the object, as defined by the
      *                constants in this class.
@@ -119,9 +135,30 @@ public class Gravity
      * @param outRect Receives the computed frame of the object in its
      *                container.
      */
-    public static void apply(int gravity, int w, int h, Rect container,
-                             Rect outRect) {
+    public static void apply(int gravity, int w, int h, Rect container, Rect outRect) {
         apply(gravity, w, h, container, 0, 0, outRect);
+    }
+
+    /**
+     * Apply a gravity constant to an object and take care if layout direction is RTL or not.
+     *
+     * @param gravity The desired placement of the object, as defined by the
+     *                constants in this class.
+     * @param w The horizontal size of the object.
+     * @param h The vertical size of the object.
+     * @param container The frame of the containing space, in which the object
+     *                  will be placed.  Should be large enough to contain the
+     *                  width and height of the object.
+     * @param outRect Receives the computed frame of the object in its
+     *                container.
+     * @param layoutDirection The layout direction.
+     *
+     * @hide
+     */
+    public static void apply(int gravity, int w, int h, Rect container,
+            Rect outRect, int layoutDirection) {
+        int absGravity = getAbsoluteGravity(gravity, layoutDirection);
+        apply(absGravity, w, h, container, 0, 0, outRect);
     }
 
     /**
@@ -146,7 +183,7 @@ public class Gravity
      *                container.
      */
     public static void apply(int gravity, int w, int h, Rect container,
-                             int xAdj, int yAdj, Rect outRect) {
+            int xAdj, int yAdj, Rect outRect) {
         switch (gravity&((AXIS_PULL_BEFORE|AXIS_PULL_AFTER)<<AXIS_X_SHIFT)) {
             case 0:
                 outRect.left = container.left
@@ -301,6 +338,49 @@ public class Gravity
      * @return true if the supplied gravity has an horizontal pull
      */
     public static boolean isHorizontal(int gravity) {
-        return gravity > 0 && (gravity & HORIZONTAL_GRAVITY_MASK) != 0;
+        return gravity > 0 && (gravity & RELATIVE_HORIZONTAL_GRAVITY_MASK) != 0;
+    }
+
+    /**
+     * <p>Convert script specific gravity to absolute horizontal value.</p>
+     *
+     * if horizontal direction is LTR, then START will set LEFT and END will set RIGHT.
+     * if horizontal direction is RTL, then START will set RIGHT and END will set LEFT.
+     *
+     *
+     * @param gravity The gravity to convert to absolute (horizontal) values.
+     * @param layoutDirection The layout direction.
+     * @return gravity converted to absolute (horizontal) values.
+     */
+    public static int getAbsoluteGravity(int gravity, int layoutDirection) {
+        int result = gravity;
+        // If layout is script specific and gravity is horizontal relative (START or END)
+        if ((result & RELATIVE_LAYOUT_DIRECTION) > 0) {
+            if ((result & Gravity.START) == Gravity.START) {
+                // Remove the START bit
+                result &= ~START;
+                if (layoutDirection == View.LAYOUT_DIRECTION_RTL) {
+                    // Set the RIGHT bit
+                    result |= RIGHT;
+                } else {
+                    // Set the LEFT bit
+                    result |= LEFT;
+                }
+            } else if ((result & Gravity.END) == Gravity.END) {
+                // Remove the END bit
+                result &= ~END;
+                if (layoutDirection == View.LAYOUT_DIRECTION_RTL) {
+                    // Set the LEFT bit
+                    result |= LEFT;
+                } else {
+                    // Set the RIGHT bit
+                    result |= RIGHT;
+                }
+            }
+            // Don't need the script specific bit any more, so remove it as we are converting to
+            // absolute values (LEFT or RIGHT)
+            result &= ~RELATIVE_LAYOUT_DIRECTION;
+        }
+        return result;
     }
 }

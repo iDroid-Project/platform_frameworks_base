@@ -26,15 +26,21 @@
 namespace android {
 
 struct AString;
+struct Parcel;
 
 struct AMessage : public RefBase {
     AMessage(uint32_t what = 0, ALooper::handler_id target = 0);
+
+    static sp<AMessage> FromParcel(const Parcel &parcel);
+    void writeToParcel(Parcel *parcel) const;
 
     void setWhat(uint32_t what);
     uint32_t what() const;
 
     void setTarget(ALooper::handler_id target);
     ALooper::handler_id target() const;
+
+    void clear();
 
     void setInt32(const char *name, int32_t value);
     void setInt64(const char *name, int64_t value);
@@ -46,6 +52,10 @@ struct AMessage : public RefBase {
     void setObject(const char *name, const sp<RefBase> &obj);
     void setMessage(const char *name, const sp<AMessage> &obj);
 
+    void setRect(
+            const char *name,
+            int32_t left, int32_t top, int32_t right, int32_t bottom);
+
     bool findInt32(const char *name, int32_t *value) const;
     bool findInt64(const char *name, int64_t *value) const;
     bool findSize(const char *name, size_t *value) const;
@@ -56,8 +66,26 @@ struct AMessage : public RefBase {
     bool findObject(const char *name, sp<RefBase> *obj) const;
     bool findMessage(const char *name, sp<AMessage> *obj) const;
 
+    bool findRect(
+            const char *name,
+            int32_t *left, int32_t *top, int32_t *right, int32_t *bottom) const;
+
     void post(int64_t delayUs = 0);
 
+    // Posts the message to its target and waits for a response (or error)
+    // before returning.
+    status_t postAndAwaitResponse(sp<AMessage> *response);
+
+    // If this returns true, the sender of this message is synchronously
+    // awaiting a response, the "replyID" can be used to send the response
+    // via "postReply" below.
+    bool senderAwaitsResponse(uint32_t *replyID) const;
+
+    void postReply(uint32_t replyID);
+
+    // Performs a deep-copy of "this", contained messages are in turn "dup'ed".
+    // Warning: RefBase items, i.e. "objects" are _not_ copied but only have
+    // their refcount incremented.
     sp<AMessage> dup() const;
 
     AString debugString(int32_t indent = 0) const;
@@ -76,10 +104,15 @@ private:
         kTypeString,
         kTypeObject,
         kTypeMessage,
+        kTypeRect,
     };
 
     uint32_t mWhat;
     ALooper::handler_id mTarget;
+
+    struct Rect {
+        int32_t mLeft, mTop, mRight, mBottom;
+    };
 
     struct Item {
         union {
@@ -91,6 +124,7 @@ private:
             void *ptrValue;
             RefBase *refValue;
             AString *stringValue;
+            Rect rectValue;
         } u;
         const char *mName;
         Type mType;
@@ -102,7 +136,6 @@ private:
     Item mItems[kMaxNumItems];
     size_t mNumItems;
 
-    void clear();
     Item *allocateItem(const char *name);
     void freeItem(Item *item);
     const Item *findItem(const char *name, Type type) const;

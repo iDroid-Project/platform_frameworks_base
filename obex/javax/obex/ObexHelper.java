@@ -32,11 +32,11 @@
 
 package javax.obex;
 
-import android.security.Md5MessageDigest;
-
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.TimeZone;
@@ -69,6 +69,12 @@ public final class ObexHelper {
      * android note set as 0xFFFE to match remote MPS
      */
     public static final int MAX_PACKET_SIZE_INT = 0xFFFE;
+
+    /**
+     * Temporary workaround to be able to push files to Windows 7.
+     * TODO: Should be removed as soon as Microsoft updates their driver.
+     */
+    public static final int MAX_CLIENT_PACKET_SIZE = 0xFC00;
 
     public static final int OBEX_OPCODE_CONNECT = 0x80;
 
@@ -916,8 +922,12 @@ public final class ObexHelper {
      * @return the MD5 hash of the byte array
      */
     public static byte[] computeMd5Hash(byte[] in) {
-        Md5MessageDigest md5 = new Md5MessageDigest();
-        return md5.digest(in);
+        try {
+            MessageDigest md5 = MessageDigest.getInstance("MD5");
+            return md5.digest(in);
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     /**

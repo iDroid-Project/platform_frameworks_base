@@ -17,6 +17,7 @@
 package android.provider;
 
 import android.accounts.Account;
+import android.app.Activity;
 import android.content.ContentProviderClient;
 import android.content.ContentProviderOperation;
 import android.content.ContentResolver;
@@ -27,12 +28,13 @@ import android.content.CursorEntityIterator;
 import android.content.Entity;
 import android.content.EntityIterator;
 import android.content.Intent;
+import android.content.res.AssetFileDescriptor;
 import android.content.res.Resources;
 import android.database.Cursor;
 import android.database.DatabaseUtils;
-import android.database.sqlite.SQLiteException;
 import android.graphics.Rect;
 import android.net.Uri;
+import android.os.Bundle;
 import android.os.RemoteException;
 import android.text.TextUtils;
 import android.util.DisplayMetrics;
@@ -40,7 +42,12 @@ import android.util.Pair;
 import android.view.View;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * <p>
@@ -122,12 +129,115 @@ public final class ContactsContract {
     public static final String CALLER_IS_SYNCADAPTER = "caller_is_syncadapter";
 
     /**
-     * A query parameter key used to specify the package that is requesting a query.
-     * This is used for restricting data based on package name.
+     * Query parameter that should be used by the client to access a specific
+     * {@link Directory}. The parameter value should be the _ID of the corresponding
+     * directory, e.g.
+     * {@code content://com.android.contacts/data/emails/filter/acme?directory=3}
+     */
+    public static final String DIRECTORY_PARAM_KEY = "directory";
+
+    /**
+     * A query parameter that limits the number of results returned. The
+     * parameter value should be an integer.
+     */
+    public static final String LIMIT_PARAM_KEY = "limit";
+
+    /**
+     * A query parameter specifing a primary account. This parameter should be used with
+     * {@link #PRIMARY_ACCOUNT_TYPE}. The contacts provider handling a query may rely on
+     * this information to optimize its query results.
+     *
+     * For example, in an email composition screen, its implementation can specify an account when
+     * obtaining possible recipients, letting the provider know which account is selected during
+     * the composition. The provider may use the "primary account" information to optimize
+     * the search result.
+     */
+    public static final String PRIMARY_ACCOUNT_NAME = "name_for_primary_account";
+
+    /**
+     * A query parameter specifing a primary account. This parameter should be used with
+     * {@link #PRIMARY_ACCOUNT_NAME}. See the doc in {@link #PRIMARY_ACCOUNT_NAME}.
+     */
+    public static final String PRIMARY_ACCOUNT_TYPE = "type_for_primary_account";
+
+    /**
+     * A boolean parameter for {@link Contacts#CONTENT_STREQUENT_URI} and
+     * {@link Contacts#CONTENT_STREQUENT_FILTER_URI}, which requires the ContactsProvider to
+     * return only phone-related results. For example, frequently contacted person list should
+     * include persons contacted via phone (not email, sms, etc.)
      *
      * @hide
      */
-    public static final String REQUESTING_PACKAGE_PARAM_KEY = "requesting_package";
+    public static final String STREQUENT_PHONE_ONLY = "strequent_phone_only";
+
+    /**
+     * A key to a boolean in the "extras" bundle of the cursor.
+     * The boolean indicates that the provider did not create a snippet and that the client asking
+     * for the snippet should do it (true means the snippeting was deferred to the client).
+     *
+     * @hide
+     */
+    public static final String DEFERRED_SNIPPETING = "deferred_snippeting";
+
+    /**
+     * Key to retrieve the original query on the client side.
+     *
+     * @hide
+     */
+    public static final String DEFERRED_SNIPPETING_QUERY = "deferred_snippeting_query";
+
+    /**
+     * <p>
+     * API for obtaining a pre-authorized version of a URI that normally requires special
+     * permission (beyond READ_CONTACTS) to read.  The caller obtaining the pre-authorized URI
+     * must already have the necessary permissions to access the URI; otherwise a
+     * {@link SecurityException} will be thrown.
+     * </p>
+     * <p>
+     * The authorized URI returned in the bundle contains an expiring token that allows the
+     * caller to execute the query without having the special permissions that would normally
+     * be required.
+     * </p>
+     * <p>
+     * This API does not access disk, and should be safe to invoke from the UI thread.
+     * </p>
+     * <p>
+     * Example usage:
+     * <pre>
+     * Uri profileUri = ContactsContract.Profile.CONTENT_VCARD_URI;
+     * Bundle uriBundle = new Bundle();
+     * uriBundle.putParcelable(ContactsContract.Authorization.KEY_URI_TO_AUTHORIZE, uri);
+     * Bundle authResponse = getContext().getContentResolver().call(
+     *         ContactsContract.AUTHORITY_URI,
+     *         ContactsContract.Authorization.AUTHORIZATION_METHOD,
+     *         null, // String arg, not used.
+     *         uriBundle);
+     * if (authResponse != null) {
+     *     Uri preauthorizedProfileUri = (Uri) authResponse.getParcelable(
+     *             ContactsContract.Authorization.KEY_AUTHORIZED_URI);
+     *     // This pre-authorized URI can be queried by a caller without READ_PROFILE
+     *     // permission.
+     * }
+     * </pre>
+     * </p>
+     * @hide
+     */
+    public static final class Authorization {
+        /**
+         * The method to invoke to create a pre-authorized URI out of the input argument.
+         */
+        public static final String AUTHORIZATION_METHOD = "authorize";
+
+        /**
+         * The key to set in the outbound Bundle with the URI that should be authorized.
+         */
+        public static final String KEY_URI_TO_AUTHORIZE = "uri_to_authorize";
+
+        /**
+         * The key to retrieve from the returned Bundle to obtain the pre-authorized URI.
+         */
+        public static final String KEY_AUTHORIZED_URI = "authorized_uri";
+    }
 
     /**
      * @hide
@@ -181,6 +291,324 @@ public final class ContactsContract {
     }
 
     /**
+     * A Directory represents a contacts corpus, e.g. Local contacts,
+     * Google Apps Global Address List or Corporate Global Address List.
+     * <p>
+     * A Directory is implemented as a content provider with its unique authority and
+     * the same API as the main Contacts Provider.  However, there is no expectation that
+     * every directory provider will implement this Contract in its entirety.  If a
+     * directory provider does not have an implementation for a specific request, it
+     * should throw an UnsupportedOperationException.
+     * </p>
+     * <p>
+     * The most important use case for Directories is search.  A Directory provider is
+     * expected to support at least {@link ContactsContract.Contacts#CONTENT_FILTER_URI
+     * Contacts.CONTENT_FILTER_URI}.  If a Directory provider wants to participate
+     * in email and phone lookup functionalities, it should also implement
+     * {@link CommonDataKinds.Email#CONTENT_FILTER_URI CommonDataKinds.Email.CONTENT_FILTER_URI}
+     * and
+     * {@link CommonDataKinds.Phone#CONTENT_FILTER_URI CommonDataKinds.Phone.CONTENT_FILTER_URI}.
+     * </p>
+     * <p>
+     * A directory provider should return NULL for every projection field it does not
+     * recognize, rather than throwing an exception.  This way it will not be broken
+     * if ContactsContract is extended with new fields in the future.
+     * </p>
+     * <p>
+     * The client interacts with a directory via Contacts Provider by supplying an
+     * optional {@code directory=} query parameter.
+     * <p>
+     * <p>
+     * When the Contacts Provider receives the request, it transforms the URI and forwards
+     * the request to the corresponding directory content provider.
+     * The URI is transformed in the following fashion:
+     * <ul>
+     * <li>The URI authority is replaced with the corresponding {@link #DIRECTORY_AUTHORITY}.</li>
+     * <li>The {@code accountName=} and {@code accountType=} parameters are added or
+     * replaced using the corresponding {@link #ACCOUNT_TYPE} and {@link #ACCOUNT_NAME} values.</li>
+     * </ul>
+     * </p>
+     * <p>
+     * Clients should send directory requests to Contacts Provider and let it
+     * forward them to the respective providers rather than constructing
+     * directory provider URIs by themselves. This level of indirection allows
+     * Contacts Provider to implement additional system-level features and
+     * optimizations. Access to Contacts Provider is protected by the
+     * READ_CONTACTS permission, but access to the directory provider is not.
+     * Therefore directory providers must reject requests coming from clients
+     * other than the Contacts Provider itself. An easy way to prevent such
+     * unauthorized access is to check the name of the calling package:
+     * <pre>
+     * private boolean isCallerAllowed() {
+     *   PackageManager pm = getContext().getPackageManager();
+     *   for (String packageName: pm.getPackagesForUid(Binder.getCallingUid())) {
+     *     if (packageName.equals("com.android.providers.contacts")) {
+     *       return true;
+     *     }
+     *   }
+     *   return false;
+     * }
+     * </pre>
+     * </p>
+     * <p>
+     * The Directory table is read-only and is maintained by the Contacts Provider
+     * automatically.
+     * </p>
+     * <p>It always has at least these two rows:
+     * <ul>
+     * <li>
+     * The local directory. It has {@link Directory#_ID Directory._ID} =
+     * {@link Directory#DEFAULT Directory.DEFAULT}. This directory can be used to access locally
+     * stored contacts. The same can be achieved by omitting the {@code directory=}
+     * parameter altogether.
+     * </li>
+     * <li>
+     * The local invisible contacts. The corresponding directory ID is
+     * {@link Directory#LOCAL_INVISIBLE Directory.LOCAL_INVISIBLE}.
+     * </li>
+     * </ul>
+     * </p>
+     * <p>Custom Directories are discovered by the Contacts Provider following this procedure:
+     * <ul>
+     * <li>It finds all installed content providers with meta data identifying them
+     * as directory providers in AndroidManifest.xml:
+     * <code>
+     * &lt;meta-data android:name="android.content.ContactDirectory"
+     *               android:value="true" /&gt;
+     * </code>
+     * <p>
+     * This tag should be placed inside the corresponding content provider declaration.
+     * </p>
+     * </li>
+     * <li>
+     * Then Contacts Provider sends a {@link Directory#CONTENT_URI Directory.CONTENT_URI}
+     * query to each of the directory authorities.  A directory provider must implement
+     * this query and return a list of directories.  Each directory returned by
+     * the provider must have a unique combination for the {@link #ACCOUNT_NAME} and
+     * {@link #ACCOUNT_TYPE} columns (nulls are allowed).  Since directory IDs are assigned
+     * automatically, the _ID field will not be part of the query projection.
+     * </li>
+     * <li>Contacts Provider compiles directory lists received from all directory
+     * providers into one, assigns each individual directory a globally unique ID and
+     * stores all directory records in the Directory table.
+     * </li>
+     * </ul>
+     * </p>
+     * <p>Contacts Provider automatically interrogates newly installed or replaced packages.
+     * Thus simply installing a package containing a directory provider is sufficient
+     * to have that provider registered.  A package supplying a directory provider does
+     * not have to contain launchable activities.
+     * </p>
+     * <p>
+     * Every row in the Directory table is automatically associated with the corresponding package
+     * (apk).  If the package is later uninstalled, all corresponding directory rows
+     * are automatically removed from the Contacts Provider.
+     * </p>
+     * <p>
+     * When the list of directories handled by a directory provider changes
+     * (for instance when the user adds a new Directory account), the directory provider
+     * should call {@link #notifyDirectoryChange} to notify the Contacts Provider of the change.
+     * In response, the Contacts Provider will requery the directory provider to obtain the
+     * new list of directories.
+     * </p>
+     * <p>
+     * A directory row can be optionally associated with an existing account
+     * (see {@link android.accounts.AccountManager}). If the account is later removed,
+     * the corresponding directory rows are automatically removed from the Contacts Provider.
+     * </p>
+     */
+    public static final class Directory implements BaseColumns {
+
+        /**
+         * Not instantiable.
+         */
+        private Directory() {
+        }
+
+        /**
+         * The content:// style URI for this table.  Requests to this URI can be
+         * performed on the UI thread because they are always unblocking.
+         */
+        public static final Uri CONTENT_URI =
+                Uri.withAppendedPath(AUTHORITY_URI, "directories");
+
+        /**
+         * The MIME-type of {@link #CONTENT_URI} providing a directory of
+         * contact directories.
+         */
+        public static final String CONTENT_TYPE =
+                "vnd.android.cursor.dir/contact_directories";
+
+        /**
+         * The MIME type of a {@link #CONTENT_URI} item.
+         */
+        public static final String CONTENT_ITEM_TYPE =
+                "vnd.android.cursor.item/contact_directory";
+
+        /**
+         * _ID of the default directory, which represents locally stored contacts.
+         */
+        public static final long DEFAULT = 0;
+
+        /**
+         * _ID of the directory that represents locally stored invisible contacts.
+         */
+        public static final long LOCAL_INVISIBLE = 1;
+
+        /**
+         * The name of the package that owns this directory. Contacts Provider
+         * fill it in with the name of the package containing the directory provider.
+         * If the package is later uninstalled, the directories it owns are
+         * automatically removed from this table.
+         *
+         * <p>TYPE: TEXT</p>
+         */
+        public static final String PACKAGE_NAME = "packageName";
+
+        /**
+         * The type of directory captured as a resource ID in the context of the
+         * package {@link #PACKAGE_NAME}, e.g. "Corporate Directory"
+         *
+         * <p>TYPE: INTEGER</p>
+         */
+        public static final String TYPE_RESOURCE_ID = "typeResourceId";
+
+        /**
+         * An optional name that can be used in the UI to represent this directory,
+         * e.g. "Acme Corp"
+         * <p>TYPE: text</p>
+         */
+        public static final String DISPLAY_NAME = "displayName";
+
+        /**
+         * <p>
+         * The authority of the Directory Provider. Contacts Provider will
+         * use this authority to forward requests to the directory provider.
+         * A directory provider can leave this column empty - Contacts Provider will fill it in.
+         * </p>
+         * <p>
+         * Clients of this API should not send requests directly to this authority.
+         * All directory requests must be routed through Contacts Provider.
+         * </p>
+         *
+         * <p>TYPE: text</p>
+         */
+        public static final String DIRECTORY_AUTHORITY = "authority";
+
+        /**
+         * The account type which this directory is associated.
+         *
+         * <p>TYPE: text</p>
+         */
+        public static final String ACCOUNT_TYPE = "accountType";
+
+        /**
+         * The account with which this directory is associated. If the account is later
+         * removed, the directories it owns are automatically removed from this table.
+         *
+         * <p>TYPE: text</p>
+         */
+        public static final String ACCOUNT_NAME = "accountName";
+
+        /**
+         * One of {@link #EXPORT_SUPPORT_NONE}, {@link #EXPORT_SUPPORT_ANY_ACCOUNT},
+         * {@link #EXPORT_SUPPORT_SAME_ACCOUNT_ONLY}. This is the expectation the
+         * directory has for data exported from it.  Clients must obey this setting.
+         */
+        public static final String EXPORT_SUPPORT = "exportSupport";
+
+        /**
+         * An {@link #EXPORT_SUPPORT} setting that indicates that the directory
+         * does not allow any data to be copied out of it.
+         */
+        public static final int EXPORT_SUPPORT_NONE = 0;
+
+        /**
+         * An {@link #EXPORT_SUPPORT} setting that indicates that the directory
+         * allow its data copied only to the account specified by
+         * {@link #ACCOUNT_TYPE}/{@link #ACCOUNT_NAME}.
+         */
+        public static final int EXPORT_SUPPORT_SAME_ACCOUNT_ONLY = 1;
+
+        /**
+         * An {@link #EXPORT_SUPPORT} setting that indicates that the directory
+         * allow its data copied to any contacts account.
+         */
+        public static final int EXPORT_SUPPORT_ANY_ACCOUNT = 2;
+
+        /**
+         * One of {@link #SHORTCUT_SUPPORT_NONE}, {@link #SHORTCUT_SUPPORT_DATA_ITEMS_ONLY},
+         * {@link #SHORTCUT_SUPPORT_FULL}. This is the expectation the directory
+         * has for shortcuts created for its elements. Clients must obey this setting.
+         */
+        public static final String SHORTCUT_SUPPORT = "shortcutSupport";
+
+        /**
+         * An {@link #SHORTCUT_SUPPORT} setting that indicates that the directory
+         * does not allow any shortcuts created for its contacts.
+         */
+        public static final int SHORTCUT_SUPPORT_NONE = 0;
+
+        /**
+         * An {@link #SHORTCUT_SUPPORT} setting that indicates that the directory
+         * allow creation of shortcuts for data items like email, phone or postal address,
+         * but not the entire contact.
+         */
+        public static final int SHORTCUT_SUPPORT_DATA_ITEMS_ONLY = 1;
+
+        /**
+         * An {@link #SHORTCUT_SUPPORT} setting that indicates that the directory
+         * allow creation of shortcuts for contact as well as their constituent elements.
+         */
+        public static final int SHORTCUT_SUPPORT_FULL = 2;
+
+        /**
+         * One of {@link #PHOTO_SUPPORT_NONE}, {@link #PHOTO_SUPPORT_THUMBNAIL_ONLY},
+         * {@link #PHOTO_SUPPORT_FULL}. This is a feature flag indicating the extent
+         * to which the directory supports contact photos.
+         */
+        public static final String PHOTO_SUPPORT = "photoSupport";
+
+        /**
+         * An {@link #PHOTO_SUPPORT} setting that indicates that the directory
+         * does not provide any photos.
+         */
+        public static final int PHOTO_SUPPORT_NONE = 0;
+
+        /**
+         * An {@link #PHOTO_SUPPORT} setting that indicates that the directory
+         * can only produce small size thumbnails of contact photos.
+         */
+        public static final int PHOTO_SUPPORT_THUMBNAIL_ONLY = 1;
+
+        /**
+         * An {@link #PHOTO_SUPPORT} setting that indicates that the directory
+         * has full-size contact photos, but cannot provide scaled thumbnails.
+         */
+        public static final int PHOTO_SUPPORT_FULL_SIZE_ONLY = 2;
+
+        /**
+         * An {@link #PHOTO_SUPPORT} setting that indicates that the directory
+         * can produce thumbnails as well as full-size contact photos.
+         */
+        public static final int PHOTO_SUPPORT_FULL = 3;
+
+        /**
+         * Notifies the system of a change in the list of directories handled by
+         * a particular directory provider. The Contacts provider will turn around
+         * and send a query to the directory provider for the full list of directories,
+         * which will replace the previous list.
+         */
+        public static void notifyDirectoryChange(ContentResolver resolver) {
+            // This is done to trigger a query by Contacts Provider back to the directory provider.
+            // No data needs to be sent back, because the provider can infer the calling
+            // package from binder.
+            ContentValues contentValues = new ContentValues();
+            resolver.update(Directory.CONTENT_URI, contentValues, null, null);
+        }
+    }
+
+    /**
      * @hide should be removed when users are updated to refer to SyncState
      * @deprecated use SyncState instead
      */
@@ -189,7 +617,7 @@ public final class ContactsContract {
     }
 
     /**
-     * A table provided for sync adapters to use for storing private sync state data.
+     * A table provided for sync adapters to use for storing private sync state data for contacts.
      *
      * @see SyncStateContract
      */
@@ -207,6 +635,60 @@ public final class ContactsContract {
          */
         public static final Uri CONTENT_URI =
                 Uri.withAppendedPath(AUTHORITY_URI, CONTENT_DIRECTORY);
+
+        /**
+         * @see android.provider.SyncStateContract.Helpers#get
+         */
+        public static byte[] get(ContentProviderClient provider, Account account)
+                throws RemoteException {
+            return SyncStateContract.Helpers.get(provider, CONTENT_URI, account);
+        }
+
+        /**
+         * @see android.provider.SyncStateContract.Helpers#get
+         */
+        public static Pair<Uri, byte[]> getWithUri(ContentProviderClient provider, Account account)
+                throws RemoteException {
+            return SyncStateContract.Helpers.getWithUri(provider, CONTENT_URI, account);
+        }
+
+        /**
+         * @see android.provider.SyncStateContract.Helpers#set
+         */
+        public static void set(ContentProviderClient provider, Account account, byte[] data)
+                throws RemoteException {
+            SyncStateContract.Helpers.set(provider, CONTENT_URI, account, data);
+        }
+
+        /**
+         * @see android.provider.SyncStateContract.Helpers#newSetOperation
+         */
+        public static ContentProviderOperation newSetOperation(Account account, byte[] data) {
+            return SyncStateContract.Helpers.newSetOperation(CONTENT_URI, account, data);
+        }
+    }
+
+
+    /**
+     * A table provided for sync adapters to use for storing private sync state data for the
+     * user's personal profile.
+     *
+     * @see SyncStateContract
+     */
+    public static final class ProfileSyncState implements SyncStateContract.Columns {
+        /**
+         * This utility class cannot be instantiated
+         */
+        private ProfileSyncState() {}
+
+        public static final String CONTENT_DIRECTORY =
+                SyncStateContract.Constants.CONTENT_DIRECTORY;
+
+        /**
+         * The content:// style URI for this table
+         */
+        public static final Uri CONTENT_URI =
+                Uri.withAppendedPath(Profile.CONTENT_URI, CONTENT_DIRECTORY);
 
         /**
          * @see android.provider.SyncStateContract.Helpers#get
@@ -372,16 +854,66 @@ public final class ContactsContract {
         public static final String NAME_RAW_CONTACT_ID = "name_raw_contact_id";
 
         /**
-         * Reference to the row in the data table holding the photo.
+         * Reference to the row in the data table holding the photo.  A photo can
+         * be referred to either by ID (this field) or by URI (see {@link #PHOTO_THUMBNAIL_URI}
+         * and {@link #PHOTO_URI}).
+         * If PHOTO_ID is null, consult {@link #PHOTO_URI} or {@link #PHOTO_THUMBNAIL_URI},
+         * which is a more generic mechanism for referencing the contact photo, especially for
+         * contacts returned by non-local directories (see {@link Directory}).
+         *
          * <P>Type: INTEGER REFERENCES data(_id)</P>
          */
         public static final String PHOTO_ID = "photo_id";
 
         /**
-         * Lookup value that reflects the {@link Groups#GROUP_VISIBLE} state of
-         * any {@link CommonDataKinds.GroupMembership} for this contact.
+         * Photo file ID of the full-size photo.  If present, this will be used to populate
+         * {@link #PHOTO_URI}.  The ID can also be used with
+         * {@link ContactsContract.DisplayPhoto#CONTENT_URI} to create a URI to the photo.
+         * If this is present, {@link #PHOTO_ID} is also guaranteed to be populated.
+         *
+         * <P>Type: INTEGER</P>
+         */
+        public static final String PHOTO_FILE_ID = "photo_file_id";
+
+        /**
+         * A URI that can be used to retrieve the contact's full-size photo.
+         * If PHOTO_FILE_ID is not null, this will be populated with a URI based off
+         * {@link ContactsContract.DisplayPhoto#CONTENT_URI}.  Otherwise, this will
+         * be populated with the same value as {@link #PHOTO_THUMBNAIL_URI}.
+         * A photo can be referred to either by a URI (this field) or by ID
+         * (see {@link #PHOTO_ID}). If either PHOTO_FILE_ID or PHOTO_ID is not null,
+         * PHOTO_URI and PHOTO_THUMBNAIL_URI shall not be null (but not necessarily
+         * vice versa).  Thus using PHOTO_URI is a more robust method of retrieving
+         * contact photos.
+         *
+         * <P>Type: TEXT</P>
+         */
+        public static final String PHOTO_URI = "photo_uri";
+
+        /**
+         * A URI that can be used to retrieve a thumbnail of the contact's photo.
+         * A photo can be referred to either by a URI (this field or {@link #PHOTO_URI})
+         * or by ID (see {@link #PHOTO_ID}). If PHOTO_ID is not null, PHOTO_URI and
+         * PHOTO_THUMBNAIL_URI shall not be null (but not necessarily vice versa).
+         * If the content provider does not differentiate between full-size photos
+         * and thumbnail photos, PHOTO_THUMBNAIL_URI and {@link #PHOTO_URI} can contain
+         * the same value, but either both shall be null or both not null.
+         *
+         * <P>Type: TEXT</P>
+         */
+        public static final String PHOTO_THUMBNAIL_URI = "photo_thumb_uri";
+
+        /**
+         * Flag that reflects the {@link Groups#GROUP_VISIBLE} state of any
+         * {@link CommonDataKinds.GroupMembership} for this contact.
          */
         public static final String IN_VISIBLE_GROUP = "in_visible_group";
+
+        /**
+         * Flag that reflects whether this contact represents the user's
+         * personal profile entry.
+         */
+        public static final String IS_USER_PROFILE = "is_user_profile";
 
         /**
          * An indicator of whether this contact has at least one phone number. "1" if there is
@@ -412,7 +944,6 @@ public final class ContactsContract {
          * Contact Chat Capabilities. See {@link StatusUpdates} for individual
          * definitions.
          * <p>Type: NUMBER</p>
-         * @hide
          */
         public static final String CONTACT_CHAT_CAPABILITY = "contact_chat_capability";
 
@@ -458,7 +989,6 @@ public final class ContactsContract {
      * 'family name', 'given name' 'middle name'.  The CJK tradition is
      * 'family name' 'middle name' 'given name', with Japanese favoring a space between
      * the names and Chinese omitting the space.
-     * @hide
      */
     public interface FullNameStyle {
         public static final int UNDEFINED = 0;
@@ -477,7 +1007,6 @@ public final class ContactsContract {
 
     /**
      * Constants for various styles of capturing the pronunciation of a person's name.
-     * @hide
      */
     public interface PhoneticNameStyle {
         public static final int UNDEFINED = 0;
@@ -501,10 +1030,9 @@ public final class ContactsContract {
     }
 
     /**
-     * Types of data used to produce the display name for a contact. Listed in the order
-     * of increasing priority.
-     *
-     * @hide
+     * Types of data used to produce the display name for a contact. In the order
+     * of increasing priority: {@link #EMAIL}, {@link #PHONE},
+     * {@link #ORGANIZATION}, {@link #NICKNAME}, {@link #STRUCTURED_NAME}.
      */
     public interface DisplayNameSources {
         public static final int UNDEFINED = 0;
@@ -520,15 +1048,12 @@ public final class ContactsContract {
      *
      * @see Contacts
      * @see RawContacts
-     * @hide
      */
     protected interface ContactNameColumns {
 
         /**
          * The kind of data that is used as the display name for the contact, such as
-         * structured name or email address.  See DisplayNameSources.
-         *
-         * TODO: convert DisplayNameSources to a link after it is un-hidden
+         * structured name or email address.  See {@link DisplayNameSources}.
          */
         public static final String DISPLAY_NAME_SOURCE = "display_name_source";
 
@@ -576,9 +1101,7 @@ public final class ContactsContract {
 
         /**
          * The phonetic alphabet used to represent the {@link #PHONETIC_NAME}.  See
-         * PhoneticNameStyle.
-         *
-         * TODO: convert PhoneticNameStyle to a link after it is un-hidden
+         * {@link PhoneticNameStyle}.
          */
         public static final String PHONETIC_NAME_STYLE = "phonetic_name_style";
 
@@ -588,13 +1111,10 @@ public final class ContactsContract {
          * {@link #PHONETIC_NAME_STYLE}.
          * </p>
          * <p>
-         * The value may be set manually by the user.
-         * This capability is is of interest only in countries
-         * with commonly used phonetic
-         * alphabets, such as Japan and Korea.  See PhoneticNameStyle.
+         * The value may be set manually by the user. This capability is of
+         * interest only in countries with commonly used phonetic alphabets,
+         * such as Japan and Korea. See {@link PhoneticNameStyle}.
          * </p>
-         *
-         * TODO: convert PhoneticNameStyle to a link after it is un-hidden
          */
         public static final String PHONETIC_NAME = "phonetic_name";
 
@@ -739,6 +1259,20 @@ public final class ContactsContract {
      * is computed automatically based on the
      * {@link CommonDataKinds.Photo#IS_SUPER_PRIMARY} field of the data rows of
      * that mime type.</td>
+     * </tr>
+     * <tr>
+     * <td>long</td>
+     * <td>{@link #PHOTO_URI}</td>
+     * <td>read-only</td>
+     * <td>A URI that can be used to retrieve the contact's full-size photo. This
+     * column is the preferred method of retrieving the contact photo.</td>
+     * </tr>
+     * <tr>
+     * <td>long</td>
+     * <td>{@link #PHOTO_THUMBNAIL_URI}</td>
+     * <td>read-only</td>
+     * <td>A URI that can be used to retrieve the thumbnail of contact's photo.  This
+     * column is the preferred method of retrieving the contact photo.</td>
      * </tr>
      * <tr>
      * <td>int</td>
@@ -894,11 +1428,20 @@ public final class ContactsContract {
         public static final Uri CONTENT_VCARD_URI = Uri.withAppendedPath(CONTENT_URI,
                 "as_vcard");
 
+       /**
+        * Boolean parameter that may be used with {@link #CONTENT_VCARD_URI}
+        * and {@link #CONTENT_MULTI_VCARD_URI} to indicate that the returned
+        * vcard should not contain a photo.
+        *
+        * @hide
+        */
+        public static final String QUERY_PARAMETER_VCARD_NO_PHOTO = "nophoto";
+
         /**
          * Base {@link Uri} for referencing multiple {@link Contacts} entry,
          * created by appending {@link #LOOKUP_KEY} using
          * {@link Uri#withAppendedPath(Uri, String)}. The lookup keys have to be
-         * encoded and joined with the colon (":") seperator. The resulting string
+         * encoded and joined with the colon (":") separator. The resulting string
          * has to be encoded again. Provides
          * {@link OpenableColumns} columns when queried, or returns the
          * referenced contact formatted as a vCard when opened through
@@ -976,10 +1519,10 @@ public final class ContactsContract {
         }
 
         /**
-         * Mark a contact as having been contacted.  This updates the
-         * {@link #TIMES_CONTACTED} and {@link #LAST_TIME_CONTACTED} for the
-         * contact, plus the corresponding values of any associated raw
-         * contacts.
+         * Mark a contact as having been contacted. Updates two fields:
+         * {@link #TIMES_CONTACTED} and {@link #LAST_TIME_CONTACTED}. The
+         * TIMES_CONTACTED field is incremented by 1 and the LAST_TIME_CONTACTED
+         * field is populated with the current system time.
          *
          * @param resolver the ContentResolver to use
          * @param contactId the person who was contacted
@@ -1008,6 +1551,13 @@ public final class ContactsContract {
          */
         public static final Uri CONTENT_STREQUENT_URI = Uri.withAppendedPath(
                 CONTENT_URI, "strequent");
+
+        /**
+         * The content:// style URI for showing frequently contacted person listing.
+         * @hide
+         */
+        public static final Uri CONTENT_FREQUENT_URI = Uri.withAppendedPath(
+                CONTENT_URI, "frequent");
 
         /**
          * The content:// style URI used for "type-to-filter" functionality on the
@@ -1041,7 +1591,8 @@ public final class ContactsContract {
 
         /**
          * A sub-directory of a single contact that contains all of the constituent raw contact
-         * {@link ContactsContract.Data} rows.
+         * {@link ContactsContract.Data} rows.  This directory can be used either
+         * with a {@link #CONTENT_URI} or {@link #CONTENT_LOOKUP_URI}.
          */
         public static final class Data implements BaseColumns, DataColumns {
             /**
@@ -1053,6 +1604,87 @@ public final class ContactsContract {
              * The directory twig for this sub-table
              */
             public static final String CONTENT_DIRECTORY = "data";
+        }
+
+        /**
+         * <p>
+         * A sub-directory of a contact that contains all of its
+         * {@link ContactsContract.RawContacts} as well as
+         * {@link ContactsContract.Data} rows. To access this directory append
+         * {@link #CONTENT_DIRECTORY} to the contact URI.
+         * </p>
+         * <p>
+         * Entity has three ID fields: {@link #CONTACT_ID} for the contact,
+         * {@link #RAW_CONTACT_ID} for the raw contact and {@link #DATA_ID} for
+         * the data rows. Entity always contains at least one row per
+         * constituent raw contact, even if there are no actual data rows. In
+         * this case the {@link #DATA_ID} field will be null.
+         * </p>
+         * <p>
+         * Entity reads all data for the entire contact in one transaction, to
+         * guarantee consistency.  There is significant data duplication
+         * in the Entity (each row repeats all Contact columns and all RawContact
+         * columns), so the benefits of transactional consistency should be weighed
+         * against the cost of transferring large amounts of denormalized data
+         * from the Provider.
+         * </p>
+         * <p>
+         * To reduce the amount of data duplication the contacts provider and directory
+         * providers implementing this protocol are allowed to provide common Contacts
+         * and RawContacts fields in the first row returned for each raw contact only and
+         * leave them as null in subsequent rows.
+         * </p>
+         */
+        public static final class Entity implements BaseColumns, ContactsColumns,
+                ContactNameColumns, RawContactsColumns, BaseSyncColumns, SyncColumns, DataColumns,
+                StatusColumns, ContactOptionsColumns, ContactStatusColumns {
+            /**
+             * no public constructor since this is a utility class
+             */
+            private Entity() {
+            }
+
+            /**
+             * The directory twig for this sub-table
+             */
+            public static final String CONTENT_DIRECTORY = "entities";
+
+            /**
+             * The ID of the raw contact row.
+             * <P>Type: INTEGER</P>
+             */
+            public static final String RAW_CONTACT_ID = "raw_contact_id";
+
+            /**
+             * The ID of the data row. The value will be null if this raw contact has no
+             * data rows.
+             * <P>Type: INTEGER</P>
+             */
+            public static final String DATA_ID = "data_id";
+        }
+
+        /**
+         * <p>
+         * A sub-directory of a single contact that contains all of the constituent raw contact
+         * {@link ContactsContract.StreamItems} rows.  This directory can be used either
+         * with a {@link #CONTENT_URI} or {@link #CONTENT_LOOKUP_URI}.
+         * </p>
+         * <p>
+         * Querying for social stream data requires android.permission.READ_SOCIAL_STREAM
+         * permission.
+         * </p>
+         * @hide
+         */
+        public static final class StreamItems implements StreamItemsColumns {
+            /**
+             * no public constructor since this is a utility class
+             */
+            private StreamItems() {}
+
+            /**
+             * The directory twig for this sub-table
+             */
+            public static final String CONTENT_DIRECTORY = "stream_items";
         }
 
         /**
@@ -1081,9 +1713,13 @@ public final class ContactsContract {
          * </pre>
          *
          * </p>
+         * <p>
+         * This directory can be used either with a {@link #CONTENT_URI} or
+         * {@link #CONTENT_LOOKUP_URI}.
+         * </p>
          */
-        // TODO: add ContactOptionsColumns, ContactStatusColumns
-        public static final class AggregationSuggestions implements BaseColumns, ContactsColumns {
+        public static final class AggregationSuggestions implements BaseColumns, ContactsColumns,
+                ContactOptionsColumns, ContactStatusColumns {
             /**
              * No public constructor since this is a utility class
              */
@@ -1095,14 +1731,119 @@ public final class ContactsContract {
              * {@link android.provider.ContactsContract.Contacts#CONTENT_FILTER_URI}.
              */
             public static final String CONTENT_DIRECTORY = "suggestions";
+
+            /**
+             * Used with {@link Builder#addParameter} to specify what kind of data is
+             * supplied for the suggestion query.
+             *
+             * @hide
+             */
+            public static final String PARAMETER_MATCH_NAME = "name";
+
+            /**
+             * Used with {@link Builder#addParameter} to specify what kind of data is
+             * supplied for the suggestion query.
+             *
+             * @hide
+             */
+            public static final String PARAMETER_MATCH_EMAIL = "email";
+
+            /**
+             * Used with {@link Builder#addParameter} to specify what kind of data is
+             * supplied for the suggestion query.
+             *
+             * @hide
+             */
+            public static final String PARAMETER_MATCH_PHONE = "phone";
+
+            /**
+             * Used with {@link Builder#addParameter} to specify what kind of data is
+             * supplied for the suggestion query.
+             *
+             * @hide
+             */
+            public static final String PARAMETER_MATCH_NICKNAME = "nickname";
+
+            /**
+             * A convenience builder for aggregation suggestion content URIs.
+             *
+             * TODO: change documentation for this class to use the builder.
+             * @hide
+             */
+            public static final class Builder {
+                private long mContactId;
+                private ArrayList<String> mKinds = new ArrayList<String>();
+                private ArrayList<String> mValues = new ArrayList<String>();
+                private int mLimit;
+
+                /**
+                 * Optional existing contact ID.  If it is not provided, the search
+                 * will be based exclusively on the values supplied with {@link #addParameter}.
+                 */
+                public Builder setContactId(long contactId) {
+                    this.mContactId = contactId;
+                    return this;
+                }
+
+                /**
+                 * A value that can be used when searching for an aggregation
+                 * suggestion.
+                 *
+                 * @param kind can be one of
+                 *            {@link AggregationSuggestions#PARAMETER_MATCH_NAME},
+                 *            {@link AggregationSuggestions#PARAMETER_MATCH_EMAIL},
+                 *            {@link AggregationSuggestions#PARAMETER_MATCH_NICKNAME},
+                 *            {@link AggregationSuggestions#PARAMETER_MATCH_PHONE}
+                 */
+                public Builder addParameter(String kind, String value) {
+                    if (!TextUtils.isEmpty(value)) {
+                        mKinds.add(kind);
+                        mValues.add(value);
+                    }
+                    return this;
+                }
+
+                public Builder setLimit(int limit) {
+                    mLimit = limit;
+                    return this;
+                }
+
+                public Uri build() {
+                    android.net.Uri.Builder builder = Contacts.CONTENT_URI.buildUpon();
+                    builder.appendEncodedPath(String.valueOf(mContactId));
+                    builder.appendPath(Contacts.AggregationSuggestions.CONTENT_DIRECTORY);
+                    if (mLimit != 0) {
+                        builder.appendQueryParameter("limit", String.valueOf(mLimit));
+                    }
+
+                    int count = mKinds.size();
+                    for (int i = 0; i < count; i++) {
+                        builder.appendQueryParameter("query", mKinds.get(i) + ":" + mValues.get(i));
+                    }
+
+                    return builder.build();
+                }
+            }
+
+            /**
+             * @hide
+             */
+            public static final Builder builder() {
+                return new Builder();
+            }
         }
 
         /**
          * A <i>read-only</i> sub-directory of a single contact that contains
-         * the contact's primary photo.
+         * the contact's primary photo.  The photo may be stored in up to two ways -
+         * the default "photo" is a thumbnail-sized image stored directly in the data
+         * row, while the "display photo", if present, is a larger version stored as
+         * a file.
          * <p>
          * Usage example:
-         *
+         * <dl>
+         * <dt>Retrieving the thumbnail-sized photo</dt>
+         * <dd>
          * <pre>
          * public InputStream openPhoto(long contactId) {
          *     Uri contactUri = ContentUris.withAppendedId(Contacts.CONTENT_URI, contactId);
@@ -1125,14 +1866,36 @@ public final class ContactsContract {
          *     return null;
          * }
          * </pre>
+         * </dd>
+         * <dt>Retrieving the larger photo version</dt>
+         * <dd>
+         * <pre>
+         * public InputStream openDisplayPhoto(long contactId) {
+         *     Uri contactUri = ContentUris.withAppendedId(Contacts.CONTENT_URI, contactId);
+         *     Uri displayPhotoUri = Uri.withAppendedPath(contactUri, Contacts.Photo.DISPLAY_PHOTO);
+         *     try {
+         *         AssetFileDescriptor fd =
+         *             getContentResolver().openAssetFileDescriptor(displayPhotoUri, "r");
+         *         return fd.createInputStream();
+         *     } catch (IOException e) {
+         *         return null;
+         *     }
+         * }
+         * </pre>
+         * </dd>
+         * </dl>
          *
          * </p>
-         * <p>You should also consider using the convenience method
-         * {@link ContactsContract.Contacts#openContactPhotoInputStream(ContentResolver, Uri)}
+         * <p>You may also consider using the convenience method
+         * {@link ContactsContract.Contacts#openContactPhotoInputStream(ContentResolver, Uri, boolean)}
+         * to retrieve the raw photo contents of either the thumbnail-sized or the full-sized photo.
+         * </p>
+         * <p>
+         * This directory can be used either with a {@link #CONTENT_URI} or
+         * {@link #CONTENT_LOOKUP_URI}.
          * </p>
          */
-        // TODO: change DataColumns to DataColumnsWithJoins
-        public static final class Photo implements BaseColumns, DataColumns {
+        public static final class Photo implements BaseColumns, DataColumnsWithJoins {
             /**
              * no public constructor since this is a utility class
              */
@@ -1144,29 +1907,59 @@ public final class ContactsContract {
             public static final String CONTENT_DIRECTORY = "photo";
 
             /**
+             * The directory twig for retrieving the full-size display photo.
+             */
+            public static final String DISPLAY_PHOTO = "display_photo";
+
+            /**
+             * Full-size photo file ID of the raw contact.
+             * See {@link ContactsContract.DisplayPhoto}.
+             * <p>
+             * Type: NUMBER
+             */
+            public static final String PHOTO_FILE_ID = DATA14;
+
+            /**
              * Thumbnail photo of the raw contact. This is the raw bytes of an image
              * that could be inflated using {@link android.graphics.BitmapFactory}.
              * <p>
              * Type: BLOB
-             * @hide TODO: Unhide in a separate CL
              */
             public static final String PHOTO = DATA15;
         }
 
         /**
-         * Opens an InputStream for the contacts's default photo and returns the
-         * photo as a byte stream. If there is not photo null will be returned.
-         *
-         * @param contactUri the contact whose photo should be used
+         * Opens an InputStream for the contacts's photo and returns the
+         * photo as a byte stream.
+         * @param cr The content resolver to use for querying
+         * @param contactUri the contact whose photo should be used. This can be used with
+         * either a {@link #CONTENT_URI} or a {@link #CONTENT_LOOKUP_URI} URI.
+         * @param preferHighres If this is true and the contact has a higher resolution photo
+         * available, it is returned. If false, this function always tries to get the thumbnail
          * @return an InputStream of the photo, or null if no photo is present
          */
-        public static InputStream openContactPhotoInputStream(ContentResolver cr, Uri contactUri) {
+        public static InputStream openContactPhotoInputStream(ContentResolver cr, Uri contactUri,
+                boolean preferHighres) {
+            if (preferHighres) {
+                final Uri displayPhotoUri = Uri.withAppendedPath(contactUri,
+                        Contacts.Photo.DISPLAY_PHOTO);
+                InputStream inputStream;
+                try {
+                    AssetFileDescriptor fd = cr.openAssetFileDescriptor(displayPhotoUri, "r");
+                    return fd.createInputStream();
+                } catch (IOException e) {
+                    // fallback to the thumbnail code
+                }
+           }
+
             Uri photoUri = Uri.withAppendedPath(contactUri, Photo.CONTENT_DIRECTORY);
             if (photoUri == null) {
                 return null;
             }
             Cursor cursor = cr.query(photoUri,
-                    new String[]{ContactsContract.CommonDataKinds.Photo.PHOTO}, null, null, null);
+                    new String[] {
+                        ContactsContract.CommonDataKinds.Photo.PHOTO
+                    }, null, null, null);
             try {
                 if (cursor == null || !cursor.moveToNext()) {
                     return null;
@@ -1182,6 +1975,127 @@ public final class ContactsContract {
                 }
             }
         }
+
+        /**
+         * Opens an InputStream for the contacts's thumbnail photo and returns the
+         * photo as a byte stream.
+         * @param cr The content resolver to use for querying
+         * @param contactUri the contact whose photo should be used. This can be used with
+         * either a {@link #CONTENT_URI} or a {@link #CONTENT_LOOKUP_URI} URI.
+         * @return an InputStream of the photo, or null if no photo is present
+         * @see #openContactPhotoInputStream(ContentResolver, Uri, boolean), if instead
+         * of the thumbnail the high-res picture is preferred
+         */
+        public static InputStream openContactPhotoInputStream(ContentResolver cr, Uri contactUri) {
+            return openContactPhotoInputStream(cr, contactUri, false);
+        }
+    }
+
+    /**
+     * <p>
+     * Constants for the user's profile data, which is represented as a single contact on
+     * the device that represents the user.  The profile contact is not aggregated
+     * together automatically in the same way that normal contacts are; instead, each
+     * account (including data set, if applicable) on the device may contribute a single
+     * raw contact representing the user's personal profile data from that source.
+     * </p>
+     * <p>
+     * Access to the profile entry through these URIs (or incidental access to parts of
+     * the profile if retrieved directly via ID) requires additional permissions beyond
+     * the read/write contact permissions required by the provider.  Querying for profile
+     * data requires android.permission.READ_PROFILE permission, and inserting or
+     * updating profile data requires android.permission.WRITE_PROFILE permission.
+     * </p>
+     * <h3>Operations</h3>
+     * <dl>
+     * <dt><b>Insert</b></dt>
+     * <dd>The user's profile entry cannot be created explicitly (attempting to do so
+     * will throw an exception). When a raw contact is inserted into the profile, the
+     * provider will check for the existence of a profile on the device.  If one is
+     * found, the raw contact's {@link RawContacts#CONTACT_ID} column gets the _ID of
+     * the profile Contact. If no match is found, the profile Contact is created and
+     * its _ID is put into the {@link RawContacts#CONTACT_ID} column of the newly
+     * inserted raw contact.</dd>
+     * <dt><b>Update</b></dt>
+     * <dd>The profile Contact has the same update restrictions as Contacts in general,
+     * but requires the android.permission.WRITE_PROFILE permission.</dd>
+     * <dt><b>Delete</b></dt>
+     * <dd>The profile Contact cannot be explicitly deleted.  It will be removed
+     * automatically if all of its constituent raw contact entries are deleted.</dd>
+     * <dt><b>Query</b></dt>
+     * <dd>
+     * <ul>
+     * <li>The {@link #CONTENT_URI} for profiles behaves in much the same way as
+     * retrieving a contact by ID, except that it will only ever return the user's
+     * profile contact.
+     * </li>
+     * <li>
+     * The profile contact supports all of the same sub-paths as an individual contact
+     * does - the content of the profile contact can be retrieved as entities or
+     * data rows.  Similarly, specific raw contact entries can be retrieved by appending
+     * the desired raw contact ID within the profile.
+     * </li>
+     * </ul>
+     * </dd>
+     * </dl>
+     */
+    public static final class Profile implements BaseColumns, ContactsColumns,
+            ContactOptionsColumns, ContactNameColumns, ContactStatusColumns {
+        /**
+         * This utility class cannot be instantiated
+         */
+        private Profile() {
+        }
+
+        /**
+         * The content:// style URI for this table, which requests the contact entry
+         * representing the user's personal profile data.
+         */
+        public static final Uri CONTENT_URI = Uri.withAppendedPath(AUTHORITY_URI, "profile");
+
+        /**
+         * {@link Uri} for referencing the user's profile {@link Contacts} entry,
+         * Provides {@link OpenableColumns} columns when queried, or returns the
+         * user's profile contact formatted as a vCard when opened through
+         * {@link ContentResolver#openAssetFileDescriptor(Uri, String)}.
+         */
+        public static final Uri CONTENT_VCARD_URI = Uri.withAppendedPath(CONTENT_URI,
+                "as_vcard");
+
+        /**
+         * {@link Uri} for referencing the raw contacts that make up the user's profile
+         * {@link Contacts} entry.  An individual raw contact entry within the profile
+         * can be addressed by appending the raw contact ID.  The entities or data within
+         * that specific raw contact can be requested by appending the entity or data
+         * path as well.
+         */
+        public static final Uri CONTENT_RAW_CONTACTS_URI = Uri.withAppendedPath(CONTENT_URI,
+                "raw_contacts");
+
+        /**
+         * The minimum ID for any entity that belongs to the profile.  This essentially
+         * defines an ID-space in which profile data is stored, and is used by the provider
+         * to determine whether a request via a non-profile-specific URI should be directed
+         * to the profile data rather than general contacts data, along with all the special
+         * permission checks that entails.
+         *
+         * Callers may use {@link #isProfileId} to check whether a specific ID falls into
+         * the set of data intended for the profile.
+         */
+        public static final long MIN_ID = Long.MAX_VALUE - (long) Integer.MAX_VALUE;
+    }
+
+    /**
+     * This method can be used to identify whether the given ID is associated with profile
+     * data.  It does not necessarily indicate that the ID is tied to valid data, merely
+     * that accessing data using this ID will result in profile access checks and will only
+     * return data from the profile.
+     *
+     * @param id The ID to check.
+     * @return Whether the ID is associated with profile data.
+     */
+    public static boolean isProfileId(long id) {
+        return id >= Profile.MIN_ID;
     }
 
     protected interface RawContactsColumns {
@@ -1193,13 +2107,26 @@ public final class ContactsContract {
         public static final String CONTACT_ID = "contact_id";
 
         /**
-         * Flag indicating that this {@link RawContacts} entry and its children have
-         * been restricted to specific platform apps.
-         * <P>Type: INTEGER (boolean)</P>
+         * The data set within the account that this row belongs to.  This allows
+         * multiple sync adapters for the same account type to distinguish between
+         * each others' data.
          *
-         * @hide until finalized in future platform release
+         * This is empty by default, and is completely optional.  It only needs to
+         * be populated if multiple sync adapters are entering distinct data for
+         * the same account type and account name.
+         * <P>Type: TEXT</P>
          */
-        public static final String IS_RESTRICTED = "is_restricted";
+        public static final String DATA_SET = "data_set";
+
+        /**
+         * A concatenation of the account type and data set (delimited by a forward
+         * slash) - if the data set is empty, this will be the same as the account
+         * type.  For applications that need to be aware of the data set, this can
+         * be used instead of account type to distinguish sets of data.  This is
+         * never intended to be used for specifying accounts.
+         * @hide
+         */
+        public static final String ACCOUNT_TYPE_AND_DATA_SET = "account_type_and_data_set";
 
         /**
          * The aggregation mode for this contact.
@@ -1245,6 +2172,19 @@ public final class ContactsContract {
          * @hide
          */
         public static final String NAME_VERIFIED = "name_verified";
+
+        /**
+         * The "read-only" flag: "0" by default, "1" if the row cannot be modified or
+         * deleted except by a sync adapter.  See {@link ContactsContract#CALLER_IS_SYNCADAPTER}.
+         * <P>Type: INTEGER</P>
+         */
+        public static final String RAW_CONTACT_IS_READ_ONLY = "raw_contact_is_read_only";
+
+        /**
+         * Flag that reflects whether this raw contact belongs to the user's
+         * personal profile entry.
+         */
+        public static final String RAW_CONTACT_IS_USER_PROFILE = "raw_contact_is_user_profile";
     }
 
     /**
@@ -1304,7 +2244,8 @@ public final class ContactsContract {
      * constituent data rows in a single database transaction
      * and causes at most one aggregation pass.
      * <pre>
-     * ArrayList&lt;ContentProviderOperation&gt; ops = Lists.newArrayList();
+     * ArrayList&lt;ContentProviderOperation&gt; ops =
+     *          new ArrayList&lt;ContentProviderOperation&gt;();
      * ...
      * int rawContactInsertIndex = ops.size();
      * ops.add(ContentProviderOperation.newInsert(RawContacts.CONTENT_URI)
@@ -1509,8 +2450,8 @@ public final class ContactsContract {
      * <td>The name of the account instance to which this row belongs, which when paired with
      * {@link #ACCOUNT_TYPE} identifies a specific account.
      * For example, this will be the Gmail address if it is a Google account.
-     * It should be set at the time
-     * the raw contact is inserted and never changed afterwards.</td>
+     * It should be set at the time the raw contact is inserted and never
+     * changed afterwards.</td>
      * </tr>
      * <tr>
      * <td>String</td>
@@ -1520,12 +2461,35 @@ public final class ContactsContract {
      * <p>
      * The type of account to which this row belongs, which when paired with
      * {@link #ACCOUNT_NAME} identifies a specific account.
-     * It should be set at the time
-     * the raw contact is inserted and never changed afterwards.
+     * It should be set at the time the raw contact is inserted and never
+     * changed afterwards.
      * </p>
      * <p>
      * To ensure uniqueness, new account types should be chosen according to the
      * Java package naming convention.  Thus a Google account is of type "com.google".
+     * </p>
+     * </td>
+     * </tr>
+     * <tr>
+     * <td>String</td>
+     * <td>{@link #DATA_SET}</td>
+     * <td>read/write-once</td>
+     * <td>
+     * <p>
+     * The data set within the account that this row belongs to.  This allows
+     * multiple sync adapters for the same account type to distinguish between
+     * each others' data.  The combination of {@link #ACCOUNT_TYPE},
+     * {@link #ACCOUNT_NAME}, and {@link #DATA_SET} identifies a set of data
+     * that is associated with a single sync adapter.
+     * </p>
+     * <p>
+     * This is empty by default, and is completely optional.  It only needs to
+     * be populated if multiple sync adapters are entering distinct data for
+     * the same account type and account name.
+     * </p>
+     * <p>
+     * It should be set at the time the raw contact is inserted and never
+     * changed afterwards.
      * </p>
      * </td>
      * </tr>
@@ -1536,10 +2500,10 @@ public final class ContactsContract {
      * <td>String that uniquely identifies this row to its source account.
      * Typically it is set at the time the raw contact is inserted and never
      * changed afterwards. The one notable exception is a new raw contact: it
-     * will have an account name and type, but no source id. This
-     * indicates to the sync adapter that a new contact needs to be created
-     * server-side and its ID stored in the corresponding SOURCE_ID field on
-     * the phone.
+     * will have an account name and type (and possibly a data set), but no
+     * source id. This indicates to the sync adapter that a new contact needs
+     * to be created server-side and its ID stored in the corresponding
+     * SOURCE_ID field on the phone.
      * </td>
      * </tr>
      * <tr>
@@ -1630,10 +2594,10 @@ public final class ContactsContract {
         public static final int AGGREGATION_MODE_DEFAULT = 0;
 
         /**
-         * Do not use.
-         *
-         * TODO: deprecate in favor of {@link #AGGREGATION_MODE_DEFAULT}
+         * Aggregation mode: aggregate at the time the raw contact is inserted/updated.
+         * @deprecated Aggregation is synchronous, this historic value is a no-op
          */
+        @Deprecated
         public static final int AGGREGATION_MODE_IMMEDIATE = 1;
 
         /**
@@ -1701,9 +2665,7 @@ public final class ContactsContract {
         /**
          * A sub-directory of a single raw contact that contains all of its
          * {@link ContactsContract.Data} rows. To access this directory
-         * append {@link Data#CONTENT_DIRECTORY} to the contact URI.
-         *
-         * TODO: deprecate in favor of {@link RawContacts.Entity}.
+         * append {@link Data#CONTENT_DIRECTORY} to the raw contact URI.
          */
         public static final class Data implements BaseColumns, DataColumns {
             /**
@@ -1722,7 +2684,7 @@ public final class ContactsContract {
          * <p>
          * A sub-directory of a single raw contact that contains all of its
          * {@link ContactsContract.Data} rows. To access this directory append
-         * {@link #CONTENT_DIRECTORY} to the contact URI. See
+         * {@link RawContacts.Entity#CONTENT_DIRECTORY} to the raw contact URI. See
          * {@link RawContactsEntity} for a stand-alone table containing the same
          * data.
          * </p>
@@ -1734,10 +2696,10 @@ public final class ContactsContract {
          * null.
          * </p>
          * <p>
-         * Entity reads all
-         * data for a raw contact in one transaction, to guarantee
-         * consistency.
-         * </p>
+         * Using Entity should be preferred to using two separate queries:
+         * RawContacts followed by Data. The reason is that Entity reads all
+         * data for a raw contact in one transaction, so there is no possibility
+         * of the data changing between the two queries.
          */
         public static final class Entity implements BaseColumns, DataColumns {
             /**
@@ -1752,11 +2714,91 @@ public final class ContactsContract {
             public static final String CONTENT_DIRECTORY = "entity";
 
             /**
-             * The ID of the data column. The value will be null if this raw contact has no
+             * The ID of the data row. The value will be null if this raw contact has no
              * data rows.
              * <P>Type: INTEGER</P>
              */
             public static final String DATA_ID = "data_id";
+        }
+
+        /**
+         * <p>
+         * A sub-directory of a single raw contact that contains all of its
+         * {@link ContactsContract.StreamItems} rows. To access this directory append
+         * {@link RawContacts.StreamItems#CONTENT_DIRECTORY} to the raw contact URI. See
+         * {@link ContactsContract.StreamItems} for a stand-alone table containing the
+         * same data.
+         * </p>
+         * <p>
+         * Access to the social stream through this sub-directory requires additional permissions
+         * beyond the read/write contact permissions required by the provider.  Querying for
+         * social stream data requires android.permission.READ_SOCIAL_STREAM permission, and
+         * inserting or updating social stream items requires android.permission.WRITE_SOCIAL_STREAM
+         * permission.
+         * </p>
+         * @hide
+         */
+        public static final class StreamItems implements BaseColumns, StreamItemsColumns {
+            /**
+             * No public constructor since this is a utility class
+             */
+            private StreamItems() {
+            }
+
+            /**
+             * The directory twig for this sub-table
+             */
+            public static final String CONTENT_DIRECTORY = "stream_items";
+        }
+
+        /**
+         * <p>
+         * A sub-directory of a single raw contact that represents its primary
+         * display photo.  To access this directory append
+         * {@link RawContacts.DisplayPhoto#CONTENT_DIRECTORY} to the raw contact URI.
+         * The resulting URI represents an image file, and should be interacted with
+         * using ContentResolver.openAssetFileDescriptor.
+         * <p>
+         * <p>
+         * Note that this sub-directory also supports opening the photo as an asset file
+         * in write mode.  Callers can create or replace the primary photo associated
+         * with this raw contact by opening the asset file and writing the full-size
+         * photo contents into it.  When the file is closed, the image will be parsed,
+         * sized down if necessary for the full-size display photo and thumbnail
+         * dimensions, and stored.
+         * </p>
+         * <p>
+         * Usage example:
+         * <pre>
+         * public void writeDisplayPhoto(long rawContactId, byte[] photo) {
+         *     Uri rawContactPhotoUri = Uri.withAppendedPath(
+         *             ContentUris.withAppendedId(RawContacts.CONTENT_URI, rawContactId),
+         *             RawContacts.DisplayPhoto.CONTENT_DIRECTORY);
+         *     try {
+         *         AssetFileDescriptor fd =
+         *             getContentResolver().openAssetFileDescriptor(rawContactPhotoUri, "rw");
+         *         OutputStream os = fd.createOutputStream();
+         *         os.write(photo);
+         *         os.close();
+         *         fd.close();
+         *     } catch (IOException e) {
+         *         // Handle error cases.
+         *     }
+         * }
+         * </pre>
+         * </p>
+         */
+        public static final class DisplayPhoto {
+            /**
+             * No public constructor since this is a utility class
+             */
+            private DisplayPhoto() {
+            }
+
+            /**
+             * The directory twig for this sub-table
+             */
+            public static final String CONTENT_DIRECTORY = "display_photo";
         }
 
         /**
@@ -1804,6 +2846,7 @@ public final class ContactsContract {
                 ContentValues cv = new ContentValues();
                 DatabaseUtils.cursorStringToContentValuesIfPresent(cursor, cv, ACCOUNT_NAME);
                 DatabaseUtils.cursorStringToContentValuesIfPresent(cursor, cv, ACCOUNT_TYPE);
+                DatabaseUtils.cursorStringToContentValuesIfPresent(cursor, cv, DATA_SET);
                 DatabaseUtils.cursorLongToContentValuesIfPresent(cursor, cv, _ID);
                 DatabaseUtils.cursorLongToContentValuesIfPresent(cursor, cv, DIRTY);
                 DatabaseUtils.cursorLongToContentValuesIfPresent(cursor, cv, VERSION);
@@ -1815,7 +2858,6 @@ public final class ContactsContract {
                 DatabaseUtils.cursorLongToContentValuesIfPresent(cursor, cv, DELETED);
                 DatabaseUtils.cursorLongToContentValuesIfPresent(cursor, cv, CONTACT_ID);
                 DatabaseUtils.cursorLongToContentValuesIfPresent(cursor, cv, STARRED);
-                DatabaseUtils.cursorIntToContentValuesIfPresent(cursor, cv, IS_RESTRICTED);
                 DatabaseUtils.cursorIntToContentValuesIfPresent(cursor, cv, NAME_VERIFIED);
                 android.content.Entity contact = new android.content.Entity(cv);
 
@@ -1840,28 +2882,21 @@ public final class ContactsContract {
                             Data.DATA_VERSION);
                     for (String key : DATA_KEYS) {
                         final int columnIndex = cursor.getColumnIndexOrThrow(key);
-                        if (cursor.isNull(columnIndex)) {
-                            // don't put anything
-                        } else {
-                            try {
+                        switch (cursor.getType(columnIndex)) {
+                            case Cursor.FIELD_TYPE_NULL:
+                                // don't put anything
+                                break;
+                            case Cursor.FIELD_TYPE_INTEGER:
+                            case Cursor.FIELD_TYPE_FLOAT:
+                            case Cursor.FIELD_TYPE_STRING:
                                 cv.put(key, cursor.getString(columnIndex));
-                            } catch (SQLiteException e) {
+                                break;
+                            case Cursor.FIELD_TYPE_BLOB:
                                 cv.put(key, cursor.getBlob(columnIndex));
-                            }
+                                break;
+                            default:
+                                throw new IllegalStateException("Invalid or unhandled data type");
                         }
-                        // TODO: go back to this version of the code when bug
-                        // http://b/issue?id=2306370 is fixed.
-//                        if (cursor.isNull(columnIndex)) {
-//                            // don't put anything
-//                        } else if (cursor.isLong(columnIndex)) {
-//                            values.put(key, cursor.getLong(columnIndex));
-//                        } else if (cursor.isFloat(columnIndex)) {
-//                            values.put(key, cursor.getFloat(columnIndex));
-//                        } else if (cursor.isString(columnIndex)) {
-//                            values.put(key, cursor.getString(columnIndex));
-//                        } else if (cursor.isBlob(columnIndex)) {
-//                            values.put(key, cursor.getBlob(columnIndex));
-//                        }
                     }
                     contact.addSubValue(ContactsContract.Data.CONTENT_URI, cv);
                 } while (cursor.moveToNext());
@@ -1941,7 +2976,7 @@ public final class ContactsContract {
 
         /**
          * The package containing resources for this status: label and icon.
-         * <p>Type: NUMBER</p>
+         * <p>Type: TEXT</p>
          */
         public static final String STATUS_RES_PACKAGE = "status_res_package";
 
@@ -1962,29 +2997,657 @@ public final class ContactsContract {
         /**
          * Contact's audio/video chat capability level.
          * <P>Type: INTEGER (one of the values below)</P>
-         * @hide
          */
         public static final String CHAT_CAPABILITY = "chat_capability";
 
         /**
-         * An allowed value of {@link #CHAT_CAPABILITY}. Indicates that the contact's device can
+         * An allowed flag of {@link #CHAT_CAPABILITY}. Indicates audio-chat capability (microphone
+         * and speaker)
+         */
+        public static final int CAPABILITY_HAS_VOICE = 1;
+
+        /**
+         * An allowed flag of {@link #CHAT_CAPABILITY}. Indicates that the contact's device can
          * display a video feed.
-         * @hide
          */
-        public static final int CAPABILITY_HAS_VIDEO_PLAYBACK_ONLY = 1;
+        public static final int CAPABILITY_HAS_VIDEO = 2;
 
         /**
-         * An allowed value of {@link #CHAT_CAPABILITY}. Indicates audio-chat capability.
-         * @hide
-         */
-        public static final int CAPABILITY_HAS_VOICE = 2;
-
-        /**
-         * An allowed value of {@link #CHAT_CAPABILITY}. Indicates that the contact's device has a
+         * An allowed flag of {@link #CHAT_CAPABILITY}. Indicates that the contact's device has a
          * camera that can be used for video chat (e.g. a front-facing camera on a phone).
-         * @hide
          */
         public static final int CAPABILITY_HAS_CAMERA = 4;
+    }
+
+    /**
+     * <p>
+     * Constants for the stream_items table, which contains social stream updates from
+     * the user's contact list.
+     * </p>
+     * <p>
+     * Only a certain number of stream items will ever be stored under a given raw contact.
+     * Users of this API can query {@link ContactsContract.StreamItems#CONTENT_LIMIT_URI} to
+     * determine this limit, and should restrict the number of items inserted in any given
+     * transaction correspondingly.  Insertion of more items beyond the limit will
+     * automatically lead to deletion of the oldest items, by {@link StreamItems#TIMESTAMP}.
+     * </p>
+     * <p>
+     * Access to the social stream through these URIs requires additional permissions beyond the
+     * read/write contact permissions required by the provider.  Querying for social stream data
+     * requires android.permission.READ_SOCIAL_STREAM permission, and inserting or updating social
+     * stream items requires android.permission.WRITE_SOCIAL_STREAM permission.
+     * </p>
+     * <h3>Operations</h3>
+     * <dl>
+     * <dt><b>Insert</b></dt>
+     * <dd>
+     * <p>Social stream updates are always associated with a raw contact.  There are a couple
+     * of ways to insert these entries.
+     * <dl>
+     * <dt>Via the {@link RawContacts.StreamItems#CONTENT_DIRECTORY} sub-path of a raw contact:</dt>
+     * <dd>
+     * <pre>
+     * ContentValues values = new ContentValues();
+     * values.put(StreamItems.TEXT, "Breakfasted at Tiffanys");
+     * values.put(StreamItems.TIMESTAMP, timestamp);
+     * values.put(StreamItems.COMMENTS, "3 people reshared this");
+     * Uri streamItemUri = getContentResolver().insert(
+     *     Uri.withAppendedPath(ContentUris.withAppendedId(RawContacts.CONTENT_URI, rawContactId),
+     *         RawContacts.StreamItems.CONTENT_DIRECTORY), values);
+     * long streamItemId = ContentUris.parseId(streamItemUri);
+     * </pre>
+     * </dd>
+     * <dt>Via {@link StreamItems#CONTENT_URI}:</dt>
+     * <dd>
+     *<pre>
+     * ContentValues values = new ContentValues();
+     * values.put(StreamItems.RAW_CONTACT_ID, rawContactId);
+     * values.put(StreamItems.TEXT, "Breakfasted at Tiffanys");
+     * values.put(StreamItems.TIMESTAMP, timestamp);
+     * values.put(StreamItems.COMMENTS, "3 people reshared this");
+     * Uri streamItemUri = getContentResolver().insert(StreamItems.CONTENT_URI, values);
+     * long streamItemId = ContentUris.parseId(streamItemUri);
+     *</pre>
+     * </dd>
+     * </dl>
+     * </dd>
+     * </p>
+     * <p>
+     * Once a {@link StreamItems} entry has been inserted, photos associated with that
+     * social update can be inserted.  For example, after one of the insertions above,
+     * photos could be added to the stream item in one of the following ways:
+     * <dl>
+     * <dt>Via a URI including the stream item ID:</dt>
+     * <dd>
+     * <pre>
+     * values.clear();
+     * values.put(StreamItemPhotos.SORT_INDEX, 1);
+     * values.put(StreamItemPhotos.PHOTO, photoData);
+     * getContentResolver().insert(Uri.withAppendedPath(
+     *     ContentUris.withAppendedId(StreamItems.CONTENT_URI, streamItemId),
+     *     StreamItems.StreamItemPhotos.CONTENT_DIRECTORY), values);
+     * </pre>
+     * </dd>
+     * <dt>Via {@link ContactsContract.StreamItems#CONTENT_PHOTO_URI}:</dt>
+     * <dd>
+     * <pre>
+     * values.clear();
+     * values.put(StreamItemPhotos.STREAM_ITEM_ID, streamItemId);
+     * values.put(StreamItemPhotos.SORT_INDEX, 1);
+     * values.put(StreamItemPhotos.PHOTO, photoData);
+     * getContentResolver().insert(StreamItems.CONTENT_PHOTO_URI, values);
+     * </pre>
+     * <p>Note that this latter form allows the insertion of a stream item and its
+     * photos in a single transaction, by using {@link ContentProviderOperation} with
+     * back references to populate the stream item ID in the {@link ContentValues}.
+     * </dd>
+     * </dl>
+     * </p>
+     * </dd>
+     * <dt><b>Update</b></dt>
+     * <dd>Updates can be performed by appending the stream item ID to the
+     * {@link StreamItems#CONTENT_URI} URI.  Only social stream entries that were
+     * created by the calling package can be updated.</dd>
+     * <dt><b>Delete</b></dt>
+     * <dd>Deletes can be performed by appending the stream item ID to the
+     * {@link StreamItems#CONTENT_URI} URI.  Only social stream entries that were
+     * created by the calling package can be deleted.</dd>
+     * <dt><b>Query</b></dt>
+     * <dl>
+     * <dt>Finding all social stream updates for a given contact</dt>
+     * <dd>By Contact ID:
+     * <pre>
+     * Cursor c = getContentResolver().query(Uri.withAppendedPath(
+     *          ContentUris.withAppendedId(Contacts.CONTENT_URI, contactId),
+     *          Contacts.StreamItems.CONTENT_DIRECTORY),
+     *          null, null, null, null);
+     * </pre>
+     * </dd>
+     * <dd>By lookup key:
+     * <pre>
+     * Cursor c = getContentResolver().query(Contacts.CONTENT_URI.buildUpon()
+     *          .appendPath(lookupKey)
+     *          .appendPath(Contacts.StreamItems.CONTENT_DIRECTORY).build(),
+     *          null, null, null, null);
+     * </pre>
+     * </dd>
+     * <dt>Finding all social stream updates for a given raw contact</dt>
+     * <dd>
+     * <pre>
+     * Cursor c = getContentResolver().query(Uri.withAppendedPath(
+     *          ContentUris.withAppendedId(RawContacts.CONTENT_URI, rawContactId),
+     *          RawContacts.StreamItems.CONTENT_DIRECTORY)),
+     *          null, null, null, null);
+     * </pre>
+     * </dd>
+     * <dt>Querying for a specific stream item by ID</dt>
+     * <dd>
+     * <pre>
+     * Cursor c = getContentResolver().query(ContentUris.withAppendedId(
+     *          StreamItems.CONTENT_URI, streamItemId),
+     *          null, null, null, null);
+     * </pre>
+     * </dd>
+     * </dl>
+     * @hide
+     */
+    public static final class StreamItems implements BaseColumns, StreamItemsColumns {
+        /**
+         * This utility class cannot be instantiated
+         */
+        private StreamItems() {
+        }
+
+        /**
+         * The content:// style URI for this table, which handles social network stream
+         * updates for the user's contacts.
+         */
+        public static final Uri CONTENT_URI = Uri.withAppendedPath(AUTHORITY_URI, "stream_items");
+
+        /**
+         * <p>
+         * A content:// style URI for the photos stored in a sub-table underneath
+         * stream items.  This is only used for inserts, and updates - queries and deletes
+         * for photos should be performed by appending
+         * {@link StreamItems.StreamItemPhotos#CONTENT_DIRECTORY} path to URIs for a
+         * specific stream item.
+         * </p>
+         * <p>
+         * When using this URI, the stream item ID for the photo(s) must be identified
+         * in the {@link ContentValues} passed in.
+         * </p>
+         */
+        public static final Uri CONTENT_PHOTO_URI = Uri.withAppendedPath(CONTENT_URI, "photo");
+
+        /**
+         * This URI allows the caller to query for the maximum number of stream items
+         * that will be stored under any single raw contact.
+         */
+        public static final Uri CONTENT_LIMIT_URI =
+                Uri.withAppendedPath(AUTHORITY_URI, "stream_items_limit");
+
+        /**
+         * The MIME type of a directory of stream items.
+         */
+        public static final String CONTENT_TYPE = "vnd.android.cursor.dir/stream_item";
+
+        /**
+         * The MIME type of a single stream item.
+         */
+        public static final String CONTENT_ITEM_TYPE = "vnd.android.cursor.item/stream_item";
+
+        /**
+         * Queries to {@link ContactsContract.StreamItems#CONTENT_LIMIT_URI} will
+         * contain this column, with the value indicating the maximum number of
+         * stream items that will be stored under any single raw contact.
+         */
+        public static final String MAX_ITEMS = "max_items";
+
+        /**
+         * <p>
+         * A sub-directory of a single stream item entry that contains all of its
+         * photo rows. To access this
+         * directory append {@link StreamItems.StreamItemPhotos#CONTENT_DIRECTORY} to
+         * an individual stream item URI.
+         * </p>
+         * <p>
+         * Access to social stream photos requires additional permissions beyond the read/write
+         * contact permissions required by the provider.  Querying for social stream photos
+         * requires android.permission.READ_SOCIAL_STREAM permission, and inserting or updating
+         * social stream photos requires android.permission.WRITE_SOCIAL_STREAM permission.
+         * </p>
+         */
+        public static final class StreamItemPhotos
+                implements BaseColumns, StreamItemPhotosColumns {
+            /**
+             * No public constructor since this is a utility class
+             */
+            private StreamItemPhotos() {
+            }
+
+            /**
+             * The directory twig for this sub-table
+             */
+            public static final String CONTENT_DIRECTORY = "photo";
+
+            /**
+             * The MIME type of a directory of stream item photos.
+             */
+            public static final String CONTENT_TYPE = "vnd.android.cursor.dir/stream_item_photo";
+
+            /**
+             * The MIME type of a single stream item photo.
+             */
+            public static final String CONTENT_ITEM_TYPE
+                    = "vnd.android.cursor.item/stream_item_photo";
+        }
+    }
+
+    /**
+     * Columns in the StreamItems table.
+     *
+     * @see ContactsContract.StreamItems
+     * @hide
+     */
+    protected interface StreamItemsColumns {
+        /**
+         * A reference to the {@link android.provider.ContactsContract.Contacts#_ID}
+         * that this stream item belongs to.
+         *
+         * <p>Type: INTEGER</p>
+         * <p>read-only</p>
+         */
+        public static final String CONTACT_ID = "contact_id";
+
+        /**
+         * A reference to the {@link android.provider.ContactsContract.Contacts#LOOKUP_KEY}
+         * that this stream item belongs to.
+         *
+         * <p>Type: TEXT</p>
+         * <p>read-only</p>
+         */
+        public static final String CONTACT_LOOKUP_KEY = "contact_lookup";
+
+        /**
+         * A reference to the {@link RawContacts#_ID}
+         * that this stream item belongs to.
+         * <p>Type: INTEGER</p>
+         */
+        public static final String RAW_CONTACT_ID = "raw_contact_id";
+
+        /**
+         * The package name to use when creating {@link Resources} objects for
+         * this stream item. This value is only designed for use when building
+         * user interfaces, and should not be used to infer the owner.
+         * <P>Type: TEXT</P>
+         */
+        public static final String RES_PACKAGE = "res_package";
+
+        /**
+         * The account type to which the raw_contact of this item is associated. See
+         * {@link RawContacts#ACCOUNT_TYPE}
+         *
+         * <p>Type: TEXT</p>
+         * <p>read-only</p>
+         */
+        public static final String ACCOUNT_TYPE = "account_type";
+
+        /**
+         * The account name to which the raw_contact of this item is associated. See
+         * {@link RawContacts#ACCOUNT_NAME}
+         *
+         * <p>Type: TEXT</p>
+         * <p>read-only</p>
+         */
+        public static final String ACCOUNT_NAME = "account_name";
+
+        /**
+         * The data set within the account that the raw_contact of this row belongs to. This allows
+         * multiple sync adapters for the same account type to distinguish between
+         * each others' data.
+         * {@link RawContacts#DATA_SET}
+         *
+         * <P>Type: TEXT</P>
+         * <p>read-only</p>
+         */
+        public static final String DATA_SET = "data_set";
+
+        /**
+         * The source_id of the raw_contact that this row belongs to.
+         * {@link RawContacts#SOURCE_ID}
+         *
+         * <P>Type: TEXT</P>
+         * <p>read-only</p>
+         */
+        public static final String RAW_CONTACT_SOURCE_ID = "raw_contact_source_id";
+
+        /**
+         * The resource name of the icon for the source of the stream item.
+         * This resource should be scoped by the {@link #RES_PACKAGE}. As this can only reference
+         * drawables, the "@drawable/" prefix must be omitted.
+         * <P>Type: TEXT</P>
+         */
+        public static final String RES_ICON = "icon";
+
+        /**
+         * The resource name of the label describing the source of the status update, e.g. "Google
+         * Talk". This resource should be scoped by the {@link #RES_PACKAGE}. As this can only
+         * reference strings, the "@string/" prefix must be omitted.
+         * <p>Type: TEXT</p>
+         */
+        public static final String RES_LABEL = "label";
+
+        /**
+         * <P>
+         * The main textual contents of the item. Typically this is content
+         * that was posted by the source of this stream item, but it can also
+         * be a textual representation of an action (e.g. ”Checked in at Joe's”).
+         * This text is displayed to the user and allows formatting and embedded
+         * resource images via HTML (as parseable via
+         * {@link android.text.Html#fromHtml}).
+         * </P>
+         * <P>
+         * Long content may be truncated and/or ellipsized - the exact behavior
+         * is unspecified, but it should not break tags.
+         * </P>
+         * <P>Type: TEXT</P>
+         */
+        public static final String TEXT = "text";
+
+        /**
+         * The absolute time (milliseconds since epoch) when this stream item was
+         * inserted/updated.
+         * <P>Type: NUMBER</P>
+         */
+        public static final String TIMESTAMP = "timestamp";
+
+        /**
+         * <P>
+         * Summary information about the stream item, for example to indicate how
+         * many people have reshared it, how many have liked it, how many thumbs
+         * up and/or thumbs down it has, what the original source was, etc.
+         * </P>
+         * <P>
+         * This text is displayed to the user and allows simple formatting via
+         * HTML, in the same manner as {@link #TEXT} allows.
+         * </P>
+         * <P>
+         * Long content may be truncated and/or ellipsized - the exact behavior
+         * is unspecified, but it should not break tags.
+         * </P>
+         * <P>Type: TEXT</P>
+         */
+        public static final String COMMENTS = "comments";
+
+        /** Generic column for use by sync adapters. */
+        public static final String SYNC1 = "stream_item_sync1";
+        /** Generic column for use by sync adapters. */
+        public static final String SYNC2 = "stream_item_sync2";
+        /** Generic column for use by sync adapters. */
+        public static final String SYNC3 = "stream_item_sync3";
+        /** Generic column for use by sync adapters. */
+        public static final String SYNC4 = "stream_item_sync4";
+    }
+
+    /**
+     * <p>
+     * Constants for the stream_item_photos table, which contains photos associated with
+     * social stream updates.
+     * </p>
+     * <p>
+     * Access to social stream photos requires additional permissions beyond the read/write
+     * contact permissions required by the provider.  Querying for social stream photos
+     * requires android.permission.READ_SOCIAL_STREAM permission, and inserting or updating
+     * social stream photos requires android.permission.WRITE_SOCIAL_STREAM permission.
+     * </p>
+     * <h3>Operations</h3>
+     * <dl>
+     * <dt><b>Insert</b></dt>
+     * <dd>
+     * <p>Social stream photo entries are associated with a social stream item.  Photos
+     * can be inserted into a social stream item in a couple of ways:
+     * <dl>
+     * <dt>
+     * Via the {@link StreamItems.StreamItemPhotos#CONTENT_DIRECTORY} sub-path of a
+     * stream item:
+     * </dt>
+     * <dd>
+     * <pre>
+     * ContentValues values = new ContentValues();
+     * values.put(StreamItemPhotos.SORT_INDEX, 1);
+     * values.put(StreamItemPhotos.PHOTO, photoData);
+     * Uri photoUri = getContentResolver().insert(Uri.withAppendedPath(
+     *     ContentUris.withAppendedId(StreamItems.CONTENT_URI, streamItemId)
+     *     StreamItems.StreamItemPhotos#CONTENT_DIRECTORY), values);
+     * long photoId = ContentUris.parseId(photoUri);
+     * </pre>
+     * </dd>
+     * <dt>Via the {@link ContactsContract.StreamItems#CONTENT_PHOTO_URI} URI:</dt>
+     * <dd>
+     * <pre>
+     * ContentValues values = new ContentValues();
+     * values.put(StreamItemPhotos.STREAM_ITEM_ID, streamItemId);
+     * values.put(StreamItemPhotos.SORT_INDEX, 1);
+     * values.put(StreamItemPhotos.PHOTO, photoData);
+     * Uri photoUri = getContentResolver().insert(StreamItems.CONTENT_PHOTO_URI, values);
+     * long photoId = ContentUris.parseId(photoUri);
+     * </pre>
+     * </dd>
+     * </dl>
+     * </p>
+     * </dd>
+     * <dt><b>Update</b></dt>
+     * <dd>
+     * <p>Updates can only be made against a specific {@link StreamItemPhotos} entry,
+     * identified by both the stream item ID it belongs to and the stream item photo ID.
+     * This can be specified in two ways.
+     * <dl>
+     * <dt>Via the {@link StreamItems.StreamItemPhotos#CONTENT_DIRECTORY} sub-path of a
+     * stream item:
+     * </dt>
+     * <dd>
+     * <pre>
+     * ContentValues values = new ContentValues();
+     * values.put(StreamItemPhotos.PHOTO, newPhotoData);
+     * getContentResolver().update(
+     *     ContentUris.withAppendedId(
+     *         Uri.withAppendedPath(
+     *             ContentUris.withAppendedId(StreamItems.CONTENT_URI, streamItemId)
+     *             StreamItems.StreamItemPhotos#CONTENT_DIRECTORY),
+     *         streamItemPhotoId), values, null, null);
+     * </pre>
+     * </dd>
+     * <dt>Via the {@link ContactsContract.StreamItems#CONTENT_PHOTO_URI} URI:</dt>
+     * <dd>
+     * <pre>
+     * ContentValues values = new ContentValues();
+     * values.put(StreamItemPhotos.STREAM_ITEM_ID, streamItemId);
+     * values.put(StreamItemPhotos.PHOTO, newPhotoData);
+     * getContentResolver().update(StreamItems.CONTENT_PHOTO_URI, values);
+     * </pre>
+     * </dd>
+     * </dl>
+     * </p>
+     * </dd>
+     * <dt><b>Delete</b></dt>
+     * <dd>Deletes can be made against either a specific photo item in a stream item, or
+     * against all or a selected subset of photo items under a stream item.
+     * For example:
+     * <dl>
+     * <dt>Deleting a single photo via the
+     * {@link StreamItems.StreamItemPhotos#CONTENT_DIRECTORY} sub-path of a stream item:
+     * </dt>
+     * <dd>
+     * <pre>
+     * getContentResolver().delete(
+     *     ContentUris.withAppendedId(
+     *         Uri.withAppendedPath(
+     *             ContentUris.withAppendedId(StreamItems.CONTENT_URI, streamItemId)
+     *             StreamItems.StreamItemPhotos#CONTENT_DIRECTORY),
+     *         streamItemPhotoId), null, null);
+     * </pre>
+     * </dd>
+     * <dt>Deleting all photos under a stream item</dt>
+     * <dd>
+     * <pre>
+     * getContentResolver().delete(
+     *     Uri.withAppendedPath(
+     *         ContentUris.withAppendedId(StreamItems.CONTENT_URI, streamItemId)
+     *         StreamItems.StreamItemPhotos#CONTENT_DIRECTORY), null, null);
+     * </pre>
+     * </dd>
+     * </dl>
+     * </dd>
+     * <dt><b>Query</b></dt>
+     * <dl>
+     * <dt>Querying for a specific photo in a stream item</dt>
+     * <dd>
+     * <pre>
+     * Cursor c = getContentResolver().query(
+     *     ContentUris.withAppendedId(
+     *         Uri.withAppendedPath(
+     *             ContentUris.withAppendedId(StreamItems.CONTENT_URI, streamItemId)
+     *             StreamItems.StreamItemPhotos#CONTENT_DIRECTORY),
+     *         streamItemPhotoId), null, null, null, null);
+     * </pre>
+     * </dd>
+     * <dt>Querying for all photos in a stream item</dt>
+     * <dd>
+     * <pre>
+     * Cursor c = getContentResolver().query(
+     *     Uri.withAppendedPath(
+     *         ContentUris.withAppendedId(StreamItems.CONTENT_URI, streamItemId)
+     *         StreamItems.StreamItemPhotos#CONTENT_DIRECTORY),
+     *     null, null, null, StreamItemPhotos.SORT_INDEX);
+     * </pre>
+     * </dl>
+     * The record will contain both a {@link StreamItemPhotos#PHOTO_FILE_ID} and a
+     * {@link StreamItemPhotos#PHOTO_URI}.  The {@link StreamItemPhotos#PHOTO_FILE_ID}
+     * can be used in conjunction with the {@link ContactsContract.DisplayPhoto} API to
+     * retrieve photo content, or you can open the {@link StreamItemPhotos#PHOTO_URI} as
+     * an asset file, as follows:
+     * <pre>
+     * public InputStream openDisplayPhoto(String photoUri) {
+     *     try {
+     *         AssetFileDescriptor fd = getContentResolver().openAssetFileDescriptor(photoUri, "r");
+     *         return fd.createInputStream();
+     *     } catch (IOException e) {
+     *         return null;
+     *     }
+     * }
+     * <pre>
+     * </dd>
+     * </dl>
+     * @hide
+     */
+    public static final class StreamItemPhotos implements BaseColumns, StreamItemPhotosColumns {
+        /**
+         * No public constructor since this is a utility class
+         */
+        private StreamItemPhotos() {
+        }
+
+        /**
+         * <p>
+         * The binary representation of the photo.  Any size photo can be inserted;
+         * the provider will resize it appropriately for storage and display.
+         * </p>
+         * <p>
+         * This is only intended for use when inserting or updating a stream item photo.
+         * To retrieve the photo that was stored, open {@link StreamItemPhotos#PHOTO_URI}
+         * as an asset file.
+         * </p>
+         * <P>Type: BLOB</P>
+         */
+        public static final String PHOTO = "photo";
+    }
+
+    /**
+     * Columns in the StreamItemPhotos table.
+     *
+     * @see ContactsContract.StreamItemPhotos
+     * @hide
+     */
+    protected interface StreamItemPhotosColumns {
+        /**
+         * A reference to the {@link StreamItems#_ID} this photo is associated with.
+         * <P>Type: NUMBER</P>
+         */
+        public static final String STREAM_ITEM_ID = "stream_item_id";
+
+        /**
+         * An integer to use for sort order for photos in the stream item.  If not
+         * specified, the {@link StreamItemPhotos#_ID} will be used for sorting.
+         * <P>Type: NUMBER</P>
+         */
+        public static final String SORT_INDEX = "sort_index";
+
+        /**
+         * Photo file ID for the photo.
+         * See {@link ContactsContract.DisplayPhoto}.
+         * <P>Type: NUMBER</P>
+         */
+        public static final String PHOTO_FILE_ID = "photo_file_id";
+
+        /**
+         * URI for retrieving the photo content, automatically populated.  Callers
+         * may retrieve the photo content by opening this URI as an asset file.
+         * <P>Type: TEXT</P>
+         */
+        public static final String PHOTO_URI = "photo_uri";
+
+        /** Generic column for use by sync adapters. */
+        public static final String SYNC1 = "stream_item_photo_sync1";
+        /** Generic column for use by sync adapters. */
+        public static final String SYNC2 = "stream_item_photo_sync2";
+        /** Generic column for use by sync adapters. */
+        public static final String SYNC3 = "stream_item_photo_sync3";
+        /** Generic column for use by sync adapters. */
+        public static final String SYNC4 = "stream_item_photo_sync4";
+    }
+
+    /**
+     * <p>
+     * Constants for the photo files table, which tracks metadata for hi-res photos
+     * stored in the file system.
+     * </p>
+     *
+     * @hide
+     */
+    public static final class PhotoFiles implements BaseColumns, PhotoFilesColumns {
+        /**
+         * No public constructor since this is a utility class
+         */
+        private PhotoFiles() {
+        }
+    }
+
+    /**
+     * Columns in the PhotoFiles table.
+     *
+     * @see ContactsContract.PhotoFiles
+     *
+     * @hide
+     */
+    protected interface PhotoFilesColumns {
+
+        /**
+         * The height, in pixels, of the photo this entry is associated with.
+         * <P>Type: NUMBER</P>
+         */
+        public static final String HEIGHT = "height";
+
+        /**
+         * The width, in pixels, of the photo this entry is associated with.
+         * <P>Type: NUMBER</P>
+         */
+        public static final String WIDTH = "width";
+
+        /**
+         * The size, in bytes, of the photo stored on disk.
+         * <P>Type: NUMBER</P>
+         */
+        public static final String FILESIZE = "filesize";
     }
 
     /**
@@ -2026,6 +3689,13 @@ public final class ContactsContract {
          * <P>Type: INTEGER (if set, non-0 means true)</P>
          */
         public static final String IS_SUPER_PRIMARY = "is_super_primary";
+
+        /**
+         * The "read-only" flag: "0" by default, "1" if the row cannot be modified or
+         * deleted except by a sync adapter.  See {@link ContactsContract#CALLER_IS_SYNCADAPTER}.
+         * <P>Type: INTEGER</P>
+         */
+        public static final String IS_READ_ONLY = "is_read_only";
 
         /**
          * The version of this data record. This is a read-only value. The data column is
@@ -2196,7 +3866,9 @@ public final class ContactsContract {
      * <p>
      * The same done using ContentProviderOperations:
      * <pre>
-     * ArrayList&lt;ContentProviderOperation&gt; ops = Lists.newArrayList();
+     * ArrayList&lt;ContentProviderOperation&gt; ops =
+     *          new ArrayList&lt;ContentProviderOperation&gt;();
+     *
      * ops.add(ContentProviderOperation.newInsert(Data.CONTENT_URI)
      *          .withValue(Data.RAW_CONTACT_ID, rawContactId)
      *          .withValue(Data.MIMETYPE, Phone.CONTENT_ITEM_TYPE)
@@ -2213,7 +3885,9 @@ public final class ContactsContract {
      * Just as with insert, update can be done incrementally or as a batch,
      * the batch mode being the preferred method:
      * <pre>
-     * ArrayList&lt;ContentProviderOperation&gt; ops = Lists.newArrayList();
+     * ArrayList&lt;ContentProviderOperation&gt; ops =
+     *          new ArrayList&lt;ContentProviderOperation&gt;();
+     *
      * ops.add(ContentProviderOperation.newUpdate(Data.CONTENT_URI)
      *          .withSelection(Data._ID + "=?", new String[]{String.valueOf(dataId)})
      *          .withValue(Email.DATA, "somebody@android.com")
@@ -2228,7 +3902,9 @@ public final class ContactsContract {
      * Just as with insert and update, deletion can be done either using the
      * {@link ContentResolver#delete} method or using a ContentProviderOperation:
      * <pre>
-     * ArrayList&lt;ContentProviderOperation&gt; ops = Lists.newArrayList();
+     * ArrayList&lt;ContentProviderOperation&gt; ops =
+     *          new ArrayList&lt;ContentProviderOperation&gt;();
+     *
      * ops.add(ContentProviderOperation.newDelete(Data.CONTENT_URI)
      *          .withSelection(Data._ID + "=?", new String[]{String.valueOf(dataId)})
      *          .build());
@@ -2612,27 +4288,6 @@ public final class ContactsContract {
 
         /**
          * <p>
-         * If {@link #FOR_EXPORT_ONLY} is explicitly set to "1", returned Cursor toward
-         * Data.CONTENT_URI contains only exportable data.
-         * </p>
-         * <p>
-         * This flag is useful (currently) only for vCard exporter in Contacts app, which
-         * needs to exclude "un-exportable" data from available data to export, while
-         * Contacts app itself has priviledge to access all data including "un-exportable"
-         * ones and providers return all of them regardless of the callers' intention.
-         * </p>
-         * <p>
-         * Type: INTEGER
-         * </p>
-         *
-         * @hide Maybe available only in Eclair and not really ready for public use.
-         * TODO: remove, or implement this feature completely. As of now (Eclair),
-         * we only use this flag in queryEntities(), not query().
-         */
-        public static final String FOR_EXPORT_ONLY = "for_export_only";
-
-        /**
-         * <p>
          * Build a {@link android.provider.ContactsContract.Contacts#CONTENT_LOOKUP_URI}
          * style {@link Uri} for the parent {@link android.provider.ContactsContract.Contacts}
          * entry of the given {@link ContactsContract.Data} entry.
@@ -2814,6 +4469,12 @@ public final class ContactsContract {
                 Uri.withAppendedPath(AUTHORITY_URI, "raw_contact_entities");
 
         /**
+         * The content:// style URI for this table, specific to the user's profile.
+         */
+        public static final Uri PROFILE_CONTENT_URI =
+                Uri.withAppendedPath(Profile.CONTENT_URI, "raw_contact_entities");
+
+        /**
          * The MIME type of {@link #CONTENT_URI} providing a directory of raw contact entities.
          */
         public static final String CONTENT_TYPE = "vnd.android.cursor.dir/raw_contact_entity";
@@ -2862,6 +4523,14 @@ public final class ContactsContract {
          * <P>Type: TEXT</P>
          */
         public static final String LABEL = "label";
+
+        /**
+         * The phone number's E164 representation.
+         * <P>Type: TEXT</P>
+         *
+         * @hide
+         */
+        public static final String NORMALIZED_NUMBER = "normalized_number";
     }
 
     /**
@@ -2879,12 +4548,6 @@ public final class ContactsContract {
      * <table class="jd-sumtable">
      * <tr>
      * <th colspan='4'>PhoneLookup</th>
-     * </tr>
-     * <tr>
-     * <td>long</td>
-     * <td>{@link #_ID}</td>
-     * <td>read-only</td>
-     * <td>Data row ID.</td>
      * </tr>
      * <tr>
      * <td>String</td>
@@ -2911,6 +4574,12 @@ public final class ContactsContract {
      * <table class="jd-sumtable">
      * <tr>
      * <th colspan='4'>Join with {@link Contacts}</th>
+     * </tr>
+     * <tr>
+     * <td>long</td>
+     * <td>{@link #_ID}</td>
+     * <td>read-only</td>
+     * <td>Contact ID.</td>
      * </tr>
      * <tr>
      * <td>String</td>
@@ -3057,6 +4726,12 @@ public final class ContactsContract {
      * either.
      * </p>
      * <p>
+     * Inserting or updating a status update for the user's profile requires either using
+     * the {@link #DATA_ID} to identify the data row to attach the update to, or
+     * {@link StatusUpdates#PROFILE_CONTENT_URI} to ensure that the change is scoped to the
+     * profile.
+     * </p>
+     * <p>
      * You cannot use {@link ContentResolver#update} to change a status, but
      * {@link ContentResolver#insert} will replace the latests status if it already
      * exists.
@@ -3124,6 +4799,32 @@ public final class ContactsContract {
      * <li>{@link #AVAILABLE}</li>
      * </ul>
      * </p>
+     * <p>
+     * Since presence status is inherently volatile, the content provider
+     * may choose not to store this field in long-term storage.
+     * </p>
+     * </td>
+     * </tr>
+     * <tr>
+     * <td>int</td>
+     * <td>{@link #CHAT_CAPABILITY}</td>
+     * <td>read/write</td>
+     * <td>Contact IM chat compatibility value. The allowed values combinations of the following
+     * flags. If None of these flags is set, the device can only do text messaging.
+     * <p>
+     * <ul>
+     * <li>{@link #CAPABILITY_HAS_VIDEO}</li>
+     * <li>{@link #CAPABILITY_HAS_VOICE}</li>
+     * <li>{@link #CAPABILITY_HAS_CAMERA}</li>
+     * </ul>
+     * </p>
+     * <p>
+     * Since chat compatibility is inherently volatile as the contact's availability moves from
+     * one device to another, the content provider may choose not to store this field in long-term
+     * storage.
+     * </p>
+     * </td>
+     * </tr>
      * <tr>
      * <td>String</td>
      * <td>{@link #STATUS}</td>
@@ -3174,6 +4875,12 @@ public final class ContactsContract {
          * The content:// style URI for this table
          */
         public static final Uri CONTENT_URI = Uri.withAppendedPath(AUTHORITY_URI, "status_updates");
+
+        /**
+         * The content:// style URI for this table, specific to the user's profile.
+         */
+        public static final Uri PROFILE_CONTENT_URI =
+                Uri.withAppendedPath(Profile.CONTENT_URI, "status_updates");
 
         /**
          * Gets the resource ID for the proper presence icon.
@@ -3232,58 +4939,55 @@ public final class ContactsContract {
     }
 
     /**
-     * Additional columns returned by the {@link Contacts#CONTENT_FILTER_URI} providing the
-     * explanation of why the filter matched the contact.  Specifically, they contain the
-     * data type and element that was used for matching.
-     * <p>
-     * This is temporary API, it will need to change when we move to FTS.
+     * Additional column returned by the {@link Contacts#CONTENT_FILTER_URI} providing the
+     * explanation of why the filter matched the contact.  Specifically, it contains the
+     * data elements that matched the query.  The overall number of words in the snippet
+     * can be capped.
      *
      * @hide
      */
     public static class SearchSnippetColumns {
 
         /**
-         * The ID of the data row that was matched by the filter.
+         * The search snippet constructed according to the SQLite rules, see
+         * http://www.sqlite.org/fts3.html#snippet
+         * <p>
+         * The snippet may contain (parts of) several data elements comprising
+         * the contact.
          *
          * @hide
          */
-        public static final String SNIPPET_DATA_ID = "snippet_data_id";
+        public static final String SNIPPET = "snippet";
+
 
         /**
-         * The type of data that was matched by the filter.
+         * Comma-separated parameters for the generation of the snippet:
+         * <ul>
+         * <li>The "start match" text. Default is &lt;b&gt;</li>
+         * <li>The "end match" text. Default is &lt;/b&gt;</li>
+         * <li>The "ellipsis" text. Default is &lt;b&gt;...&lt;/b&gt;</li>
+         * <li>Maximum number of tokens to include in the snippet. Can be either
+         * a positive or a negative number: A positive number indicates how many
+         * tokens can be returned in total. A negative number indicates how many
+         * tokens can be returned per occurrence of the search terms.</li>
+         * </ul>
          *
          * @hide
          */
-        public static final String SNIPPET_MIMETYPE = "snippet_mimetype";
+        public static final String SNIPPET_ARGS_PARAM_KEY = "snippet_args";
 
         /**
-         * The {@link Data#DATA1} field of the data row that was matched by the filter.
+         * A key to ask the provider to defer the snippeting to the client if possible.
+         * Value of 1 implies true, 0 implies false when 0 is the default.
+         * When a cursor is returned to the client, it should check for an extra with the name
+         * {@link ContactsContract#DEFERRED_SNIPPETING} in the cursor. If it exists, the client
+         * should do its own snippeting using {@link ContactsContract#snippetize}. If
+         * it doesn't exist, the snippet column in the cursor should already contain a snippetized
+         * string.
          *
          * @hide
          */
-        public static final String SNIPPET_DATA1 = "snippet_data1";
-
-        /**
-         * The {@link Data#DATA2} field of the data row that was matched by the filter.
-         *
-         * @hide
-         */
-        public static final String SNIPPET_DATA2 = "snippet_data2";
-
-        /**
-         * The {@link Data#DATA3} field of the data row that was matched by the filter.
-         *
-         * @hide
-         */
-        public static final String SNIPPET_DATA3 = "snippet_data3";
-
-        /**
-         * The {@link Data#DATA4} field of the data row that was matched by the filter.
-         *
-         * @hide
-         */
-        public static final String SNIPPET_DATA4 = "snippet_data4";
-
+        public static final String DEFERRED_SNIPPETING_KEY = "deferred_snippeting";
     }
 
     /**
@@ -3487,7 +5191,9 @@ public final class ContactsContract {
          * <p>A data kind representing the contact's nickname. For example, for
          * Bob Parr ("Mr. Incredible"):
          * <pre>
-         * ArrayList&lt;ContentProviderOperation&gt; ops = Lists.newArrayList();
+         * ArrayList&lt;ContentProviderOperation&gt; ops =
+         *          new ArrayList&lt;ContentProviderOperation&gt;();
+         *
          * ops.add(ContentProviderOperation.newInsert(Data.CONTENT_URI)
          *          .withValue(Data.RAW_CONTACT_ID, rawContactId)
          *          .withValue(Data.MIMETYPE, StructuredName.CONTENT_ITEM_TYPE)
@@ -3691,6 +5397,14 @@ public final class ContactsContract {
             public static final String NUMBER = DATA;
 
             /**
+             * The phone number's E164 representation.
+             * <P>Type: TEXT</P>
+             *
+             * @hide
+             */
+            public static final String NORMALIZED_NUMBER = DATA4;
+
+            /**
              * @deprecated use {@link #getTypeLabel(Resources, int, CharSequence)} instead.
              * @hide
              */
@@ -3772,7 +5486,7 @@ public final class ContactsContract {
          * </tr>
          * <tr>
          * <td>String</td>
-         * <td>{@link #DATA}</td>
+         * <td>{@link #ADDRESS}</td>
          * <td>{@link #DATA1}</td>
          * <td>Email address itself.</td>
          * </tr>
@@ -3863,7 +5577,6 @@ public final class ContactsContract {
             /**
              * The email address.
              * <P>Type: TEXT</P>
-             * @hide TODO: Unhide in a separate CL
              */
             public static final String ADDRESS = DATA1;
 
@@ -4543,6 +6256,47 @@ public final class ContactsContract {
              * <P>Type: TEXT</P>
              */
             public static final String NAME = DATA;
+
+            /**
+             * Return the string resource that best describes the given
+             * {@link #TYPE}. Will always return a valid resource.
+             */
+            public static final int getTypeLabelResource(int type) {
+                switch (type) {
+                    case TYPE_ASSISTANT: return com.android.internal.R.string.relationTypeAssistant;
+                    case TYPE_BROTHER: return com.android.internal.R.string.relationTypeBrother;
+                    case TYPE_CHILD: return com.android.internal.R.string.relationTypeChild;
+                    case TYPE_DOMESTIC_PARTNER:
+                            return com.android.internal.R.string.relationTypeDomesticPartner;
+                    case TYPE_FATHER: return com.android.internal.R.string.relationTypeFather;
+                    case TYPE_FRIEND: return com.android.internal.R.string.relationTypeFriend;
+                    case TYPE_MANAGER: return com.android.internal.R.string.relationTypeManager;
+                    case TYPE_MOTHER: return com.android.internal.R.string.relationTypeMother;
+                    case TYPE_PARENT: return com.android.internal.R.string.relationTypeParent;
+                    case TYPE_PARTNER: return com.android.internal.R.string.relationTypePartner;
+                    case TYPE_REFERRED_BY:
+                            return com.android.internal.R.string.relationTypeReferredBy;
+                    case TYPE_RELATIVE: return com.android.internal.R.string.relationTypeRelative;
+                    case TYPE_SISTER: return com.android.internal.R.string.relationTypeSister;
+                    case TYPE_SPOUSE: return com.android.internal.R.string.relationTypeSpouse;
+                    default: return com.android.internal.R.string.orgTypeCustom;
+                }
+            }
+
+            /**
+             * Return a {@link CharSequence} that best describes the given type,
+             * possibly substituting the given {@link #LABEL} value
+             * for {@link #TYPE_CUSTOM}.
+             */
+            public static final CharSequence getTypeLabel(Resources res, int type,
+                    CharSequence label) {
+                if (type == TYPE_CUSTOM && !TextUtils.isEmpty(label)) {
+                    return label;
+                } else {
+                    final int labelRes = getTypeLabelResource(type);
+                    return res.getText(labelRes);
+                }
+            }
         }
 
         /**
@@ -4620,14 +6374,14 @@ public final class ContactsContract {
                         return com.android.internal.R.string.eventTypeAnniversary;
                     case TYPE_BIRTHDAY: return com.android.internal.R.string.eventTypeBirthday;
                     case TYPE_OTHER: return com.android.internal.R.string.eventTypeOther;
-                    default: return com.android.internal.R.string.eventTypeOther;
+                    default: return com.android.internal.R.string.eventTypeCustom;
                 }
             }
         }
 
         /**
          * <p>
-         * A data kind representing an photo for the contact.
+         * A data kind representing a photo for the contact.
          * </p>
          * <p>
          * Some sync adapters will choose to download photos in a separate
@@ -4647,10 +6401,17 @@ public final class ContactsContract {
          * <th>Alias</th><th colspan='2'>Data column</th>
          * </tr>
          * <tr>
+         * <td>NUMBER</td>
+         * <td>{@link #PHOTO_FILE_ID}</td>
+         * <td>{@link #DATA14}</td>
+         * <td>ID of the hi-res photo file.</td>
+         * </tr>
+         * <tr>
          * <td>BLOB</td>
          * <td>{@link #PHOTO}</td>
          * <td>{@link #DATA15}</td>
-         * <td>By convention, binary data is stored in DATA15.</td>
+         * <td>By convention, binary data is stored in DATA15.  The thumbnail of the
+         * photo is stored in this column.</td>
          * </tr>
          * </table>
          */
@@ -4662,6 +6423,14 @@ public final class ContactsContract {
 
             /** MIME type used when storing this in data table. */
             public static final String CONTENT_ITEM_TYPE = "vnd.android.cursor.item/photo";
+
+            /**
+             * Photo file ID for the display photo of the raw contact.
+             * See {@link ContactsContract.DisplayPhoto}.
+             * <p>
+             * Type: NUMBER
+             */
+            public static final String PHOTO_FILE_ID = DATA14;
 
             /**
              * Thumbnail photo of the raw contact. This is the raw bytes of an image
@@ -4936,12 +6705,65 @@ public final class ContactsContract {
                 }
             }
         }
+
+        /**
+         * A data kind representing an Identity related to the contact.
+         * <p>
+         * This can be used as a signal by the aggregator to combine raw contacts into
+         * contacts, e.g. if two contacts have Identity rows with
+         * the same NAMESPACE and IDENTITY values the aggregator can know that they refer
+         * to the same person.
+         * </p>
+         */
+        public static final class Identity implements DataColumnsWithJoins {
+            /**
+             * This utility class cannot be instantiated
+             */
+            private Identity() {}
+
+            /** MIME type used when storing this in data table. */
+            public static final String CONTENT_ITEM_TYPE = "vnd.android.cursor.item/identity";
+
+            /**
+             * The identity string.
+             * <P>Type: TEXT</P>
+             */
+            public static final String IDENTITY = DataColumns.DATA1;
+
+            /**
+             * The namespace of the identity string, e.g. "com.google"
+             * <P>Type: TEXT</P>
+             */
+            public static final String NAMESPACE = DataColumns.DATA2;
+        }
     }
 
     /**
      * @see Groups
      */
     protected interface GroupsColumns {
+        /**
+         * The data set within the account that this group belongs to.  This allows
+         * multiple sync adapters for the same account type to distinguish between
+         * each others' group data.
+         *
+         * This is empty by default, and is completely optional.  It only needs to
+         * be populated if multiple sync adapters are entering distinct group data
+         * for the same account type and account name.
+         * <P>Type: TEXT</P>
+         */
+        public static final String DATA_SET = "data_set";
+
+        /**
+         * A concatenation of the account type and data set (delimited by a forward
+         * slash) - if the data set is empty, this will be the same as the account
+         * type.  For applications that need to be aware of the data set, this can
+         * be used instead of account type to distinguish sets of data.  This is
+         * never intended to be used for specifying accounts.
+         * @hide
+         */
+        public static final String ACCOUNT_TYPE_AND_DATA_SET = "account_type_and_data_set";
+
         /**
          * The display title of this group.
          * <p>
@@ -4991,6 +6813,32 @@ public final class ContactsContract {
         public static final String SUMMARY_COUNT = "summ_count";
 
         /**
+         * A boolean query parameter that can be used with {@link Groups#CONTENT_SUMMARY_URI}.
+         * It will additionally return {@link #SUMMARY_GROUP_COUNT_PER_ACCOUNT}.
+         *
+         * @hide
+         */
+        public static final String PARAM_RETURN_GROUP_COUNT_PER_ACCOUNT =
+                "return_group_count_per_account";
+
+        /**
+         * The total number of groups of the account that a group belongs to.
+         * This column is available only when the parameter
+         * {@link #PARAM_RETURN_GROUP_COUNT_PER_ACCOUNT} is specified in
+         * {@link Groups#CONTENT_SUMMARY_URI}.
+         *
+         * For example, when the account "A" has two groups "group1" and "group2", and the account
+         * "B" has a group "group3", the rows for "group1" and "group2" return "2" and the row for
+         * "group3" returns "1" for this column.
+         *
+         * Note: This counts only non-favorites, non-auto-add, and not deleted groups.
+         *
+         * Type: INTEGER
+         * @hide
+         */
+        public static final String SUMMARY_GROUP_COUNT_PER_ACCOUNT = "group_count_per_account";
+
+        /**
          * The total number of {@link Contacts} that have both
          * {@link CommonDataKinds.GroupMembership} in this group, and also have phone numbers.
          * Read-only value that is only present when querying
@@ -5027,6 +6875,30 @@ public final class ContactsContract {
          * Type: INTEGER (boolean)
          */
         public static final String SHOULD_SYNC = "should_sync";
+
+        /**
+         * Any newly created contacts will automatically be added to groups that have this
+         * flag set to true.
+         * <p>
+         * Type: INTEGER (boolean)
+         */
+        public static final String AUTO_ADD = "auto_add";
+
+        /**
+         * When a contacts is marked as a favorites it will be automatically added
+         * to the groups that have this flag set, and when it is removed from favorites
+         * it will be removed from these groups.
+         * <p>
+         * Type: INTEGER (boolean)
+         */
+        public static final String FAVORITES = "favorites";
+
+        /**
+         * The "read-only" flag: "0" by default, "1" if the row cannot be modified or
+         * deleted except by a sync adapter.  See {@link ContactsContract#CALLER_IS_SYNCADAPTER}.
+         * <P>Type: INTEGER</P>
+         */
+        public static final String GROUP_IS_READ_ONLY = "group_is_read_only";
     }
 
     /**
@@ -5043,6 +6915,29 @@ public final class ContactsContract {
      * <td>Row ID. Sync adapter should try to preserve row IDs during updates.
      * In other words, it would be a really bad idea to delete and reinsert a
      * group. A sync adapter should always do an update instead.</td>
+     * </tr>
+     # <tr>
+     * <td>String</td>
+     * <td>{@link #DATA_SET}</td>
+     * <td>read/write-once</td>
+     * <td>
+     * <p>
+     * The data set within the account that this group belongs to.  This allows
+     * multiple sync adapters for the same account type to distinguish between
+     * each others' group data.  The combination of {@link #ACCOUNT_TYPE},
+     * {@link #ACCOUNT_NAME}, and {@link #DATA_SET} identifies a set of data
+     * that is associated with a single sync adapter.
+     * </p>
+     * <p>
+     * This is empty by default, and is completely optional.  It only needs to
+     * be populated if multiple sync adapters are entering distinct data for
+     * the same account type and account name.
+     * </p>
+     * <p>
+     * It should be set at the time the group is inserted and never changed
+     * afterwards.
+     * </p>
+     * </td>
      * </tr>
      * <tr>
      * <td>String</td>
@@ -5167,6 +7062,8 @@ public final class ContactsContract {
                 DatabaseUtils.cursorLongToContentValuesIfPresent(cursor, values, DELETED);
                 DatabaseUtils.cursorStringToContentValuesIfPresent(cursor, values, NOTES);
                 DatabaseUtils.cursorStringToContentValuesIfPresent(cursor, values, SHOULD_SYNC);
+                DatabaseUtils.cursorStringToContentValuesIfPresent(cursor, values, FAVORITES);
+                DatabaseUtils.cursorStringToContentValuesIfPresent(cursor, values, AUTO_ADD);
                 cursor.moveToNext();
                 return new Entity(values);
             }
@@ -5285,6 +7182,18 @@ public final class ContactsContract {
          * <P>Type: TEXT</P>
          */
         public static final String ACCOUNT_TYPE = "account_type";
+
+        /**
+         * The data set within the account that this row belongs to.  This allows
+         * multiple sync adapters for the same account type to distinguish between
+         * each others' data.
+         *
+         * This is empty by default, and is completely optional.  It only needs to
+         * be populated if multiple sync adapters are entering distinct data for
+         * the same account type and account name.
+         * <P>Type: TEXT</P>
+         */
+        public static final String DATA_SET = "data_set";
 
         /**
          * Depending on the mode defined by the sync-adapter, this flag controls
@@ -5483,11 +7392,108 @@ public final class ContactsContract {
         public static final int STATUS_CHANGING_LOCALE = 3;
 
         /**
+         * The status that indicates that there are no accounts and no contacts
+         * on the device.
+         *
+         * @hide
+         */
+        public static final int STATUS_NO_ACCOUNTS_NO_CONTACTS = 4;
+
+        /**
          * Additional data associated with the status.
          *
          * @hide
          */
         public static final String DATA1 = "data1";
+    }
+
+    /**
+     * <p>
+     * API allowing applications to send usage information for each {@link Data} row to the
+     * Contacts Provider.
+     * </p>
+     * <p>
+     * With the feedback, Contacts Provider may return more contextually appropriate results for
+     * Data listing, typically supplied with
+     * {@link ContactsContract.Contacts#CONTENT_FILTER_URI},
+     * {@link ContactsContract.CommonDataKinds.Email#CONTENT_FILTER_URI},
+     * {@link ContactsContract.CommonDataKinds.Phone#CONTENT_FILTER_URI}, and users can benefit
+     * from better ranked (sorted) lists in applications that show auto-complete list.
+     * </p>
+     * <p>
+     * There is no guarantee for how this feedback is used, or even whether it is used at all.
+     * The ranking algorithm will make best efforts to use the feedback data, but the exact
+     * implementation, the storage data structures as well as the resulting sort order is device
+     * and version specific and can change over time.
+     * </p>
+     * <p>
+     * When updating usage information, users of this API need to use
+     * {@link ContentResolver#update(Uri, ContentValues, String, String[])} with a Uri constructed
+     * from {@link DataUsageFeedback#FEEDBACK_URI}. The Uri must contain one or more data id(s) as
+     * its last path. They also need to append a query parameter to the Uri, to specify the type of
+     * the communication, which enables the Contacts Provider to differentiate between kinds of
+     * interactions using the same contact data field (for example a phone number can be used to
+     * make phone calls or send SMS).
+     * </p>
+     * <p>
+     * Selection and selectionArgs are ignored and must be set to null. To get data ids,
+     * you may need to call {@link ContentResolver#query(Uri, String[], String, String[], String)}
+     * toward {@link Data#CONTENT_URI}.
+     * </p>
+     * <p>
+     * {@link ContentResolver#update(Uri, ContentValues, String, String[])} returns a positive
+     * integer when successful, and returns 0 if no contact with that id was found.
+     * </p>
+     * <p>
+     * Example:
+     * <pre>
+     * Uri uri = DataUsageFeedback.FEEDBACK_URI.buildUpon()
+     *         .appendPath(TextUtils.join(",", dataIds))
+     *         .appendQueryParameter(DataUsageFeedback.USAGE_TYPE,
+     *                 DataUsageFeedback.USAGE_TYPE_CALL)
+     *         .build();
+     * boolean successful = resolver.update(uri, new ContentValues(), null, null) > 0;
+     * </pre>
+     * </p>
+     */
+    public static final class DataUsageFeedback {
+
+        /**
+         * The content:// style URI for sending usage feedback.
+         * Must be used with {@link ContentResolver#update(Uri, ContentValues, String, String[])}.
+         */
+        public static final Uri FEEDBACK_URI =
+                Uri.withAppendedPath(Data.CONTENT_URI, "usagefeedback");
+
+        /**
+         * <p>
+         * Name for query parameter specifying the type of data usage.
+         * </p>
+         */
+        public static final String USAGE_TYPE = "type";
+
+        /**
+         * <p>
+         * Type of usage for voice interaction, which includes phone call, voice chat, and
+         * video chat.
+         * </p>
+         */
+        public static final String USAGE_TYPE_CALL = "call";
+
+        /**
+         * <p>
+         * Type of usage for text interaction involving longer messages, which includes email.
+         * </p>
+         */
+        public static final String USAGE_TYPE_LONG_TEXT = "long_text";
+
+        /**
+         * <p>
+         * Type of usage for text interaction involving shorter messages, which includes SMS,
+         * text chat with email addresses.
+         * </p>
+         */
+        public static final String USAGE_TYPE_SHORT_TEXT = "short_text";
     }
 
     /**
@@ -5543,14 +7549,6 @@ public final class ContactsContract {
         public static final int MODE_LARGE = 3;
 
         /**
-         * Extra used to specify the last selected tab index of the Contacts app.
-         * If this is not given or -1
-         * @hide
-         */
-        public static final String EXTRA_SELECTED_CONTACTS_APP_TAB_INDEX =
-                "SELECTED_TAB_INDEX";
-
-        /**
          * Trigger a dialog that lists the various methods of interacting with
          * the requested {@link Contacts} entry. This may be based on available
          * {@link ContactsContract.Data} rows under that contact, and may also
@@ -5575,16 +7573,6 @@ public final class ContactsContract {
          */
         public static void showQuickContact(Context context, View target, Uri lookupUri, int mode,
                 String[] excludeMimes) {
-            context.startActivity(getQuickContactIntent(context, target, lookupUri, mode,
-                    excludeMimes));
-        }
-
-        /**
-         * Creates the Intent to launch Quick Contacts
-         * @hide
-         */
-        public static Intent getQuickContactIntent(Context context, View target, Uri lookupUri,
-                int mode, String[] excludeMimes) {
             // Find location and bounds of target view, adjusting based on the
             // assumed local density.
             final float appScale = context.getResources().getCompatibilityInfo().applicationScale;
@@ -5598,7 +7586,7 @@ public final class ContactsContract {
             rect.bottom = (int) ((pos[1] + target.getHeight()) * appScale + 0.5f);
 
             // Trigger with obtained rectangle
-            return getQuickContactIntent(context, rect, lookupUri, mode, excludeMimes);
+            showQuickContact(context, rect, lookupUri, mode, excludeMimes);
         }
 
         /**
@@ -5629,16 +7617,6 @@ public final class ContactsContract {
          */
         public static void showQuickContact(Context context, Rect target, Uri lookupUri, int mode,
                 String[] excludeMimes) {
-            context.startActivity(getQuickContactIntent(context, target, lookupUri, mode,
-                    excludeMimes));
-        }
-
-        /**
-         * Creates the Intent to launch Quick Contacts
-         * @hide
-         */
-        public static Intent getQuickContactIntent(Context context, Rect target, Uri lookupUri,
-                int mode, String[] excludeMimes) {
             // Launch pivot dialog through intent for now
             final Intent intent = new Intent(ACTION_QUICK_CONTACT);
             intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -5648,8 +7626,69 @@ public final class ContactsContract {
             intent.setSourceBounds(target);
             intent.putExtra(EXTRA_MODE, mode);
             intent.putExtra(EXTRA_EXCLUDE_MIMES, excludeMimes);
-            return intent;
+            context.startActivity(intent);
         }
+    }
+
+    /**
+     * Helper class for accessing full-size photos by photo file ID.
+     * <p>
+     * Usage example:
+     * <dl>
+     * <dt>Retrieving a full-size photo by photo file ID (see
+     * {@link ContactsContract.ContactsColumns#PHOTO_FILE_ID})
+     * </dt>
+     * <dd>
+     * <pre>
+     * public InputStream openDisplayPhoto(long photoFileId) {
+     *     Uri displayPhotoUri = ContentUris.withAppendedId(DisplayPhoto.CONTENT_URI, photoKey);
+     *     try {
+     *         AssetFileDescriptor fd = getContentResolver().openAssetFileDescriptor(
+     *             displayPhotoUri, "r");
+     *         return fd.createInputStream();
+     *     } catch (IOException e) {
+     *         return null;
+     *     }
+     * }
+     * </pre>
+     * </dd>
+     * </dl>
+     * </p>
+     */
+    public static final class DisplayPhoto {
+        /**
+         * no public constructor since this is a utility class
+         */
+        private DisplayPhoto() {}
+
+        /**
+         * The content:// style URI for this class, which allows access to full-size photos,
+         * given a key.
+         */
+        public static final Uri CONTENT_URI = Uri.withAppendedPath(AUTHORITY_URI, "display_photo");
+
+        /**
+         * This URI allows the caller to query for the maximum dimensions of a display photo
+         * or thumbnail.  Requests to this URI can be performed on the UI thread because
+         * they are always unblocking.
+         */
+        public static final Uri CONTENT_MAX_DIMENSIONS_URI =
+                Uri.withAppendedPath(AUTHORITY_URI, "photo_dimensions");
+
+        /**
+         * Queries to {@link ContactsContract.DisplayPhoto#CONTENT_MAX_DIMENSIONS_URI} will
+         * contain this column, populated with the maximum height and width (in pixels)
+         * that will be stored for a display photo.  Larger photos will be down-sized to
+         * fit within a square of this many pixels.
+         */
+        public static final String DISPLAY_MAX_DIM = "display_max_dim";
+
+        /**
+         * Queries to {@link ContactsContract.DisplayPhoto#CONTENT_MAX_DIMENSIONS_URI} will
+         * contain this column, populated with the height and width (in pixels) for photo
+         * thumbnails.
+         */
+        public static final String THUMBNAIL_MAX_DIM = "thumbnail_max_dim";
     }
 
     /**
@@ -5685,6 +7724,16 @@ public final class ContactsContract {
                 "com.android.contacts.action.ATTACH_IMAGE";
 
         /**
+         * This is the intent that is fired when the user clicks the "invite to the network" button
+         * on a contact.  Only sent to an activity which is explicitly registered by a contact
+         * provider which supports the "invite to the network" feature.
+         * <p>
+         * {@link Intent#getData()} contains the lookup URI for the contact.
+         */
+        public static final String INVITE_CONTACT =
+                "com.android.contacts.action.INVITE_CONTACT";
+
+        /**
          * Takes as input a data URI with a mailto: or tel: scheme. If a single
          * contact exists with the given data it will be shown. If no contact
          * exists, a dialog will ask the user if they want to create a new
@@ -5711,6 +7760,28 @@ public final class ContactsContract {
                 "com.android.contacts.action.SHOW_OR_CREATE_CONTACT";
 
         /**
+         * Starts an Activity that lets the user select the multiple phones from a
+         * list of phone numbers which come from the contacts or
+         * {@link #EXTRA_PHONE_URIS}.
+         * <p>
+         * The phone numbers being passed in through {@link #EXTRA_PHONE_URIS}
+         * could belong to the contacts or not, and will be selected by default.
+         * <p>
+         * The user's selection will be returned from
+         * {@link android.app.Activity#onActivityResult(int, int, android.content.Intent)}
+         * if the resultCode is
+         * {@link android.app.Activity#RESULT_OK}, the array of picked phone
+         * numbers are in the Intent's
+         * {@link #EXTRA_PHONE_URIS}; otherwise, the
+         * {@link android.app.Activity#RESULT_CANCELED} is returned if the user
+         * left the Activity without changing the selection.
+         *
+         * @hide
+         */
+        public static final String ACTION_GET_MULTIPLE_PHONES =
+                "com.android.contacts.action.GET_MULTIPLE_PHONES";
+
+        /**
          * Used with {@link #SHOW_OR_CREATE_CONTACT} to force creating a new
          * contact if no matching contact found. Otherwise, default behavior is
          * to prompt user with dialog before creating.
@@ -5729,6 +7800,23 @@ public final class ContactsContract {
          */
         public static final String EXTRA_CREATE_DESCRIPTION =
             "com.android.contacts.action.CREATE_DESCRIPTION";
+
+        /**
+         * Used with {@link #ACTION_GET_MULTIPLE_PHONES} as the input or output value.
+         * <p>
+         * The phone numbers want to be picked by default should be passed in as
+         * input value. These phone numbers could belong to the contacts or not.
+         * <p>
+         * The phone numbers which were picked by the user are returned as output
+         * value.
+         * <p>
+         * Type: array of URIs, the tel URI is used for the phone numbers which don't
+         * belong to any contact, the content URI is used for phone id in contacts.
+         *
+         * @hide
+         */
+        public static final String EXTRA_PHONE_URIS =
+            "com.android.contacts.extra.PHONE_URIS";
 
         /**
          * Optional extra used with {@link #SHOW_OR_CREATE_CONTACT} to specify a
@@ -6042,6 +8130,205 @@ public final class ContactsContract {
              * <P>Type: boolean</P>
              */
             public static final String IM_ISPRIMARY = "im_isprimary";
+
+            /**
+             * The extra field that allows the client to supply multiple rows of
+             * arbitrary data for a single contact created using the {@link Intent#ACTION_INSERT}
+             * or edited using {@link Intent#ACTION_EDIT}. It is an ArrayList of
+             * {@link ContentValues}, one per data row. Supplying this extra is
+             * similar to inserting multiple rows into the {@link Data} table,
+             * except the user gets a chance to see and edit them before saving.
+             * Each ContentValues object must have a value for {@link Data#MIMETYPE}.
+             * If supplied values are not visible in the editor UI, they will be
+             * dropped.  Duplicate data will dropped.  Some fields
+             * like {@link CommonDataKinds.Email#TYPE Email.TYPE} may be automatically
+             * adjusted to comply with the constraints of the specific account type.
+             * For example, an Exchange contact can only have one phone numbers of type Home,
+             * so the contact editor may choose a different type for this phone number to
+             * avoid dropping the valueable part of the row, which is the phone number.
+             * <p>
+             * Example:
+             * <pre>
+             *  ArrayList&lt;ContentValues&gt; data = new ArrayList&lt;ContentValues&gt;();
+             *
+             *  ContentValues row1 = new ContentValues();
+             *  row1.put(Data.MIMETYPE, Organization.CONTENT_ITEM_TYPE);
+             *  row1.put(Organization.COMPANY, "Android");
+             *  data.add(row1);
+             *
+             *  ContentValues row2 = new ContentValues();
+             *  row2.put(Data.MIMETYPE, Email.CONTENT_ITEM_TYPE);
+             *  row2.put(Email.TYPE, Email.TYPE_CUSTOM);
+             *  row2.put(Email.LABEL, "Green Bot");
+             *  row2.put(Email.ADDRESS, "android@android.com");
+             *  data.add(row2);
+             *
+             *  Intent intent = new Intent(Intent.ACTION_INSERT, Contacts.CONTENT_URI);
+             *  intent.putParcelableArrayListExtra(Insert.DATA, data);
+             *
+             *  startActivity(intent);
+             * </pre>
+             */
+            public static final String DATA = "data";
+
+            /**
+             * Used to specify the account in which to create the new contact.
+             * <p>
+             * If this value is not provided, the user is presented with a disambiguation
+             * dialog to chose an account
+             * <p>
+             * Type: {@link Account}
+             *
+             * @hide
+             */
+            public static final String ACCOUNT = "com.android.contacts.extra.ACCOUNT";
+
+            /**
+             * Used to specify the data set within the account in which to create the
+             * new contact.
+             * <p>
+             * This value is optional - if it is not specified, the contact will be
+             * created in the base account, with no data set.
+             * <p>
+             * Type: String
+             *
+             * @hide
+             */
+            public static final String DATA_SET = "com.android.contacts.extra.DATA_SET";
         }
     }
+
+    /**
+     * Creates a snippet out of the given content that matches the given query.
+     * @param content - The content to use to compute the snippet.
+     * @param displayName - Display name for the contact - if this already contains the search
+     *        content, no snippet should be shown.
+     * @param query - String to search for in the content.
+     * @param snippetStartMatch - Marks the start of the matching string in the snippet.
+     * @param snippetEndMatch - Marks the end of the matching string in the snippet.
+     * @param snippetEllipsis - Ellipsis string appended to the end of the snippet (if too long).
+     * @param snippetMaxTokens - Maximum number of words from the snippet that will be displayed.
+     * @return The computed snippet, or null if the snippet could not be computed or should not be
+     *         shown.
+     *
+     *  @hide
+     */
+    public static String snippetize(String content, String displayName, String query,
+            char snippetStartMatch, char snippetEndMatch, String snippetEllipsis,
+            int snippetMaxTokens) {
+
+        String lowerQuery = query != null ? query.toLowerCase() : null;
+        if (TextUtils.isEmpty(content) || TextUtils.isEmpty(query) ||
+                TextUtils.isEmpty(displayName) || !content.toLowerCase().contains(lowerQuery)) {
+            return null;
+        }
+
+        // If the display name already contains the query term, return empty - snippets should
+        // not be needed in that case.
+        String lowerDisplayName = displayName != null ? displayName.toLowerCase() : "";
+        List<String> nameTokens = new ArrayList<String>();
+        List<Integer> nameTokenOffsets = new ArrayList<Integer>();
+        split(lowerDisplayName.trim(), nameTokens, nameTokenOffsets);
+        for (String nameToken : nameTokens) {
+            if (nameToken.startsWith(lowerQuery)) {
+                return null;
+            }
+        }
+
+        String[] contentLines = content.split("\n");
+
+        // Locate the lines of the content that contain the query term.
+        for (String contentLine : contentLines) {
+            if (contentLine.toLowerCase().contains(lowerQuery)) {
+
+                // Line contains the query string - now search for it at the start of tokens.
+                List<String> lineTokens = new ArrayList<String>();
+                List<Integer> tokenOffsets = new ArrayList<Integer>();
+                split(contentLine.trim(), lineTokens, tokenOffsets);
+
+                // As we find matches against the query, we'll populate this list with the marked
+                // (or unchanged) tokens.
+                List<String> markedTokens = new ArrayList<String>();
+
+                int firstToken = -1;
+                int lastToken = -1;
+                for (int i = 0; i < lineTokens.size(); i++) {
+                    String token = lineTokens.get(i);
+                    String lowerToken = token.toLowerCase();
+                    if (lowerToken.startsWith(lowerQuery)) {
+
+                        // Query term matched; surround the token with match markers.
+                        markedTokens.add(snippetStartMatch + token + snippetEndMatch);
+
+                        // If this is the first token found with a match, mark the token
+                        // positions to use for assembling the snippet.
+                        if (firstToken == -1) {
+                            firstToken =
+                                    Math.max(0, i - (int) Math.floor(
+                                            Math.abs(snippetMaxTokens)
+                                            / 2.0));
+                            lastToken =
+                                    Math.min(lineTokens.size(), firstToken +
+                                            Math.abs(snippetMaxTokens));
+                        }
+                    } else {
+                        markedTokens.add(token);
+                    }
+                }
+
+                // Assemble the snippet by piecing the tokens back together.
+                if (firstToken > -1) {
+                    StringBuilder sb = new StringBuilder();
+                    if (firstToken > 0) {
+                        sb.append(snippetEllipsis);
+                    }
+                    for (int i = firstToken; i < lastToken; i++) {
+                        String markedToken = markedTokens.get(i);
+                        String originalToken = lineTokens.get(i);
+                        sb.append(markedToken);
+                        if (i < lastToken - 1) {
+                            // Add the characters that appeared between this token and the next.
+                            sb.append(contentLine.substring(
+                                    tokenOffsets.get(i) + originalToken.length(),
+                                    tokenOffsets.get(i + 1)));
+                        }
+                    }
+                    if (lastToken < lineTokens.size()) {
+                        sb.append(snippetEllipsis);
+                    }
+                    return sb.toString();
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Pattern for splitting a line into tokens.  This matches e-mail addresses as a single token,
+     * otherwise splitting on any group of non-alphanumeric characters.
+     *
+     * @hide
+     */
+    private static Pattern SPLIT_PATTERN =
+        Pattern.compile("([\\w-\\.]+)@((?:[\\w]+\\.)+)([a-zA-Z]{2,4})|[\\w]+");
+
+    /**
+     * Helper method for splitting a string into tokens.  The lists passed in are populated with the
+     * tokens and offsets into the content of each token.  The tokenization function parses e-mail
+     * addresses as a single token; otherwise it splits on any non-alphanumeric character.
+     * @param content Content to split.
+     * @param tokens List of token strings to populate.
+     * @param offsets List of offsets into the content for each token returned.
+     *
+     * @hide
+     */
+    private static void split(String content, List<String> tokens, List<Integer> offsets) {
+        Matcher matcher = SPLIT_PATTERN.matcher(content);
+        while (matcher.find()) {
+            tokens.add(matcher.group());
+            offsets.add(matcher.start());
+        }
+    }
+
+
 }

@@ -10,6 +10,18 @@
 #include "ResourceTable.h"
 #include "Images.h"
 
+#include "CrunchCache.h"
+#include "FileFinder.h"
+#include "CacheUpdater.h"
+
+#if HAVE_PRINTF_ZD
+#  define ZD "%zd"
+#  define ZD_TYPE ssize_t
+#else
+#  define ZD "%ld"
+#  define ZD_TYPE long
+#endif
+
 #define NOISY(x) // x
 
 // ==========================================================================
@@ -48,6 +60,12 @@ static String8 parseResourceName(const String8& leaf)
 ResourceTypeSet::ResourceTypeSet()
     :RefBase(),
      KeyedVector<String8,sp<AaptGroup> >()
+{
+}
+
+FilePathStore::FilePathStore()
+    :RefBase(),
+     Vector<String8>()
 {
 }
 
@@ -148,9 +166,10 @@ private:
 
 bool isValidResourceType(const String8& type)
 {
-    return type == "anim" || type == "drawable" || type == "layout"
+    return type == "anim" || type == "animator" || type == "interpolator"
+        || type == "drawable" || type == "layout"
         || type == "values" || type == "xml" || type == "raw"
-        || type == "color" || type == "menu";
+        || type == "color" || type == "menu" || type == "mipmap";
 }
 
 static sp<AaptFile> getResourceFile(const sp<AaptAssets>& assets, bool makeIfNecessary=true)
@@ -284,20 +303,21 @@ static status_t makeFileResources(Bundle* bundle, const sp<AaptAssets>& assets,
 }
 
 static status_t preProcessImages(Bundle* bundle, const sp<AaptAssets>& assets,
-                          const sp<ResourceTypeSet>& set)
+                          const sp<ResourceTypeSet>& set, const char* type)
 {
-    ResourceDirIterator it(set, String8("drawable"));
-    Vector<sp<AaptFile> > newNameFiles;
-    Vector<String8> newNamePaths;
     bool hasErrors = false;
-    ssize_t res;
-    while ((res=it.next()) == NO_ERROR) {
-        res = preProcessImage(bundle, assets, it.getFile(), NULL);
-        if (res < NO_ERROR) {
-            hasErrors = true;
+    ssize_t res = NO_ERROR;
+    if (bundle->getUseCrunchCache() == false) {
+        ResourceDirIterator it(set, String8(type));
+        Vector<sp<AaptFile> > newNameFiles;
+        Vector<String8> newNamePaths;
+        while ((res=it.next()) == NO_ERROR) {
+            res = preProcessImage(bundle, assets, it.getFile(), NULL);
+            if (res < NO_ERROR) {
+                hasErrors = true;
+            }
         }
     }
-
     return (hasErrors || (res < NO_ERROR)) ? UNKNOWN_ERROR : NO_ERROR;
 }
 
@@ -340,18 +360,27 @@ static void collect_files(const sp<AaptDir>& dir,
 
         if (index < 0) {
             sp<ResourceTypeSet> set = new ResourceTypeSet();
+            NOISY(printf("Creating new resource type set for leaf %s with group %s (%p)\n",
+                    leafName.string(), group->getPath().string(), group.get()));
             set->add(leafName, group);
             resources->add(resType, set);
         } else {
             sp<ResourceTypeSet> set = resources->valueAt(index);
             index = set->indexOfKey(leafName);
             if (index < 0) {
+                NOISY(printf("Adding to resource type set for leaf %s group %s (%p)\n",
+                        leafName.string(), group->getPath().string(), group.get()));
                 set->add(leafName, group);
             } else {
                 sp<AaptGroup> existingGroup = set->valueAt(index);
-                int M = files.size();
-                for (int j=0; j<M; j++) {
-                    existingGroup->addFile(files.valueAt(j));
+                NOISY(printf("Extending to resource type set for leaf %s group %s (%p)\n",
+                        leafName.string(), group->getPath().string(), group.get()));
+                for (size_t j=0; j<files.size(); j++) {
+                    NOISY(printf("Adding file %s in group %s resType %s\n",
+                        files.valueAt(j)->getSourceFile().string(),
+                        files.keyAt(j).toDirName(String8()).string(),
+                        resType.string()));
+                    status_t err = existingGroup->addFile(files.valueAt(j));
                 }
             }
         }
@@ -366,9 +395,12 @@ static void collect_files(const sp<AaptAssets>& ass,
 
     for (int i=0; i<N; i++) {
         sp<AaptDir> d = dirs.itemAt(i);
+        NOISY(printf("Collecting dir #%d %p: %s, leaf %s\n", i, d.get(), d->getPath().string(),
+                d->getLeaf().string()));
         collect_files(d, resources);
 
         // don't try to include the res dir
+        NOISY(printf("Removing dir leaf %s\n", d->getLeaf().string()));
         ass->removeDir(d->getLeaf());
     }
 }
@@ -542,11 +574,11 @@ static bool applyFileOverlay(Bundle *bundle,
                         DefaultKeyedVector<AaptGroupEntry, sp<AaptFile> > baseFiles =
                                 baseGroup->getFiles();
                         for (size_t i=0; i < baseFiles.size(); i++) {
-                            printf("baseFile %ld has flavor %s\n", i,
+                            printf("baseFile " ZD " has flavor %s\n", (ZD_TYPE) i,
                                     baseFiles.keyAt(i).toString().string());
                         }
                         for (size_t i=0; i < overlayFiles.size(); i++) {
-                            printf("overlayFile %ld has flavor %s\n", i,
+                            printf("overlayFile " ZD " has flavor %s\n", (ZD_TYPE) i,
                                     overlayFiles.keyAt(i).toString().string());
                         }
                     }
@@ -558,16 +590,21 @@ static bool applyFileOverlay(Bundle *bundle,
                         size_t baseFileIndex =
                                 baseGroup->getFiles().indexOfKey(overlayFiles.
                                 keyAt(overlayGroupIndex));
-                        if(baseFileIndex < UNKNOWN_ERROR) {
+                        if (baseFileIndex < UNKNOWN_ERROR) {
                             if (bundle->getVerbose()) {
-                                printf("found a match (%ld) for overlay file %s, for flavor %s\n",
-                                        baseFileIndex,
+                                printf("found a match (" ZD ") for overlay file %s, for flavor %s\n",
+                                        (ZD_TYPE) baseFileIndex,
                                         overlayGroup->getLeaf().string(),
                                         overlayFiles.keyAt(overlayGroupIndex).toString().string());
                             }
                             baseGroup->removeFile(baseFileIndex);
                         } else {
                             // didn't find a match fall through and add it..
+                            if (true || bundle->getVerbose()) {
+                                printf("nothing matches overlay file %s, for flavor %s\n",
+                                        overlayGroup->getLeaf().string(),
+                                        overlayFiles.keyAt(overlayGroupIndex).toString().string());
+                            }
                         }
                         baseGroup->addFile(overlayFiles.valueAt(overlayGroupIndex));
                         assets->addGroupEntry(overlayFiles.keyAt(overlayGroupIndex));
@@ -747,6 +784,35 @@ status_t massageManifest(Bundle* bundle, sp<XMLNode> root)
             } \
         } while (0)
 
+status_t updatePreProcessedCache(Bundle* bundle)
+{
+    #if BENCHMARK
+    fprintf(stdout, "BENCHMARK: Starting PNG PreProcessing \n");
+    long startPNGTime = clock();
+    #endif /* BENCHMARK */
+
+    String8 source(bundle->getResourceSourceDirs()[0]);
+    String8 dest(bundle->getCrunchedOutputDir());
+
+    FileFinder* ff = new SystemFileFinder();
+    CrunchCache cc(source,dest,ff);
+
+    CacheUpdater* cu = new SystemCacheUpdater(bundle);
+    size_t numFiles = cc.crunch(cu);
+
+    if (bundle->getVerbose())
+        fprintf(stdout, "Crunched %d PNG files to update cache\n", (int)numFiles);
+
+    delete ff;
+    delete cu;
+
+    #if BENCHMARK
+    fprintf(stdout, "BENCHMARK: End PNG PreProcessing. Time Elapsed: %f ms \n"
+            ,(clock() - startPNGTime)/1000.0);
+    #endif /* BENCHMARK */
+    return 0;
+}
+
 status_t buildResources(Bundle* bundle, const sp<AaptAssets>& assets)
 {
     // First, look for a package file to parse.  This is required to
@@ -798,18 +864,24 @@ status_t buildResources(Bundle* bundle, const sp<AaptAssets>& assets)
     sp<ResourceTypeSet> drawables;
     sp<ResourceTypeSet> layouts;
     sp<ResourceTypeSet> anims;
+    sp<ResourceTypeSet> animators;
+    sp<ResourceTypeSet> interpolators;
     sp<ResourceTypeSet> xmls;
     sp<ResourceTypeSet> raws;
     sp<ResourceTypeSet> colors;
     sp<ResourceTypeSet> menus;
+    sp<ResourceTypeSet> mipmaps;
 
     ASSIGN_IT(drawable);
     ASSIGN_IT(layout);
     ASSIGN_IT(anim);
+    ASSIGN_IT(animator);
+    ASSIGN_IT(interpolator);
     ASSIGN_IT(xml);
     ASSIGN_IT(raw);
     ASSIGN_IT(color);
     ASSIGN_IT(menu);
+    ASSIGN_IT(mipmap);
 
     assets->setResources(resources);
     // now go through any resource overlays and collect their files
@@ -825,10 +897,13 @@ status_t buildResources(Bundle* bundle, const sp<AaptAssets>& assets)
     if (!applyFileOverlay(bundle, assets, &drawables, "drawable") ||
             !applyFileOverlay(bundle, assets, &layouts, "layout") ||
             !applyFileOverlay(bundle, assets, &anims, "anim") ||
+            !applyFileOverlay(bundle, assets, &animators, "animator") ||
+            !applyFileOverlay(bundle, assets, &interpolators, "interpolator") ||
             !applyFileOverlay(bundle, assets, &xmls, "xml") ||
             !applyFileOverlay(bundle, assets, &raws, "raw") ||
             !applyFileOverlay(bundle, assets, &colors, "color") ||
-            !applyFileOverlay(bundle, assets, &menus, "menu")) {
+            !applyFileOverlay(bundle, assets, &menus, "menu") ||
+            !applyFileOverlay(bundle, assets, &mipmaps, "mipmap")) {
         return UNKNOWN_ERROR;
     }
 
@@ -836,10 +911,24 @@ status_t buildResources(Bundle* bundle, const sp<AaptAssets>& assets)
 
     if (drawables != NULL) {
         if (bundle->getOutputAPKFile() != NULL) {
-            err = preProcessImages(bundle, assets, drawables);
+            err = preProcessImages(bundle, assets, drawables, "drawable");
         }
         if (err == NO_ERROR) {
             err = makeFileResources(bundle, assets, &table, drawables, "drawable");
+            if (err != NO_ERROR) {
+                hasErrors = true;
+            }
+        } else {
+            hasErrors = true;
+        }
+    }
+
+    if (mipmaps != NULL) {
+        if (bundle->getOutputAPKFile() != NULL) {
+            err = preProcessImages(bundle, assets, mipmaps, "mipmap");
+        }
+        if (err == NO_ERROR) {
+            err = makeFileResources(bundle, assets, &table, mipmaps, "mipmap");
             if (err != NO_ERROR) {
                 hasErrors = true;
             }
@@ -857,6 +946,20 @@ status_t buildResources(Bundle* bundle, const sp<AaptAssets>& assets)
 
     if (anims != NULL) {
         err = makeFileResources(bundle, assets, &table, anims, "anim");
+        if (err != NO_ERROR) {
+            hasErrors = true;
+        }
+    }
+
+    if (animators != NULL) {
+        err = makeFileResources(bundle, assets, &table, animators, "animator");
+        if (err != NO_ERROR) {
+            hasErrors = true;
+        }
+    }
+
+    if (interpolators != NULL) {
+        err = makeFileResources(bundle, assets, &table, interpolators, "interpolator");
         if (err != NO_ERROR) {
             hasErrors = true;
         }
@@ -956,6 +1059,36 @@ status_t buildResources(Bundle* bundle, const sp<AaptAssets>& assets)
 
     if (anims != NULL) {
         ResourceDirIterator it(anims, String8("anim"));
+        while ((err=it.next()) == NO_ERROR) {
+            err = compileXmlFile(assets, it.getFile(), &table, xmlFlags);
+            if (err != NO_ERROR) {
+                hasErrors = true;
+            }
+        }
+
+        if (err < NO_ERROR) {
+            hasErrors = true;
+        }
+        err = NO_ERROR;
+    }
+
+    if (animators != NULL) {
+        ResourceDirIterator it(animators, String8("animator"));
+        while ((err=it.next()) == NO_ERROR) {
+            err = compileXmlFile(assets, it.getFile(), &table, xmlFlags);
+            if (err != NO_ERROR) {
+                hasErrors = true;
+            }
+        }
+
+        if (err < NO_ERROR) {
+            hasErrors = true;
+        }
+        err = NO_ERROR;
+    }
+
+    if (interpolators != NULL) {
+        ResourceDirIterator it(interpolators, String8("interpolator"));
         while ((err=it.next()) == NO_ERROR) {
             err = compileXmlFile(assets, it.getFile(), &table, xmlFlags);
             if (err != NO_ERROR) {
@@ -1655,7 +1788,8 @@ static status_t writeLayoutClasses(
 
 static status_t writeSymbolClass(
     FILE* fp, const sp<AaptAssets>& assets, bool includePrivate,
-    const sp<AaptSymbols>& symbols, const String8& className, int indent)
+    const sp<AaptSymbols>& symbols, const String8& className, int indent,
+    bool nonConstantId)
 {
     fprintf(fp, "%spublic %sfinal class %s {\n",
             getIndentSpace(indent),
@@ -1664,6 +1798,10 @@ static status_t writeSymbolClass(
 
     size_t i;
     status_t err = NO_ERROR;
+
+    const char * id_format = nonConstantId ?
+            "%spublic static int %s=0x%08x;\n" :
+            "%spublic static final int %s=0x%08x;\n";
 
     size_t N = symbols->getSymbols().size();
     for (i=0; i<N; i++) {
@@ -1717,7 +1855,7 @@ static status_t writeSymbolClass(
         if (deprecated) {
             fprintf(fp, "%s@Deprecated\n", getIndentSpace(indent));
         }
-        fprintf(fp, "%spublic static final int %s=0x%08x;\n",
+        fprintf(fp, id_format,
                 getIndentSpace(indent),
                 String8(name).string(), (int)sym.int32Val);
     }
@@ -1768,7 +1906,7 @@ static status_t writeSymbolClass(
         if (nclassName == "styleable") {
             styleableSymbols = nsymbols;
         } else {
-            err = writeSymbolClass(fp, assets, includePrivate, nsymbols, nclassName, indent);
+            err = writeSymbolClass(fp, assets, includePrivate, nsymbols, nclassName, indent, nonConstantId);
         }
         if (err != NO_ERROR) {
             return err;
@@ -1839,11 +1977,23 @@ status_t writeResourceSymbols(Bundle* bundle, const sp<AaptAssets>& assets,
         "\n"
         "package %s;\n\n", package.string());
 
-        status_t err = writeSymbolClass(fp, assets, includePrivate, symbols, className, 0);
+        status_t err = writeSymbolClass(fp, assets, includePrivate, symbols, className, 0, bundle->getNonConstantId());
         if (err != NO_ERROR) {
             return err;
         }
         fclose(fp);
+
+        // If we were asked to generate a dependency file, we'll go ahead and add this R.java
+        // as a target in the dependency file right next to it.
+        if (bundle->getGenDependencies()) {
+            // Add this R.java to the dependency file
+            String8 dependencyFile(bundle->getRClassDir());
+            dependencyFile.appendPath("R.java.d");
+
+            fp = fopen(dependencyFile.string(), "a");
+            fprintf(fp,"%s \\\n", dest.string());
+            fclose(fp);
+        }
     }
 
     return NO_ERROR;
@@ -2083,12 +2233,13 @@ writeProguardForLayouts(ProguardKeepSet* keep, const sp<AaptAssets>& assets)
     // tag:attribute pairs that should be checked in layout files.
     KeyedVector<String8, NamespaceAttributePair> kLayoutTagAttrPairs;
     addTagAttrPair(&kLayoutTagAttrPairs, "view", NULL, "class");
+    addTagAttrPair(&kLayoutTagAttrPairs, "fragment", NULL, "class");
     addTagAttrPair(&kLayoutTagAttrPairs, "fragment", RESOURCES_ANDROID_NAMESPACE, "name");
 
     // tag:attribute pairs that should be checked in xml files.
     KeyedVector<String8, NamespaceAttributePair> kXmlTagAttrPairs;
     addTagAttrPair(&kXmlTagAttrPairs, "PreferenceScreen", RESOURCES_ANDROID_NAMESPACE, "fragment");
-    addTagAttrPair(&kXmlTagAttrPairs, "Header", RESOURCES_ANDROID_NAMESPACE, "fragment");
+    addTagAttrPair(&kXmlTagAttrPairs, "header", RESOURCES_ANDROID_NAMESPACE, "fragment");
 
     const Vector<sp<AaptDir> >& dirs = assets->resDirs();
     const size_t K = dirs.size();
@@ -2119,6 +2270,11 @@ writeProguardForLayouts(ProguardKeepSet* keep, const sp<AaptAssets>& assets)
                 }
             }
         }
+    }
+    // Handle the overlays
+    sp<AaptAssets> overlay = assets->getOverlay();
+    if (overlay.get()) {
+        return writeProguardForLayouts(keep, overlay);
     }
     return NO_ERROR;
 }
@@ -2164,4 +2320,28 @@ writeProguardFile(Bundle* bundle, const sp<AaptAssets>& assets)
     fclose(fp);
 
     return err;
+}
+
+// Loops through the string paths and writes them to the file pointer
+// Each file path is written on its own line with a terminating backslash.
+status_t writePathsToFile(const sp<FilePathStore>& files, FILE* fp)
+{
+    status_t deps = -1;
+    for (size_t file_i = 0; file_i < files->size(); ++file_i) {
+        // Add the full file path to the dependency file
+        fprintf(fp, "%s \\\n", files->itemAt(file_i).string());
+        deps++;
+    }
+    return deps;
+}
+
+status_t
+writeDependencyPreReqs(Bundle* bundle, const sp<AaptAssets>& assets, FILE* fp, bool includeRaw)
+{
+    status_t deps = -1;
+    deps += writePathsToFile(assets->getFullResPaths(), fp);
+    if (includeRaw) {
+        deps += writePathsToFile(assets->getFullAssetPaths(), fp);
+    }
+    return deps;
 }

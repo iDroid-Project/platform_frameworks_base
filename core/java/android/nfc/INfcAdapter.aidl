@@ -22,44 +22,26 @@ import android.content.IntentFilter;
 import android.nfc.NdefMessage;
 import android.nfc.Tag;
 import android.nfc.TechListParcel;
-import android.nfc.ILlcpSocket;
-import android.nfc.ILlcpServiceSocket;
-import android.nfc.ILlcpConnectionlessSocket;
-import android.nfc.INfcTag;
-import android.nfc.IP2pTarget;
-import android.nfc.IP2pInitiator;
+import android.nfc.INdefPushCallback;
 import android.nfc.INfcAdapterExtras;
+import android.nfc.INfcTag;
 
 /**
  * @hide
  */
 interface INfcAdapter
 {
-    ILlcpSocket getLlcpInterface();
-    ILlcpConnectionlessSocket getLlcpConnectionlessInterface();
-    ILlcpServiceSocket getLlcpServiceInterface();
     INfcTag getNfcTagInterface();
-    IP2pTarget getP2pTargetInterface();
-    IP2pInitiator getP2pInitiatorInterface();
     INfcAdapterExtras getNfcAdapterExtrasInterface();
 
-    // NfcAdapter-class related methods
-    boolean isEnabled();
-    NdefMessage localGet();
-    void localSet(in NdefMessage message);
-    void enableForegroundDispatch(in ComponentName activity, in PendingIntent intent,
-            in IntentFilter[] filters, in TechListParcel techLists);
-    void disableForegroundDispatch(in ComponentName activity);
-    void enableForegroundNdefPush(in ComponentName activity, in NdefMessage msg);
-    void disableForegroundNdefPush(in ComponentName activity);
-
-    // Non-public methods
-    // TODO: check and complete
-    int createLlcpConnectionlessSocket(int sap);
-    int createLlcpServiceSocket(int sap, String sn, int miu, int rw, int linearBufferLength);
-    int createLlcpSocket(int sap, int miu, int rw, int linearBufferLength);
+    int getState();
     boolean disable();
     boolean enable();
-    String getProperties(String param);
-    int setProperties(String param, String value);
+    boolean enableNdefPush();
+    boolean disableNdefPush();
+    boolean isNdefPushEnabled();
+
+    void setForegroundDispatch(in PendingIntent intent,
+            in IntentFilter[] filters, in TechListParcel techLists);
+    void setForegroundNdefPush(in NdefMessage msg, in INdefPushCallback callback);
 }

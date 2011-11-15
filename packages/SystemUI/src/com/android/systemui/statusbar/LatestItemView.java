@@ -18,17 +18,31 @@ package com.android.systemui.statusbar;
 
 import android.content.Context;
 import android.util.AttributeSet;
-import android.util.Slog;
-import android.view.MotionEvent;
+import android.view.View;
+import android.view.accessibility.AccessibilityEvent;
 import android.widget.FrameLayout;
 
 public class LatestItemView extends FrameLayout {
-
     public LatestItemView(Context context, AttributeSet attrs) {
         super(context, attrs);
     }
 
-    public boolean dispatchTouchEvent(MotionEvent ev) {
-        return onTouchEvent(ev);
+    @Override
+    public void setOnClickListener(OnClickListener l) {
+        super.setOnClickListener(l);
+    }
+
+    @Override
+    public boolean onRequestSendAccessibilityEvent(View child, AccessibilityEvent event) {
+        if (super.onRequestSendAccessibilityEvent(child, event)) {
+            // Add a record for the entire layout since its content is somehow small.
+            // The event comes from a leaf view that is interacted with.
+            AccessibilityEvent record = AccessibilityEvent.obtain();
+            onInitializeAccessibilityEvent(record);
+            dispatchPopulateAccessibilityEvent(record);
+            event.appendRecord(record);
+            return true;
+        }
+        return false;
     }
 }

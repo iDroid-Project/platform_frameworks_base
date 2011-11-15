@@ -25,8 +25,8 @@ import com.android.tools.layoutlib.annotations.LayoutlibDelegate;
 import android.content.res.AssetManager;
 
 import java.awt.Font;
+import java.io.File;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 /**
@@ -44,13 +44,14 @@ import java.util.List;
  */
 public final class Typeface_Delegate {
 
+    private static final String SYSTEM_FONTS = "/system/fonts/";
+
     // ---- delegate manager ----
     private static final DelegateManager<Typeface_Delegate> sManager =
             new DelegateManager<Typeface_Delegate>(Typeface_Delegate.class);
 
     // ---- delegate helper data ----
     private static final String DEFAULT_FAMILY = "sans-serif";
-    private static final int[] STYLE_BUFFER = new int[1];
 
     private static FontLoader sFontLoader;
     private static final List<Typeface_Delegate> sPostInitDelegate =
@@ -145,9 +146,31 @@ public final class Typeface_Delegate {
 
     @LayoutlibDelegate
     /*package*/ static synchronized int nativeCreateFromFile(String path) {
-        Bridge.getLog().fidelityWarning(LayoutLog.TAG_UNSUPPORTED,
-                "Typeface.createFromFile() is not supported.", null /*throwable*/, null /*data*/);
-        return 0;
+        if (path.startsWith(SYSTEM_FONTS) ) {
+            String relativePath = path.substring(SYSTEM_FONTS.length());
+            File f = new File(sFontLoader.getOsFontsLocation(), relativePath);
+
+            try {
+                Font font = Font.createFont(Font.TRUETYPE_FONT, f);
+                if (font != null) {
+                    Typeface_Delegate newDelegate = new Typeface_Delegate(font);
+                    return sManager.addNewDelegate(newDelegate);
+                }
+            } catch (Exception e) {
+                Bridge.getLog().fidelityWarning(LayoutLog.TAG_BROKEN,
+                        String.format("Unable to load font %1$s", relativePath),
+                            null /*throwable*/, null /*data*/);
+            }
+        } else {
+            Bridge.getLog().fidelityWarning(LayoutLog.TAG_UNSUPPORTED,
+                    "Typeface.createFromFile() can only work with platform fonts located in " +
+                        SYSTEM_FONTS,
+                    null /*throwable*/, null /*data*/);
+        }
+
+
+        // return a copy of the base font
+        return nativeCreate(null, 0);
     }
 
     @LayoutlibDelegate
@@ -177,15 +200,17 @@ public final class Typeface_Delegate {
         mStyle = style;
     }
 
+    private Typeface_Delegate(Font font) {
+        mFamily = font.getFamily();
+        mStyle = Typeface.NORMAL;
+
+        mFonts = sFontLoader.getFallbackFonts(mStyle);
+
+        // insert the font glyph first.
+        mFonts.add(0, font);
+    }
+
     private void init() {
-        STYLE_BUFFER[0] = mStyle;
-        Font font = sFontLoader.getFont(mFamily, STYLE_BUFFER);
-        if (font != null) {
-            List<Font> list = new ArrayList<Font>();
-            list.add(font);
-            list.addAll(sFontLoader.getFallBackFonts());
-            mFonts = Collections.unmodifiableList(list);
-            mStyle = STYLE_BUFFER[0];
-        }
+        mFonts = sFontLoader.getFont(mFamily, mStyle);
     }
 }

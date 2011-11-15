@@ -5,6 +5,7 @@
 //
 #include "Main.h"
 #include "Bundle.h"
+#include "ResourceFilter.h"
 #include "ResourceTable.h"
 #include "XMLNode.h"
 
@@ -198,8 +199,10 @@ int doList(Bundle* bundle)
         if (&res == NULL) {
             printf("\nNo resource table found.\n");
         } else {
+#ifndef HAVE_ANDROID_OS
             printf("\nResource table:\n");
             res.print(false);
+#endif
         }
 
         Asset* manifestAsset = assets.openNonAsset("AndroidManifest.xml",
@@ -289,6 +292,27 @@ static int32_t getIntegerAttribute(const ResXMLTree& tree, uint32_t attrRes,
     return value.data;
 }
 
+static int32_t getResolvedIntegerAttribute(const ResTable* resTable, const ResXMLTree& tree,
+        uint32_t attrRes, String8* outError, int32_t defValue = -1)
+{
+    ssize_t idx = indexOfAttribute(tree, attrRes);
+    if (idx < 0) {
+        return defValue;
+    }
+    Res_value value;
+    if (tree.getAttributeValue(idx, &value) != NO_ERROR) {
+        if (value.dataType == Res_value::TYPE_REFERENCE) {
+            resTable->resolveReference(&value, 0);
+        }
+        if (value.dataType < Res_value::TYPE_FIRST_INT
+                || value.dataType > Res_value::TYPE_LAST_INT) {
+            if (outError != NULL) *outError = "attribute is not an integer value";
+            return defValue;
+        }
+    }
+    return value.data;
+}
+
 static String8 getResolvedAttribute(const ResTable* resTable, const ResXMLTree& tree,
         uint32_t attrRes, String8* outError)
 {
@@ -318,11 +342,12 @@ static String8 getResolvedAttribute(const ResTable* resTable, const ResXMLTree& 
 // These are attribute resource constants for the platform, as found
 // in android.R.attr
 enum {
+    LABEL_ATTR = 0x01010001,
+    ICON_ATTR = 0x01010002,
     NAME_ATTR = 0x01010003,
     VERSION_CODE_ATTR = 0x0101021b,
     VERSION_NAME_ATTR = 0x0101021c,
-    LABEL_ATTR = 0x01010001,
-    ICON_ATTR = 0x01010002,
+    SCREEN_ORIENTATION_ATTR = 0x0101001e,
     MIN_SDK_VERSION_ATTR = 0x0101020c,
     MAX_SDK_VERSION_ATTR = 0x01010271,
     REQ_TOUCH_SCREEN_ATTR = 0x01010227,
@@ -341,6 +366,10 @@ enum {
     REQUIRED_ATTR = 0x0101028e,
     SCREEN_SIZE_ATTR = 0x010102ca,
     SCREEN_DENSITY_ATTR = 0x010102cb,
+    REQUIRES_SMALLEST_WIDTH_DP_ATTR = 0x01010364,
+    COMPATIBLE_WIDTH_LIMIT_DP_ATTR = 0x01010365,
+    LARGEST_WIDTH_LIMIT_DP_ATTR = 0x01010366,
+    PUBLIC_KEY_ATTR = 0x010103a6,
 };
 
 const char *getComponentName(String8 &pkgName, String8 &componentName) {
@@ -421,6 +450,24 @@ int doDump(Bundle* bundle)
         return 1;
     }
 
+    // Make a dummy config for retrieving resources...  we need to supply
+    // non-default values for some configs so that we can retrieve resources
+    // in the app that don't have a default.  The most important of these is
+    // the API version because key resources like icons will have an implicit
+    // version if they are using newer config types like density.
+    ResTable_config config;
+    config.language[0] = 'e';
+    config.language[1] = 'n';
+    config.country[0] = 'U';
+    config.country[1] = 'S';
+    config.orientation = ResTable_config::ORIENTATION_PORT;
+    config.density = ResTable_config::DENSITY_MEDIUM;
+    config.sdkVersion = 10000; // Very high.
+    config.screenWidthDp = 320;
+    config.screenHeightDp = 480;
+    config.smallestScreenWidthDp = 320;
+    assets.setConfiguration(config);
+
     const ResTable& res = assets.getResources(false);
     if (&res == NULL) {
         fprintf(stderr, "ERROR: dump failed because no resource table was found\n");
@@ -428,8 +475,9 @@ int doDump(Bundle* bundle)
     }
 
     if (strcmp("resources", option) == 0) {
+#ifndef HAVE_ANDROID_OS
         res.print(bundle->getValues());
-
+#endif
     } else if (strcmp("xmltree", option) == 0) {
         if (bundle->getFileSpecCount() < 3) {
             fprintf(stderr, "ERROR: no dump xmltree resource file specified\n");
@@ -539,6 +587,19 @@ int doDump(Bundle* bundle)
                 }
             }
         } else if (strcmp("badging", option) == 0) {
+            Vector<String8> locales;
+            res.getLocales(&locales);
+
+            Vector<ResTable_config> configs;
+            res.getConfigurations(&configs);
+            SortedVector<int> densities;
+            const size_t NC = configs.size();
+            for (size_t i=0; i<NC; i++) {
+                int dens = configs[i].density;
+                if (dens == 0) dens = 160;
+                densities.add(dens);
+            }
+
             size_t len;
             ResXMLTree::event_code_t code;
             int depth = 0;
@@ -595,6 +656,10 @@ int doDump(Bundle* bundle)
             bool specTouchscreenFeature = false; // touchscreen-related
             bool specMultitouchFeature = false;
             bool reqDistinctMultitouchFeature = false;
+            bool specScreenPortraitFeature = false;
+            bool specScreenLandscapeFeature = false;
+            bool reqScreenPortraitFeature = false;
+            bool reqScreenLandscapeFeature = false;
             // 2.2 also added some other features that apps can request, but that
             // have no corresponding permission, so we cannot implement any
             // back-compatibility heuristic for them. The below are thus unnecessary
@@ -611,6 +676,9 @@ int doDump(Bundle* bundle)
             int largeScreen = 1;
             int xlargeScreen = 1;
             int anyDensity = 1;
+            int requiresSmallestWidthDp = 0;
+            int compatibleWidthLimitDp = 0;
+            int largestWidthLimitDp = 0;
             String8 pkg;
             String8 activityName;
             String8 activityLabel;
@@ -625,10 +693,11 @@ int doDump(Bundle* bundle)
                     } else if (depth < 3) {
                         if (withinActivity && isMainActivity && isLauncherActivity) {
                             const char *aName = getComponentName(pkg, activityName);
+                            printf("launchable-activity:");
                             if (aName != NULL) {
-                                printf("launchable activity name='%s'", aName);
+                                printf(" name='%s' ", aName);
                             }
-                            printf("label='%s' icon='%s'\n",
+                            printf(" label='%s' icon='%s'\n",
                                     activityLabel.string(),
                                     activityIcon.string());
                         }
@@ -693,23 +762,51 @@ int doDump(Bundle* bundle)
                     withinApplication = false;
                     if (tag == "application") {
                         withinApplication = true;
-                        String8 label = getResolvedAttribute(&res, tree, LABEL_ATTR, &error);
-                         if (error != "") {
-                             fprintf(stderr, "ERROR getting 'android:label' attribute: %s\n", error.string());
-                             goto bail;
+
+                        String8 label;
+                        const size_t NL = locales.size();
+                        for (size_t i=0; i<NL; i++) {
+                            const char* localeStr =  locales[i].string();
+                            assets.setLocale(localeStr != NULL ? localeStr : "");
+                            String8 llabel = getResolvedAttribute(&res, tree, LABEL_ATTR, &error);
+                            if (llabel != "") {
+                                if (localeStr == NULL || strlen(localeStr) == 0) {
+                                    label = llabel;
+                                    printf("application-label:'%s'\n", llabel.string());
+                                } else {
+                                    if (label == "") {
+                                        label = llabel;
+                                    }
+                                    printf("application-label-%s:'%s'\n", localeStr,
+                                            llabel.string());
+                                }
+                            }
                         }
-                        printf("application: label='%s' ", label.string());
+
+                        ResTable_config tmpConfig = config;
+                        const size_t ND = densities.size();
+                        for (size_t i=0; i<ND; i++) {
+                            tmpConfig.density = densities[i];
+                            assets.setConfiguration(tmpConfig);
+                            String8 icon = getResolvedAttribute(&res, tree, ICON_ATTR, &error);
+                            if (icon != "") {
+                                printf("application-icon-%d:'%s'\n", densities[i], icon.string());
+                            }
+                        }
+                        assets.setConfiguration(config);
+
                         String8 icon = getResolvedAttribute(&res, tree, ICON_ATTR, &error);
                         if (error != "") {
                             fprintf(stderr, "ERROR getting 'android:icon' attribute: %s\n", error.string());
                             goto bail;
                         }
-                        printf("icon='%s'\n", icon.string());
                         int32_t testOnly = getIntegerAttribute(tree, TEST_ONLY_ATTR, &error, 0);
                         if (error != "") {
                             fprintf(stderr, "ERROR getting 'android:testOnly' attribute: %s\n", error.string());
                             goto bail;
                         }
+                        printf("application: label='%s' ", label.string());
+                        printf("icon='%s'\n", icon.string());
                         if (testOnly != 0) {
                             printf("testOnly='%d'\n", testOnly);
                         }
@@ -789,6 +886,12 @@ int doDump(Bundle* bundle)
                                 XLARGE_SCREEN_ATTR, NULL, 1);
                         anyDensity = getIntegerAttribute(tree,
                                 ANY_DENSITY_ATTR, NULL, 1);
+                        requiresSmallestWidthDp = getIntegerAttribute(tree,
+                                REQUIRES_SMALLEST_WIDTH_DP_ATTR, NULL, 0);
+                        compatibleWidthLimitDp = getIntegerAttribute(tree,
+                                COMPATIBLE_WIDTH_LIMIT_DP_ATTR, NULL, 0);
+                        largestWidthLimitDp = getIntegerAttribute(tree,
+                                LARGEST_WIDTH_LIMIT_DP_ATTR, NULL, 0);
                     } else if (tag == "uses-feature") {
                         String8 name = getAttribute(tree, NAME_ATTR, &error);
 
@@ -834,6 +937,10 @@ int doDump(Bundle* bundle)
                                 // these have no corresponding permission to check for,
                                 // but should imply the foundational telephony permission
                                 reqTelephonySubFeature = true;
+                            } else if (name == "android.hardware.screen.portrait") {
+                                specScreenPortraitFeature = true;
+                            } else if (name == "android.hardware.screen.landscape") {
+                                specScreenLandscapeFeature = true;
                             }
                             printf("uses-feature%s:'%s'\n",
                                     req ? "" : "-not-required", name.string());
@@ -916,6 +1023,15 @@ int doDump(Bundle* bundle)
                     } else if (tag == "compatible-screens") {
                         printCompatibleScreens(tree);
                         depth--;
+                    } else if (tag == "package-verifier") {
+                        String8 name = getAttribute(tree, NAME_ATTR, &error);
+                        if (name != "" && error == "") {
+                            String8 publicKey = getAttribute(tree, PUBLIC_KEY_ATTR, &error);
+                            if (publicKey != "" && error == "") {
+                                printf("package-verifier: name='%s' publicKey='%s'\n",
+                                        name.string(), publicKey.string());
+                            }
+                        }
                     }
                 } else if (depth == 3 && withinApplication) {
                     withinActivity = false;
@@ -940,6 +1056,18 @@ int doDump(Bundle* bundle)
                         if (error != "") {
                             fprintf(stderr, "ERROR getting 'android:icon' attribute: %s\n", error.string());
                             goto bail;
+                        }
+
+                        int32_t orien = getResolvedIntegerAttribute(&res, tree,
+                                SCREEN_ORIENTATION_ATTR, &error);
+                        if (error == "") {
+                            if (orien == 0 || orien == 6 || orien == 8) {
+                                // Requests landscape, sensorLandscape, or reverseLandscape.
+                                reqScreenLandscapeFeature = true;
+                            } else if (orien == 1 || orien == 7 || orien == 9) {
+                                // Requests portrait, sensorPortrait, or reversePortrait.
+                                reqScreenPortraitFeature = true;
+                            }
                         }
                     } else if (tag == "uses-library") {
                         String8 libraryName = getAttribute(tree, NAME_ATTR, &error);
@@ -1100,6 +1228,19 @@ int doDump(Bundle* bundle)
                 printf("uses-feature:'android.hardware.touchscreen.multitouch'\n");
             }
 
+            // Landscape/portrait-related compatibility logic
+            if (!specScreenLandscapeFeature && !specScreenPortraitFeature) {
+                // If the app has specified any activities in its manifest
+                // that request a specific orientation, then assume that
+                // orientation is required.
+                if (reqScreenLandscapeFeature) {
+                    printf("uses-feature:'android.hardware.screen.landscape'\n");
+                }
+                if (reqScreenPortraitFeature) {
+                    printf("uses-feature:'android.hardware.screen.portrait'\n");
+                }
+            }
+
             if (hasMainActivity) {
                 printf("main\n");
             }
@@ -1125,6 +1266,34 @@ int doDump(Bundle* bundle)
                 printf("other-services\n");
             }
 
+            // For modern apps, if screen size buckets haven't been specified
+            // but the new width ranges have, then infer the buckets from them.
+            if (smallScreen > 0 && normalScreen > 0 && largeScreen > 0 && xlargeScreen > 0
+                    && requiresSmallestWidthDp > 0) {
+                int compatWidth = compatibleWidthLimitDp;
+                if (compatWidth <= 0) compatWidth = requiresSmallestWidthDp;
+                if (requiresSmallestWidthDp <= 240 && compatWidth >= 240) {
+                    smallScreen = -1;
+                } else {
+                    smallScreen = 0;
+                }
+                if (requiresSmallestWidthDp <= 320 && compatWidth >= 320) {
+                    normalScreen = -1;
+                } else {
+                    normalScreen = 0;
+                }
+                if (requiresSmallestWidthDp <= 480 && compatWidth >= 480) {
+                    largeScreen = -1;
+                } else {
+                    largeScreen = 0;
+                }
+                if (requiresSmallestWidthDp <= 720 && compatWidth >= 720) {
+                    xlargeScreen = -1;
+                } else {
+                    xlargeScreen = 0;
+                }
+            }
+
             // Determine default values for any unspecified screen sizes,
             // based on the target SDK of the package.  As of 4 (donut)
             // the screen size support was introduced, so all default to
@@ -1143,7 +1312,8 @@ int doDump(Bundle* bundle)
                 xlargeScreen = targetSdk >= 9 ? -1 : 0;
             }
             if (anyDensity > 0) {
-                anyDensity = targetSdk >= 4 ? -1 : 0;
+                anyDensity = (targetSdk >= 4 || requiresSmallestWidthDp > 0
+                        || compatibleWidthLimitDp > 0) ? -1 : 0;
             }
             printf("supports-screens:");
             if (smallScreen != 0) printf(" 'small'");
@@ -1151,12 +1321,18 @@ int doDump(Bundle* bundle)
             if (largeScreen != 0) printf(" 'large'");
             if (xlargeScreen != 0) printf(" 'xlarge'");
             printf("\n");
-
             printf("supports-any-density: '%s'\n", anyDensity ? "true" : "false");
+            if (requiresSmallestWidthDp > 0) {
+                printf("requires-smallest-width:'%d'\n", requiresSmallestWidthDp);
+            }
+            if (compatibleWidthLimitDp > 0) {
+                printf("compatible-width-limit:'%d'\n", compatibleWidthLimitDp);
+            }
+            if (largestWidthLimitDp > 0) {
+                printf("largest-width-limit:'%d'\n", largestWidthLimitDp);
+            }
 
             printf("locales:");
-            Vector<String8> locales;
-            res.getLocales(&locales);
             const size_t NL = locales.size();
             for (size_t i=0; i<NL; i++) {
                 const char* localeStr =  locales[i].string();
@@ -1166,16 +1342,6 @@ int doDump(Bundle* bundle)
                 printf(" '%s'", localeStr);
             }
             printf("\n");
-
-            Vector<ResTable_config> configs;
-            res.getConfigurations(&configs);
-            SortedVector<int> densities;
-            const size_t NC = configs.size();
-            for (size_t i=0; i<NC; i++) {
-                int dens = configs[i].density;
-                if (dens == 0) dens = 160;
-                densities.add(dens);
-            }
 
             printf("densities:");
             const size_t ND = densities.size();
@@ -1353,6 +1519,8 @@ int doPackage(Bundle* bundle)
     status_t err;
     sp<AaptAssets> assets;
     int N;
+    FILE* fp;
+    String8 dependencyFile;
 
     // -c zz_ZZ means do pseudolocalization
     ResourceFilter filter;
@@ -1387,16 +1555,28 @@ int doPackage(Bundle* bundle)
 
     // Load the assets.
     assets = new AaptAssets();
+
+    // Set up the resource gathering in assets if we're going to generate
+    // dependency files. Every time we encounter a resource while slurping
+    // the tree, we'll add it to these stores so we have full resource paths
+    // to write to a dependency file.
+    if (bundle->getGenDependencies()) {
+        sp<FilePathStore> resPathStore = new FilePathStore;
+        assets->setFullResPaths(resPathStore);
+        sp<FilePathStore> assetPathStore = new FilePathStore;
+        assets->setFullAssetPaths(assetPathStore);
+    }
+
     err = assets->slurpFromArgs(bundle);
     if (err < 0) {
         goto bail;
     }
 
     if (bundle->getVerbose()) {
-        assets->print();
+        assets->print(String8());
     }
 
-    // If they asked for any files that need to be compiled, do so.
+    // If they asked for any fileAs that need to be compiled, do so.
     if (bundle->getResourceSourceDirs().size() || bundle->getAndroidManifestFile()) {
         err = buildResources(bundle, assets);
         if (err != 0) {
@@ -1410,10 +1590,46 @@ int doPackage(Bundle* bundle)
         goto bail;
     }
 
+    // If we've been asked to generate a dependency file, do that here
+    if (bundle->getGenDependencies()) {
+        // If this is the packaging step, generate the dependency file next to
+        // the output apk (e.g. bin/resources.ap_.d)
+        if (outputAPKFile) {
+            dependencyFile = String8(outputAPKFile);
+            // Add the .d extension to the dependency file.
+            dependencyFile.append(".d");
+        } else {
+            // Else if this is the R.java dependency generation step,
+            // generate the dependency file in the R.java package subdirectory
+            // e.g. gen/com/foo/app/R.java.d
+            dependencyFile = String8(bundle->getRClassDir());
+            dependencyFile.appendPath("R.java.d");
+        }
+        // Make sure we have a clean dependency file to start with
+        fp = fopen(dependencyFile, "w");
+        fclose(fp);
+    }
+
     // Write out R.java constants
     if (assets->getPackage() == assets->getSymbolsPrivatePackage()) {
         if (bundle->getCustomPackage() == NULL) {
+            // Write the R.java file into the appropriate class directory
+            // e.g. gen/com/foo/app/R.java
             err = writeResourceSymbols(bundle, assets, assets->getPackage(), true);
+            // If we have library files, we're going to write our R.java file into
+            // the appropriate class directory for those libraries as well.
+            // e.g. gen/com/foo/app/lib/R.java
+            if (bundle->getExtraPackages() != NULL) {
+                // Split on colon
+                String8 libs(bundle->getExtraPackages());
+                char* packageString = strtok(libs.lockBuffer(libs.length()), ":");
+                while (packageString != NULL) {
+                    // Write the R.java file out with the correct package name
+                    err = writeResourceSymbols(bundle, assets, String8(packageString), true);
+                    packageString = strtok(NULL, ":");
+                }
+                libs.unlockBuffer();
+            }
         } else {
             const String8 customPkg(bundle->getCustomPackage());
             err = writeResourceSymbols(bundle, assets, customPkg, true);
@@ -1447,10 +1663,49 @@ int doPackage(Bundle* bundle)
         }
     }
 
+    // If we've been asked to generate a dependency file, we need to finish up here.
+    // the writeResourceSymbols and writeAPK functions have already written the target
+    // half of the dependency file, now we need to write the prerequisites. (files that
+    // the R.java file or .ap_ file depend on)
+    if (bundle->getGenDependencies()) {
+        // Now that writeResourceSymbols or writeAPK has taken care of writing
+        // the targets to our dependency file, we'll write the prereqs
+        fp = fopen(dependencyFile, "a+");
+        fprintf(fp, " : ");
+        bool includeRaw = (outputAPKFile != NULL);
+        err = writeDependencyPreReqs(bundle, assets, fp, includeRaw);
+        // Also manually add the AndroidManifeset since it's not under res/ or assets/
+        // and therefore was not added to our pathstores during slurping
+        fprintf(fp, "%s \\\n", bundle->getAndroidManifestFile());
+        fclose(fp);
+    }
+
     retVal = 0;
 bail:
     if (SourcePos::hasErrors()) {
         SourcePos::printErrors(stderr);
     }
     return retVal;
+}
+
+/*
+ * Do PNG Crunching
+ * PRECONDITIONS
+ *  -S flag points to a source directory containing drawable* folders
+ *  -C flag points to destination directory. The folder structure in the
+ *     source directory will be mirrored to the destination (cache) directory
+ *
+ * POSTCONDITIONS
+ *  Destination directory will be updated to match the PNG files in
+ *  the source directory. 
+ */
+int doCrunch(Bundle* bundle)
+{
+    fprintf(stdout, "Crunching PNG Files in ");
+    fprintf(stdout, "source dir: %s\n", bundle->getResourceSourceDirs()[0]);
+    fprintf(stdout, "To destination dir: %s\n", bundle->getCrunchedOutputDir());
+
+    updatePreProcessedCache(bundle);
+
+    return NO_ERROR;
 }

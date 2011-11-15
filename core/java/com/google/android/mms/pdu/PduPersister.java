@@ -39,7 +39,6 @@ import android.provider.Telephony.Mms.Addr;
 import android.provider.Telephony.Mms.Part;
 import android.provider.Telephony.MmsSms.PendingMessages;
 import android.text.TextUtils;
-import android.util.Config;
 import android.util.Log;
 
 import java.io.ByteArrayOutputStream;
@@ -63,7 +62,7 @@ import com.google.android.mms.pdu.EncodedStringValue;
 public class PduPersister {
     private static final String TAG = "PduPersister";
     private static final boolean DEBUG = false;
-    private static final boolean LOCAL_LOGV = DEBUG ? Config.LOGD : Config.LOGV;
+    private static final boolean LOCAL_LOGV = false;
 
     private static final long DUMMY_THREAD_ID = Long.MAX_VALUE;
 
@@ -668,6 +667,13 @@ public class PduPersister {
         String contentType = null;
         if (part.getContentType() != null) {
             contentType = toIsoString(part.getContentType());
+
+            // There is no "image/jpg" in Android (and it's an invalid mimetype).
+            // Change it to "image/jpeg"
+            if (ContentType.IMAGE_JPG.equals(contentType)) {
+                contentType = ContentType.IMAGE_JPEG;
+            }
+
             values.put(Part.CONTENT_TYPE, contentType);
             // To ensure the SMIL part is always the first part.
             if (ContentType.APP_SMIL.equals(contentType)) {

@@ -16,68 +16,140 @@
 
 package android.renderscript;
 
+
 import java.lang.reflect.Field;
+import android.util.Log;
 
 /**
- * @hide
+ * <p>Type is an allocation template. It consists of an Element and one or more
+ * dimensions. It describes only the layout of memory but does not allocate any
+ * storage for the data that is described.</p>
+ *
+ * <p>A Type consists of several dimensions. Those are X, Y, Z, LOD (level of
+ * detail), Faces (faces of a cube map).  The X,Y,Z dimensions can be assigned
+ * any positive integral value within the constraints of available memory.  A
+ * single dimension allocation would have an X dimension of greater than zero
+ * while the Y and Z dimensions would be zero to indicate not present.  In this
+ * regard an allocation of x=10, y=1 would be considered 2 dimensionsal while
+ * x=10, y=0 would be considered 1 dimensional.</p>
+ *
+ * <p>The LOD and Faces dimensions are booleans to indicate present or not present.</p>
  *
  **/
 public class Type extends BaseObj {
     int mDimX;
     int mDimY;
     int mDimZ;
-    boolean mDimLOD;
+    boolean mDimMipmaps;
     boolean mDimFaces;
     int mElementCount;
     Element mElement;
 
-    private int mNativeCache;
-    Class mJavaClass;
+    public enum CubemapFace {
+        POSITIVE_X (0),
+        NEGATIVE_X (1),
+        POSITIVE_Y (2),
+        NEGATIVE_Y (3),
+        POSITIVE_Z (4),
+        NEGATIVE_Z (5),
+        @Deprecated
+        POSITVE_X (0),
+        @Deprecated
+        POSITVE_Y (2),
+        @Deprecated
+        POSITVE_Z (4);
 
+        int mID;
+        CubemapFace(int id) {
+            mID = id;
+        }
+    }
+
+    /**
+     * Return the element associated with this Type.
+     *
+     * @return Element
+     */
     public Element getElement() {
         return mElement;
     }
 
+    /**
+     * Return the value of the X dimension.
+     *
+     * @return int
+     */
     public int getX() {
         return mDimX;
     }
+
+    /**
+     * Return the value of the Y dimension or 0 for a 1D allocation.
+     *
+     * @return int
+     */
     public int getY() {
         return mDimY;
     }
+
+    /**
+     * Return the value of the Z dimension or 0 for a 1D or 2D allocation.
+     *
+     * @return int
+     */
     public int getZ() {
         return mDimZ;
     }
-    public boolean getLOD() {
-        return mDimLOD;
+
+    /**
+     * Return if the Type has a mipmap chain.
+     *
+     * @return boolean
+     */
+    public boolean hasMipmaps() {
+        return mDimMipmaps;
     }
-    public boolean getFaces() {
+
+    /**
+     * Return if the Type is a cube map.
+     *
+     * @return boolean
+     */
+    public boolean hasFaces() {
         return mDimFaces;
     }
-    public int getElementCount() {
+
+    /**
+     * Return the total number of accessable cells in the Type.
+     *
+     * @return int
+     */
+    public int getCount() {
         return mElementCount;
     }
 
     void calcElementCount() {
-        boolean hasLod = getLOD();
+        boolean hasLod = hasMipmaps();
         int x = getX();
         int y = getY();
         int z = getZ();
         int faces = 1;
-        if(getFaces()) {
+        if (hasFaces()) {
             faces = 6;
         }
-        if(x == 0) {
+        if (x == 0) {
             x = 1;
         }
-        if(y == 0) {
+        if (y == 0) {
             y = 1;
         }
-        if(z == 0) {
+        if (z == 0) {
             z = 1;
         }
 
         int count = x * y * z * faces;
-        if(hasLod && (x > 1) && (y > 1) && (z > 1)) {
+
+        while (hasLod && ((x > 1) || (y > 1) || (z > 1))) {
             if(x > 1) {
                 x >>= 1;
             }
@@ -95,131 +167,123 @@ public class Type extends BaseObj {
 
 
     Type(int id, RenderScript rs) {
-        super(rs);
-        mID = id;
-        mNativeCache = 0;
+        super(id, rs);
     }
 
-    protected void finalize() throws Throwable {
-        if(mNativeCache != 0) {
-            mRS.nTypeFinalDestroy(this);
-            mNativeCache = 0;
+    @Override
+    void updateFromNative() {
+        // We have 6 integer to obtain mDimX; mDimY; mDimZ;
+        // mDimLOD; mDimFaces; mElement;
+        int[] dataBuffer = new int[6];
+        mRS.nTypeGetNativeData(getID(), dataBuffer);
+
+        mDimX = dataBuffer[0];
+        mDimY = dataBuffer[1];
+        mDimZ = dataBuffer[2];
+        mDimMipmaps = dataBuffer[3] == 1 ? true : false;
+        mDimFaces = dataBuffer[4] == 1 ? true : false;
+
+        int elementID = dataBuffer[5];
+        if(elementID != 0) {
+            mElement = new Element(elementID, mRS);
+            mElement.updateFromNative();
         }
-        super.finalize();
+        calcElementCount();
     }
 
-    public static Type createFromClass(RenderScript rs, Class c, int size) {
-        Element e = Element.createFromClass(rs, c);
-        Builder b = new Builder(rs, e);
-        b.add(Dimension.X, size);
-        Type t = b.create();
-        e.destroy();
-
-        // native fields
-        {
-            Field[] fields = c.getFields();
-            int[] arTypes = new int[fields.length];
-            int[] arBits = new int[fields.length];
-
-            for(int ct=0; ct < fields.length; ct++) {
-                Field f = fields[ct];
-                Class fc = f.getType();
-                if(fc == int.class) {
-                    arTypes[ct] = Element.DataType.SIGNED_32.mID;
-                    arBits[ct] = 32;
-                } else if(fc == short.class) {
-                    arTypes[ct] = Element.DataType.SIGNED_16.mID;
-                    arBits[ct] = 16;
-                } else if(fc == byte.class) {
-                    arTypes[ct] = Element.DataType.SIGNED_8.mID;
-                    arBits[ct] = 8;
-                } else if(fc == float.class) {
-                    arTypes[ct] = Element.DataType.FLOAT_32.mID;
-                    arBits[ct] = 32;
-                } else {
-                    throw new IllegalArgumentException("Unkown field type");
-                }
-            }
-            rs.nTypeSetupFields(t, arTypes, arBits, fields);
-        }
-        t.mJavaClass = c;
-        return t;
-    }
-
-    public static Type createFromClass(RenderScript rs, Class c, int size, String scriptName) {
-        Type t = createFromClass(rs, c, size);
-        t.setName(scriptName);
-        return t;
-    }
-
-
+    /**
+     * Builder class for Type.
+     *
+     */
     public static class Builder {
         RenderScript mRS;
-        Entry[] mEntries;
-        int mEntryCount;
+        int mDimX = 1;
+        int mDimY;
+        int mDimZ;
+        boolean mDimMipmaps;
+        boolean mDimFaces;
+
         Element mElement;
 
-        class Entry {
-            Dimension mDim;
-            int mValue;
-        }
-
+        /**
+         * Create a new builder object.
+         *
+         * @param rs
+         * @param e The element for the type to be created.
+         */
         public Builder(RenderScript rs, Element e) {
-            if(e.mID == 0) {
-                throw new IllegalArgumentException("Invalid element.");
-            }
-
+            e.checkValid();
             mRS = rs;
-            mEntries = new Entry[4];
             mElement = e;
         }
 
-        public void add(Dimension d, int value) {
+        /**
+         * Add a dimension to the Type.
+         *
+         *
+         * @param value
+         */
+        public Builder setX(int value) {
             if(value < 1) {
-                throw new IllegalArgumentException("Values of less than 1 for Dimensions are not valid.");
+                throw new RSIllegalArgumentException("Values of less than 1 for Dimension X are not valid.");
             }
-            if(mEntries.length >= mEntryCount) {
-                Entry[] en = new Entry[mEntryCount + 8];
-                System.arraycopy(mEntries, 0, en, 0, mEntries.length);
-                mEntries = en;
-            }
-            mEntries[mEntryCount] = new Entry();
-            mEntries[mEntryCount].mDim = d;
-            mEntries[mEntryCount].mValue = value;
-            mEntryCount++;
+            mDimX = value;
+            return this;
         }
 
-        static synchronized Type internalCreate(RenderScript rs, Builder b) {
-            rs.nTypeBegin(b.mElement.mID);
-            for (int ct=0; ct < b.mEntryCount; ct++) {
-                Entry en = b.mEntries[ct];
-                rs.nTypeAdd(en.mDim.mID, en.mValue);
+        public Builder setY(int value) {
+            if(value < 1) {
+                throw new RSIllegalArgumentException("Values of less than 1 for Dimension Y are not valid.");
             }
-            int id = rs.nTypeCreate();
-            return new Type(id, rs);
+            mDimY = value;
+            return this;
         }
 
+        public Builder setMipmaps(boolean value) {
+            mDimMipmaps = value;
+            return this;
+        }
+
+        public Builder setFaces(boolean value) {
+            mDimFaces = value;
+            return this;
+        }
+
+
+        /**
+         * Validate structure and create a new type.
+         *
+         * @return Type
+         */
         public Type create() {
-            Type t = internalCreate(mRS, this);
-            t.mElement = mElement;
-
-            for(int ct=0; ct < mEntryCount; ct++) {
-                if(mEntries[ct].mDim == Dimension.X) {
-                    t.mDimX = mEntries[ct].mValue;
+            if (mDimZ > 0) {
+                if ((mDimX < 1) || (mDimY < 1)) {
+                    throw new RSInvalidStateException("Both X and Y dimension required when Z is present.");
                 }
-                if(mEntries[ct].mDim == Dimension.Y) {
-                    t.mDimY = mEntries[ct].mValue;
-                }
-                if(mEntries[ct].mDim == Dimension.Z) {
-                    t.mDimZ = mEntries[ct].mValue;
-                }
-                if(mEntries[ct].mDim == Dimension.LOD) {
-                    t.mDimLOD = mEntries[ct].mValue != 0;
-                }
-                if(mEntries[ct].mDim == Dimension.FACE) {
-                    t.mDimFaces = mEntries[ct].mValue != 0;
+                if (mDimFaces) {
+                    throw new RSInvalidStateException("Cube maps not supported with 3D types.");
                 }
             }
+            if (mDimY > 0) {
+                if (mDimX < 1) {
+                    throw new RSInvalidStateException("X dimension required when Y is present.");
+                }
+            }
+            if (mDimFaces) {
+                if (mDimY < 1) {
+                    throw new RSInvalidStateException("Cube maps require 2D Types.");
+                }
+            }
+
+            int id = mRS.nTypeCreate(mElement.getID(), mDimX, mDimY, mDimZ, mDimMipmaps, mDimFaces);
+            Type t = new Type(id, mRS);
+            t.mElement = mElement;
+            t.mDimX = mDimX;
+            t.mDimY = mDimY;
+            t.mDimZ = mDimZ;
+            t.mDimMipmaps = mDimMipmaps;
+            t.mDimFaces = mDimFaces;
+
             t.calcElementCount();
             return t;
         }

@@ -23,21 +23,28 @@
 #include <media/stagefright/MetaData.h>
 #include <media/mediarecorder.h>
 #include <sys/prctl.h>
-#include <sys/resource.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 namespace android {
 
 AMRWriter::AMRWriter(const char *filename)
-    : mFile(fopen(filename, "wb")),
-      mInitCheck(mFile != NULL ? OK : NO_INIT),
+    : mFd(-1),
+      mInitCheck(NO_INIT),
       mStarted(false),
       mPaused(false),
       mResumed(false) {
+
+    mFd = open(filename, O_CREAT | O_LARGEFILE | O_TRUNC | O_RDWR);
+    if (mFd >= 0) {
+        mInitCheck = OK;
+    }
 }
 
 AMRWriter::AMRWriter(int fd)
-    : mFile(fdopen(fd, "wb")),
-      mInitCheck(mFile != NULL ? OK : NO_INIT),
+    : mFd(dup(fd)),
+      mInitCheck(mFd < 0? NO_INIT: OK),
       mStarted(false),
       mPaused(false),
       mResumed(false) {
@@ -48,9 +55,9 @@ AMRWriter::~AMRWriter() {
         stop();
     }
 
-    if (mFile != NULL) {
-        fclose(mFile);
-        mFile = NULL;
+    if (mFd != -1) {
+        close(mFd);
+        mFd = -1;
     }
 }
 
@@ -90,8 +97,8 @@ status_t AMRWriter::addSource(const sp<MediaSource> &source) {
     mSource = source;
 
     const char *kHeader = isWide ? "#!AMR-WB\n" : "#!AMR\n";
-    size_t n = strlen(kHeader);
-    if (fwrite(kHeader, 1, n, mFile) != n) {
+    ssize_t n = strlen(kHeader);
+    if (write(mFd, kHeader, n) != n) {
         return ERROR_IO;
     }
 
@@ -240,11 +247,9 @@ status_t AMRWriter::threadFunc() {
             notify(MEDIA_RECORDER_EVENT_INFO, MEDIA_RECORDER_INFO_MAX_DURATION_REACHED, 0);
             break;
         }
-        ssize_t n = fwrite(
-                (const uint8_t *)buffer->data() + buffer->range_offset(),
-                1,
-                buffer->range_length(),
-                mFile);
+        ssize_t n = write(mFd,
+                        (const uint8_t *)buffer->data() + buffer->range_offset(),
+                        buffer->range_length());
 
         if (n < (ssize_t)buffer->range_length()) {
             buffer->release();
@@ -263,12 +268,11 @@ status_t AMRWriter::threadFunc() {
     }
 
     if (stoppedPrematurely) {
-        notify(MEDIA_RECORDER_EVENT_INFO, MEDIA_RECORDER_INFO_COMPLETION_STATUS, UNKNOWN_ERROR);
+        notify(MEDIA_RECORDER_EVENT_INFO, MEDIA_RECORDER_TRACK_INFO_COMPLETION_STATUS, UNKNOWN_ERROR);
     }
 
-    fflush(mFile);
-    fclose(mFile);
-    mFile = NULL;
+    close(mFd);
+    mFd = -1;
     mReachedEOS = true;
     if (err == ERROR_END_OF_STREAM) {
         return OK;

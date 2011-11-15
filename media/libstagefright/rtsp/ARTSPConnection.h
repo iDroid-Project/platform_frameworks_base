@@ -33,7 +33,7 @@ struct ARTSPResponse : public RefBase {
 };
 
 struct ARTSPConnection : public AHandler {
-    ARTSPConnection();
+    ARTSPConnection(bool uidValid = false, uid_t uid = 0);
 
     void connect(const char *url, const sp<AMessage> &reply);
     void disconnect(const sp<AMessage> &reply);
@@ -74,6 +74,8 @@ private:
 
     static const int64_t kSelectTimeoutUs;
 
+    bool mUIDValid;
+    uid_t mUID;
     State mState;
     AString mUser, mPass;
     AuthType mAuthType;
@@ -86,6 +88,8 @@ private:
     KeyedVector<int32_t, sp<AMessage> > mPendingRequests;
 
     sp<AMessage> mObserveBinaryMessage;
+
+    AString mUserAgent;
 
     void onConnect(const sp<AMessage> &msg);
     void onDisconnect(const sp<AMessage> &msg);
@@ -106,6 +110,8 @@ private:
     bool parseAuthMethod(const sp<ARTSPResponse> &response);
     void addAuthentication(AString *request);
 
+    void addUserAgent(AString *request) const;
+
     status_t findPendingRequest(
             const sp<ARTSPResponse> &response, ssize_t *index) const;
 
@@ -113,6 +119,8 @@ private:
 
     static bool ParseSingleUnsignedLong(
             const char *from, unsigned long *x);
+
+    static void MakeUserAgent(AString *userAgent);
 
     DISALLOW_EVIL_CONSTRUCTORS(ARTSPConnection);
 };

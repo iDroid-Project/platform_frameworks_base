@@ -36,11 +36,13 @@ namespace android {
 
 // ---------------------------------------------------------------------------
 
-class Region;
-class SharedClient;
-class ISurfaceComposer;
 class DisplayInfo;
+class Composer;
+class IMemoryHeap;
+class ISurfaceComposer;
+class Region;
 class surface_flinger_cblk_t;
+struct layer_state_t;
 
 // ---------------------------------------------------------------------------
 
@@ -59,8 +61,11 @@ public:
 
 // ---------------------------------------------------------------------------
 
+class Composer;
+
 class SurfaceComposerClient : public RefBase
 {
+    friend class Composer;
 public:    
                 SurfaceComposerClient();
     virtual     ~SurfaceComposerClient();
@@ -79,7 +84,6 @@ public:
 
     //! Create a surface
     sp<SurfaceControl> createSurface(
-            int pid,            // pid of the process the surface is for
             const String8& name,// name of the surface
             DisplayID display,  // Display to create this surface on
             uint32_t w,         // width in pixel
@@ -89,7 +93,6 @@ public:
     );
 
     sp<SurfaceControl> createSurface(
-            int pid,            // pid of the process the surface is for
             DisplayID display,  // Display to create this surface on
             uint32_t w,         // width in pixel
             uint32_t h,         // height in pixel
@@ -103,13 +106,7 @@ public:
     // All composer parameters must be changed within a transaction
     // several surfaces can be updated in one transaction, all changes are
     // committed at once when the transaction is closed.
-    // CloseTransaction() usually requires an IPC with the server.
-    
-    //! Open a composer transaction
-    status_t    openTransaction();
-
-    //! commit the transaction
-    status_t    closeTransaction();
+    // closeGlobalTransaction() usually requires an IPC with the server.
 
     //! Open a composer transaction on all active SurfaceComposerClients.
     static void openGlobalTransaction();
@@ -148,25 +145,18 @@ public:
     status_t    setAlpha(SurfaceID id, float alpha=1.0f);
     status_t    setFreezeTint(SurfaceID id, uint32_t tint);
     status_t    setMatrix(SurfaceID id, float dsdx, float dtdx, float dsdy, float dtdy);
-    status_t    setPosition(SurfaceID id, int32_t x, int32_t y);
+    status_t    setPosition(SurfaceID id, float x, float y);
     status_t    setSize(SurfaceID id, uint32_t w, uint32_t h);
     status_t    destroySurface(SurfaceID sid);
 
 private:
     virtual void onFirstRef();
-    inline layer_state_t*   get_state_l(SurfaceID id);
-    layer_state_t*          lockLayerState(SurfaceID id);
-    inline void             unlockLayerState();
+    Composer& getComposer();
 
-    mutable     Mutex                               mLock;
-                SortedVector<layer_state_t>         mStates;
-                int32_t                             mTransactionOpen;
-                layer_state_t*                      mPrebuiltLayerState;
-
-                // these don't need to be protected because they never change
-                // after assignment
+    mutable     Mutex                       mLock;
                 status_t                    mStatus;
                 sp<ISurfaceComposerClient>  mClient;
+                Composer&                   mComposer;
 };
 
 // ---------------------------------------------------------------------------
@@ -183,6 +173,8 @@ public:
     // frees the previous screenshot and capture a new one
     status_t update();
     status_t update(uint32_t reqWidth, uint32_t reqHeight);
+    status_t update(uint32_t reqWidth, uint32_t reqHeight,
+            uint32_t minLayerZ, uint32_t maxLayerZ);
 
     // release memory occupied by the screenshot
     void release();
@@ -203,4 +195,3 @@ public:
 }; // namespace android
 
 #endif // ANDROID_SF_SURFACE_COMPOSER_CLIENT_H
-

@@ -88,8 +88,8 @@ public class AbsoluteLayout extends ViewGroup {
         maxHeight = Math.max(maxHeight, getSuggestedMinimumHeight());
         maxWidth = Math.max(maxWidth, getSuggestedMinimumWidth());
         
-        setMeasuredDimension(resolveSize(maxWidth, widthMeasureSpec),
-                resolveSize(maxHeight, heightMeasureSpec));
+        setMeasuredDimension(resolveSizeAndState(maxWidth, widthMeasureSpec, 0),
+                resolveSizeAndState(maxHeight, heightMeasureSpec, 0));
     }
 
     /**
@@ -141,6 +141,11 @@ public class AbsoluteLayout extends ViewGroup {
         return new LayoutParams(p);
     }
 
+    @Override
+    public boolean shouldDelayChildPressedState() {
+        return false;
+    }
+
     /**
      * Per-child layout information associated with AbsoluteLayout.
      * See
@@ -187,7 +192,7 @@ public class AbsoluteLayout extends ViewGroup {
          * </ul>
          *
          * @param c the application environment
-         * @param attrs the set of attributes fom which to extract the layout
+         * @param attrs the set of attributes from which to extract the layout
          *              parameters values
          */
         public LayoutParams(Context c, AttributeSet attrs) {

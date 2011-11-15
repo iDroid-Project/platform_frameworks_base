@@ -34,7 +34,7 @@ import android.util.LogPrinter;
 import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 import android.view.View;
-import android.view.ViewRoot;
+import android.view.ViewRootImpl;
 
 class ComposingText implements NoCopySpan {
 }
@@ -49,8 +49,9 @@ public class BaseInputConnection implements InputConnection {
     private static final boolean DEBUG = false;
     private static final String TAG = "BaseInputConnection";
     static final Object COMPOSING = new ComposingText();
-    
-    final InputMethodManager mIMM;
+
+    /** @hide */
+    protected final InputMethodManager mIMM;
     final View mTargetView;
     final boolean mDummyMode;
     
@@ -164,9 +165,16 @@ public class BaseInputConnection implements InputConnection {
     }
 
     /**
-     * Default implementation does nothing.
+     * Default implementation does nothing and returns false.
      */
     public boolean commitCompletion(CompletionInfo text) {
+        return false;
+    }
+
+    /**
+     * Default implementation does nothing and returns false.
+     */
+    public boolean commitCorrection(CorrectionInfo correctionInfo) {
         return false;
     }
 
@@ -381,11 +389,13 @@ public class BaseInputConnection implements InputConnection {
     public boolean performEditorAction(int actionCode) {
         long eventTime = SystemClock.uptimeMillis();
         sendKeyEvent(new KeyEvent(eventTime, eventTime,
-                KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER, 0, 0, 0, 0,
+                KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER, 0, 0,
+                KeyCharacterMap.VIRTUAL_KEYBOARD, 0,
                 KeyEvent.FLAG_SOFT_KEYBOARD | KeyEvent.FLAG_KEEP_TOUCH_MODE
                 | KeyEvent.FLAG_EDITOR_ACTION));
         sendKeyEvent(new KeyEvent(SystemClock.uptimeMillis(), eventTime,
-                KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER, 0, 0, 0, 0,
+                KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER, 0, 0,
+                KeyCharacterMap.VIRTUAL_KEYBOARD, 0,
                 KeyEvent.FLAG_SOFT_KEYBOARD | KeyEvent.FLAG_KEEP_TOUCH_MODE
                 | KeyEvent.FLAG_EDITOR_ACTION));
         return true;
@@ -492,7 +502,7 @@ public class BaseInputConnection implements InputConnection {
                 }
             }
             if (h != null) {
-                h.sendMessage(h.obtainMessage(ViewRoot.DISPATCH_KEY_FROM_IME,
+                h.sendMessage(h.obtainMessage(ViewRootImpl.DISPATCH_KEY_FROM_IME,
                         event));
             }
         }
@@ -522,8 +532,7 @@ public class BaseInputConnection implements InputConnection {
                 // If it's 1 character, we have a chance of being
                 // able to generate normal key events...
                 if (mKeyCharacterMap == null) {
-                    mKeyCharacterMap = KeyCharacterMap.load(
-                            KeyCharacterMap.BUILT_IN_KEYBOARD);
+                    mKeyCharacterMap = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD);
                 }
                 char[] chars = new char[1];
                 content.getChars(0, 1, chars, 0);
@@ -541,7 +550,7 @@ public class BaseInputConnection implements InputConnection {
             // Otherwise, revert to the special key event containing
             // the actual characters.
             KeyEvent event = new KeyEvent(SystemClock.uptimeMillis(),
-                    content.toString(), KeyCharacterMap.BUILT_IN_KEYBOARD, 0);
+                    content.toString(), KeyCharacterMap.VIRTUAL_KEYBOARD, 0);
             sendKeyEvent(event);
             content.clear();
         }
@@ -636,7 +645,7 @@ public class BaseInputConnection implements InputConnection {
             lp.println("Composing text:");
             TextUtils.dumpSpans(text, lp, "  ");
         }
-        
+
         // Position the cursor appropriately, so that after replacing the
         // desired range of text it will be located in the correct spot.
         // This allows us to deal with filters performing edits on the text

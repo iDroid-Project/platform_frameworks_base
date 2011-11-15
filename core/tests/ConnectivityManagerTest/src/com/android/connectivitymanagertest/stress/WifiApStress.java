@@ -20,11 +20,16 @@ package com.android.connectivitymanagertest.stress;
 import com.android.connectivitymanagertest.ConnectivityManagerStressTestRunner;
 import com.android.connectivitymanagertest.ConnectivityManagerTestActivity;
 
+import android.content.Context;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiConfiguration.KeyMgmt;
 import android.net.wifi.WifiConfiguration.AuthAlgorithm;
 import android.net.wifi.WifiManager;
 import android.os.Environment;
+import android.os.IPowerManager;
+import android.os.PowerManager;
+import android.os.ServiceManager;
+import android.os.SystemClock;
 import android.test.ActivityInstrumentationTestCase2;
 import android.test.suitebuilder.annotation.LargeTest;
 import android.util.Log;

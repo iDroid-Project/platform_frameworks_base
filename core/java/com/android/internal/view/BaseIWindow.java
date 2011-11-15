@@ -21,13 +21,13 @@ import android.graphics.Rect;
 import android.os.Bundle;
 import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
+import android.view.DragEvent;
 import android.view.IWindow;
 import android.view.IWindowSession;
-import android.view.KeyEvent;
-import android.view.MotionEvent;
 
 public class BaseIWindow extends IWindow.Stub {
     private IWindowSession mSession;
+    public int mSeq;
     
     public void setSession(IWindowSession session) {
         mSession = session;
@@ -66,7 +66,15 @@ public class BaseIWindow extends IWindow.Stub {
             }
         }
     }
-    
+
+    public void dispatchDragEvent(DragEvent event) {
+    }
+
+    public void dispatchSystemUiVisibilityChanged(int seq, int globalUi,
+            int localValue, int localChanges) {
+        mSeq = seq;
+    }
+
     public void dispatchWallpaperCommand(String action, int x, int y,
             int z, Bundle extras, boolean sync) {
         if (sync) {

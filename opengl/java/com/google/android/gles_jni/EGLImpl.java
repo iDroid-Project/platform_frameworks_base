@@ -1,28 +1,27 @@
 /*
-**
-** Copyright 2006, The Android Open Source Project
-**
-** Licensed under the Apache License, Version 2.0 (the "License");
-** you may not use this file except in compliance with the License.
-** You may obtain a copy of the License at
-**
-**     http://www.apache.org/licenses/LICENSE-2.0
-**
-** Unless required by applicable law or agreed to in writing, software
-** distributed under the License is distributed on an "AS IS" BASIS,
-** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-** See the License for the specific language governing permissions and
-** limitations under the License.
-*/
+ * Copyright (C) 2006 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 package com.google.android.gles_jni;
 
 import javax.microedition.khronos.egl.*;
 
+import android.graphics.SurfaceTexture;
 import android.view.Surface;
 import android.view.SurfaceView;
 import android.view.SurfaceHolder;
-import android.view.View;
 
 public class EGLImpl implements EGL10 {
     private EGLContextImpl mContext = new EGLContextImpl(-1);
@@ -72,19 +71,28 @@ public class EGLImpl implements EGL10 {
     }
 
     public EGLSurface eglCreateWindowSurface(EGLDisplay display, EGLConfig config, Object native_window, int[] attrib_list) {
-        Surface sur;
+        Surface sur = null;
         if (native_window instanceof SurfaceView) {
             SurfaceView surfaceView = (SurfaceView)native_window;
             sur = surfaceView.getHolder().getSurface();
         } else if (native_window instanceof SurfaceHolder) {
             SurfaceHolder holder = (SurfaceHolder)native_window;
             sur = holder.getSurface();
+        }
+
+        int eglSurfaceId;
+        if (sur != null) {
+            eglSurfaceId = _eglCreateWindowSurface(display, config, sur, attrib_list);
+        } else if (native_window instanceof SurfaceTexture) {
+            eglSurfaceId = _eglCreateWindowSurfaceTexture(display, config,
+                    (SurfaceTexture) native_window, attrib_list);
         } else {
             throw new java.lang.UnsupportedOperationException(
                 "eglCreateWindowSurface() can only be called with an instance of " +
-                "SurfaceView or SurfaceHolder at the moment, this will be fixed later.");
+                "SurfaceView, SurfaceHolder or SurfaceTexture at the moment, " + 
+                "this will be fixed later.");
         }
-        int eglSurfaceId = _eglCreateWindowSurface(display, config, sur, attrib_list);
+
         if (eglSurfaceId == 0) {
             return EGL10.EGL_NO_SURFACE;
         }
@@ -135,6 +143,7 @@ public class EGLImpl implements EGL10 {
     private native int _eglCreatePbufferSurface(EGLDisplay display, EGLConfig config, int[] attrib_list);
     private native void _eglCreatePixmapSurface(EGLSurface sur, EGLDisplay display, EGLConfig config, Object native_pixmap, int[] attrib_list);
     private native int _eglCreateWindowSurface(EGLDisplay display, EGLConfig config, Object native_window, int[] attrib_list);
+    private native int _eglCreateWindowSurfaceTexture(EGLDisplay display, EGLConfig config, Object native_window, int[] attrib_list);
     private native int _eglGetDisplay(Object native_display);
     private native int _eglGetCurrentContext();
     private native int _eglGetCurrentDisplay();

@@ -36,6 +36,7 @@ import android.view.inputmethod.InputBinding;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethod;
 import android.view.inputmethod.InputMethodSession;
+import android.view.inputmethod.InputMethodSubtype;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -64,10 +65,12 @@ class IInputMethodWrapper extends IInputMethod.Stub
     private static final int DO_REVOKE_SESSION = 50;
     private static final int DO_SHOW_SOFT_INPUT = 60;
     private static final int DO_HIDE_SOFT_INPUT = 70;
+    private static final int DO_CHANGE_INPUTMETHOD_SUBTYPE = 80;
    
     final WeakReference<AbstractInputMethodService> mTarget;
     final HandlerCaller mCaller;
     final WeakReference<InputMethod> mInputMethod;
+    final int mTargetSdkVersion;
     
     static class Notifier {
         boolean notified;
@@ -100,6 +103,7 @@ class IInputMethodWrapper extends IInputMethod.Stub
         mTarget = new WeakReference<AbstractInputMethodService>(context);
         mCaller = new HandlerCaller(context.getApplicationContext(), this);
         mInputMethod = new WeakReference<InputMethod>(inputMethod);
+        mTargetSdkVersion = context.getApplicationInfo().targetSdkVersion;
     }
 
     public InputMethod getInternalInputMethod() {
@@ -149,7 +153,9 @@ class IInputMethodWrapper extends IInputMethod.Stub
                 IInputContext inputContext = (IInputContext)args.arg1;
                 InputConnection ic = inputContext != null
                         ? new InputConnectionWrapper(inputContext) : null;
-                inputMethod.startInput(ic, (EditorInfo)args.arg2);
+                EditorInfo info = (EditorInfo)args.arg2;
+                info.makeCompatible(mTargetSdkVersion);
+                inputMethod.startInput(ic, info);
                 return;
             }
             case DO_RESTART_INPUT: {
@@ -157,7 +163,9 @@ class IInputMethodWrapper extends IInputMethod.Stub
                 IInputContext inputContext = (IInputContext)args.arg1;
                 InputConnection ic = inputContext != null
                         ? new InputConnectionWrapper(inputContext) : null;
-                inputMethod.restartInput(ic, (EditorInfo)args.arg2);
+                EditorInfo info = (EditorInfo)args.arg2;
+                info.makeCompatible(mTargetSdkVersion);
+                inputMethod.restartInput(ic, info);
                 return;
             }
             case DO_CREATE_SESSION: {
@@ -177,6 +185,9 @@ class IInputMethodWrapper extends IInputMethod.Stub
                 return;
             case DO_HIDE_SOFT_INPUT:
                 inputMethod.hideSoftInput(msg.arg1, (ResultReceiver)msg.obj);
+                return;
+            case DO_CHANGE_INPUTMETHOD_SUBTYPE:
+                inputMethod.changeInputMethodSubtype((InputMethodSubtype)msg.obj);
                 return;
         }
         Log.w(TAG, "Unhandled message code: " + msg.what);
@@ -266,5 +277,10 @@ class IInputMethodWrapper extends IInputMethod.Stub
     public void hideSoftInput(int flags, ResultReceiver resultReceiver) {
         mCaller.executeOrSendMessage(mCaller.obtainMessageIO(DO_HIDE_SOFT_INPUT,
                 flags, resultReceiver));
+    }
+
+    public void changeInputMethodSubtype(InputMethodSubtype subtype) {
+        mCaller.executeOrSendMessage(mCaller.obtainMessageO(DO_CHANGE_INPUTMETHOD_SUBTYPE,
+                subtype));
     }
 }

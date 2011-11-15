@@ -20,198 +20,171 @@
 <!-- This is the screen that shows the 9 circle unlock widget and instructs
      the user how to unlock their device, or make an emergency call.  This
      is the portrait layout.  -->
-<com.android.internal.widget.LinearLayoutWithDefaultTouchRecepient
+<GridLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:orientation="vertical"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:gravity="center_horizontal"
-    android:background="#70000000"
-    >
+    android:gravity="center_horizontal">
 
-    <RelativeLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        >
-        <TextView
-            android:id="@+id/carrier"
+    <com.android.internal.widget.DigitalClock android:id="@+id/time"
+        android:layout_marginTop="@dimen/keyguard_lockscreen_status_line_clockfont_top_margin"
+        android:layout_marginBottom="12dip"
+        android:layout_marginRight="@dimen/keyguard_lockscreen_status_line_font_right_margin"
+        android:layout_gravity="right">
+
+        <!-- Because we can't have multi-tone fonts, we render two TextViews, one on
+        top of the other. Hence the redundant layout... -->
+        <TextView android:id="@+id/timeDisplayBackground"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_alignParentTop="true"
-            android:layout_marginTop="6dip"
-            android:layout_alignParentRight="true"
-            android:layout_marginRight="8dip"
-            android:layout_toRightOf="@+id/time"
             android:singleLine="true"
-            android:ellipsize="marquee"
-            android:gravity="right|bottom"
+            android:ellipsize="none"
+            android:textSize="@dimen/keyguard_lockscreen_clock_font_size"
             android:textAppearance="?android:attr/textAppearanceMedium"
+            android:layout_marginBottom="6dip"
+            android:textColor="@color/lockscreen_clock_background"
             />
 
-        <com.android.internal.widget.DigitalClock android:id="@+id/time"
+        <TextView android:id="@+id/timeDisplayForeground"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_alignParentLeft="true"
-            android:layout_alignParentTop="true"
-            android:layout_marginTop="15dip"
-            android:layout_marginLeft="20dip"
-            >
+            android:singleLine="true"
+            android:ellipsize="none"
+            android:textSize="@dimen/keyguard_lockscreen_clock_font_size"
+            android:textAppearance="?android:attr/textAppearanceMedium"
+            android:layout_marginBottom="6dip"
+            android:textColor="@color/lockscreen_clock_foreground"
+            />
 
-            <TextView android:id="@+id/timeDisplay"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:gravity="bottom"
-                android:singleLine="true"
-                android:ellipsize="none"
-                android:textSize="56sp"
-                android:textAppearance="?android:attr/textAppearanceMedium"
-                android:shadowColor="#C0000000"
-                android:shadowDx="0"
-                android:shadowDy="0"
-                android:shadowRadius="3.0"
-                android:layout_marginBottom="6dip"
-                />
+    </com.android.internal.widget.DigitalClock>
 
-            <TextView android:id="@+id/am_pm"
-                android:layout_width="wrap_content"
-                android:layout_height="match_parent"
-                android:gravity="bottom"
-                android:singleLine="true"
-                android:ellipsize="none"
-                android:textSize="18sp"
-                android:layout_marginLeft="4dip"
-                android:textAppearance="?android:attr/textAppearanceMedium"
-                android:shadowColor="#C0000000"
-                android:shadowDx="0"
-                android:shadowDy="0"
-                android:shadowRadius="3.0"
-                />
-
-        </com.android.internal.widget.DigitalClock>
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_gravity="right"
+        android:layout_marginRight="@dimen/keyguard_lockscreen_status_line_font_right_margin">
 
         <TextView
             android:id="@+id/date"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_below="@id/time"
-            android:layout_marginLeft="24dip"
+            android:singleLine="true"
+            android:ellipsize="marquee"
             android:textAppearance="?android:attr/textAppearanceMedium"
+            android:textSize="@dimen/keyguard_lockscreen_status_line_font_size"
             />
 
-    </RelativeLayout>
-
-    <View
-        android:id="@+id/divider"
-        android:layout_width="match_parent"
-        android:layout_height="1dip"
-        android:layout_marginTop="8dip"
-        android:layout_marginBottom="8dip"
-        android:background="@android:drawable/divider_horizontal_dark"
-        />
-
-    <!-- used for instructions such as "draw pattern to unlock", the next alarm, and charging
-         status.  -->
-    <LinearLayout
-        android:orientation="horizontal"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="0dip"
-        android:layout_marginLeft="12dip"
-        android:gravity="left"
-        >
         <TextView
-            android:id="@+id/status1"
+            android:id="@+id/alarm_status"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginLeft="16dip"
+            android:singleLine="true"
+            android:ellipsize="marquee"
             android:textAppearance="?android:attr/textAppearanceMedium"
-            android:textSize="18sp"
+            android:textSize="@dimen/keyguard_lockscreen_status_line_font_size"
             android:drawablePadding="4dip"
             />
-        <TextView
-            android:id="@+id/statusSep"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginLeft="5dip"
-            android:layout_marginRight="5dip"
-            android:textAppearance="?android:attr/textAppearanceMedium"
-            android:textSize="18sp"
-            />
-        <TextView
-            android:id="@+id/status2"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_alignParentTop="true"
-            android:textAppearance="?android:attr/textAppearanceMedium"
-            android:textSize="18sp"
-            android:drawablePadding="4dip"
-            />
+
     </LinearLayout>
 
+
+    <TextView
+        android:id="@+id/status1"
+        android:layout_gravity="right"
+        android:layout_marginRight="@dimen/keyguard_lockscreen_status_line_font_right_margin"
+        android:singleLine="true"
+        android:ellipsize="marquee"
+        android:textAppearance="?android:attr/textAppearanceMedium"
+        android:textSize="@dimen/keyguard_lockscreen_status_line_font_size"
+        android:drawablePadding="4dip"
+        />
+
+    <Space android:layout_gravity="fill" />
+
+    <!-- We need MATCH_PARENT here only to force the size of the parent to be passed to
+    the pattern view for it to compute its size. This is an unusual case, caused by
+    LockPatternView's requirement to maintain a square aspect ratio based on the width
+    of the screen. -->
     <com.android.internal.widget.LockPatternView
         android:id="@+id/lockPattern"
         android:layout_width="match_parent"
-        android:layout_height="0dip"
-        android:layout_weight="1"
-        android:layout_marginTop="2dip"
-        android:aspect="@string/lock_pattern_view_aspect"
-         />
+        android:layout_height="match_parent"
+        android:layout_marginTop="8dip"
+        android:layout_marginRight="8dip"
+        android:layout_marginBottom="4dip"
+        android:layout_marginLeft="8dip"
+        android:layout_gravity="center|bottom"
+     />
 
-    <!-- footer -->
-    <FrameLayout
+    <TextView
+        android:id="@+id/carrier"
+        android:layout_gravity="center_horizontal"
+        android:singleLine="true"
+        android:ellipsize="marquee"
+        android:textSize="@dimen/keyguard_lockscreen_status_line_font_size"
+        android:textAppearance="?android:attr/textAppearanceMedium"
+    />
+
+    <!-- Footer: an emergency call button and an initially hidden "Forgot pattern" button -->
+    <LinearLayout
+        android:orientation="horizontal"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        >
+        style="?android:attr/buttonBarStyle"
+        android:gravity="center"
+        android:weightSum="2">
 
-        <!-- option 1: a single emergency call button -->
-        <RelativeLayout android:id="@+id/footerNormal"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            >
-            <Button android:id="@+id/emergencyCallAlone"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_centerInParent="true"
-                android:text="@string/lockscreen_emergency_call"
-                style="@style/Widget.Button.Transparent"
-                android:drawableLeft="@drawable/ic_emergency"
-                android:drawablePadding="8dip"
-                />
+        <Button android:id="@+id/emergencyCallButton"
+            android:layout_gravity="center_horizontal"
+            android:layout_width="0dip"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            style="?android:attr/buttonBarButtonStyle"
+            android:textSize="@dimen/keyguard_lockscreen_status_line_font_size"
+            android:text="@string/lockscreen_emergency_call"
+            android:drawableLeft="@drawable/lockscreen_emergency_button"
+            android:drawablePadding="0dip"
+        />
 
-        </RelativeLayout>
+        <Button android:id="@+id/forgotPatternButton"
+            android:layout_gravity="center_horizontal"
+            android:layout_width="0dip"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            style="?android:attr/buttonBarButtonStyle"
+            android:textSize="@dimen/keyguard_lockscreen_status_line_font_size"
+            android:text="@string/lockscreen_forgot_pattern_button_text"
+            android:drawableLeft="@drawable/lockscreen_forgot_password_button"
+            android:drawablePadding="0dip"
+        />
 
-        <!-- option 2: an emergency call button, and a 'forgot pattern?' button -->
-        <LinearLayout android:id="@+id/footerForgotPattern"
-            android:orientation="horizontal"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:gravity="center"
-            >
-            <Button android:id="@+id/emergencyCallTogether"
-                android:layout_width="0dip"
-                android:layout_height="match_parent"
-                android:layout_weight="1.0"
-                android:layout_marginTop="4dip"
-                android:layout_marginBottom="4dip"
-                android:layout_marginLeft="4dip"
-                android:layout_marginRight="2dip"
-                android:text="@string/lockscreen_emergency_call"
-                style="@style/Widget.Button.Transparent"
-                android:drawableLeft="@drawable/ic_emergency"
-                android:drawablePadding="8dip"
-                />
-            <Button android:id="@+id/forgotPattern"
-                android:layout_width="0dip"
-                android:layout_height="match_parent"
-                android:layout_weight="1.0"
-                android:layout_marginTop="4dip"
-                android:layout_marginBottom="4dip"
-                android:layout_marginLeft="2dip"
-                android:layout_marginRight="4dip"
-                style="@style/Widget.Button.Transparent"
-                android:visibility="invisible"
-                />
-        </LinearLayout>
+    </LinearLayout>
 
-    </FrameLayout>
+    <!-- Music transport control -->
+    <include android:id="@+id/transport"
+        layout="@layout/keyguard_transport_control"
+        android:layout_row="0"
+        android:layout_column="0"
+        android:layout_rowSpan="4"
+        android:layout_columnSpan="1"
+        android:layout_gravity="fill"
+        android:layout_width="0dip"
+        android:layout_height="0dip"
+        />
 
-</com.android.internal.widget.LinearLayoutWithDefaultTouchRecepient>
+    <!-- Area to overlay FaceLock -->
+    <TextView android:id="@+id/faceLockAreaView"
+        android:visibility="invisible"
+        android:layout_row="4"
+        android:layout_column="0"
+        android:layout_rowSpan="1"
+        android:layout_columnSpan="1"
+        android:layout_gravity="fill"
+        android:layout_marginTop="8dip"
+        android:layout_marginBottom="8dip"
+        android:layout_width="0dip"
+        android:layout_height="0dip"
+        android:background="@color/facelock_color_background"
+    />
+
+</GridLayout>

@@ -26,7 +26,6 @@ import android.os.PowerManager;
 import android.os.Registrant;
 import android.os.SystemClock;
 import android.os.SystemProperties;
-import android.util.Config;
 import android.util.Log;
 import android.text.TextUtils;
 
@@ -430,7 +429,7 @@ public class CdmaConnection extends Connection {
                 } else if (serviceState == ServiceState.STATE_OUT_OF_SERVICE
                         || serviceState == ServiceState.STATE_EMERGENCY_ONLY) {
                     return DisconnectCause.OUT_OF_SERVICE;
-                } else if (phone.mCM.getRadioState() != CommandsInterface.RadioState.NV_READY
+                } else if (phone.mCM.getNvState() != CommandsInterface.RadioState.NV_READY
                         && phone.getIccCard().getState() != RuimCard.State.READY) {
                     return DisconnectCause.ICC_ERROR;
                 } else if (causeCode==CallFailCause.NORMAL_CLEARING) {
@@ -453,7 +452,7 @@ public class CdmaConnection extends Connection {
 
         if (!disconnected) {
             doDisconnect();
-            if (Config.LOGD) Log.d(LOG_TAG,
+            if (false) Log.d(LOG_TAG,
                     "[CDMAConn] onDisconnect: cause=" + cause);
 
             owner.phone.notifyDisconnect(this);
@@ -470,7 +469,7 @@ public class CdmaConnection extends Connection {
     onLocalDisconnect() {
         if (!disconnected) {
             doDisconnect();
-            if (Config.LOGD) Log.d(LOG_TAG,
+            if (false) Log.d(LOG_TAG,
                     "[CDMAConn] onLoalDisconnect" );
 
             if (parent != null) {

@@ -16,13 +16,12 @@
 
 #include "rsContext.h"
 #include "rsScriptC.h"
-#include "rsMatrix.h"
-
-#include "acc/acc.h"
 #include "utils/Timers.h"
+#include "utils/StopWatch.h"
 
-#include <GLES/gl.h>
-#include <GLES/glext.h>
+#ifndef ANDROID_RS_SERIALIZE
+#include <bcinfo/BitcodeTranslator.h>
+#endif
 
 using namespace android;
 using namespace android::renderscript;
@@ -32,415 +31,282 @@ using namespace android::renderscript;
     Context * rsc = tls->mContext; \
     ScriptC * sc = (ScriptC *) tls->mScript
 
-
-ScriptC::ScriptC(Context *rsc) : Script(rsc)
-{
-    mAllocFile = __FILE__;
-    mAllocLine = __LINE__;
-    mAccScript = NULL;
-    memset(&mProgram, 0, sizeof(mProgram));
+ScriptC::ScriptC(Context *rsc) : Script(rsc) {
+#ifndef ANDROID_RS_SERIALIZE
+    BT = NULL;
+#endif
 }
 
-ScriptC::~ScriptC()
-{
-    if (mAccScript) {
-        accDeleteScript(mAccScript);
+ScriptC::~ScriptC() {
+#ifndef ANDROID_RS_SERIALIZE
+    if (BT) {
+        delete BT;
+        BT = NULL;
     }
-    free(mEnviroment.mScriptText);
-    mEnviroment.mScriptText = NULL;
+#endif
+    mRSC->mHal.funcs.script.invokeFreeChildren(mRSC, this);
+    mRSC->mHal.funcs.script.destroy(mRSC, this);
 }
 
-void ScriptC::setupScript()
-{
-    for (int ct=0; ct < MAX_SCRIPT_BANKS; ct++) {
-        if (mProgram.mSlotPointers[ct]) {
-            *mProgram.mSlotPointers[ct] = mSlots[ct]->getPtr();
+void ScriptC::setupScript(Context *rsc) {
+    mEnviroment.mStartTimeMillis
+                = nanoseconds_to_milliseconds(systemTime(SYSTEM_TIME_MONOTONIC));
+
+    for (uint32_t ct=0; ct < mHal.info.exportedVariableCount; ct++) {
+        if (mSlots[ct].get() && !mTypes[ct].get()) {
+            mTypes[ct].set(mSlots[ct]->getType());
+        }
+
+        if (!mTypes[ct].get())
+            continue;
+        void *ptr = NULL;
+        if (mSlots[ct].get()) {
+            ptr = mSlots[ct]->getPtr();
+        }
+
+        rsc->mHal.funcs.script.setGlobalBind(rsc, this, ct, ptr);
+    }
+}
+
+const Allocation *ScriptC::ptrToAllocation(const void *ptr) const {
+    //LOGE("ptr to alloc %p", ptr);
+    if (!ptr) {
+        return NULL;
+    }
+    for (uint32_t ct=0; ct < mHal.info.exportedVariableCount; ct++) {
+        if (!mSlots[ct].get())
+            continue;
+        if (mSlots[ct]->getPtr() == ptr) {
+            return mSlots[ct].get();
         }
     }
+    LOGE("ScriptC::ptrToAllocation, failed to find %p", ptr);
+    return NULL;
 }
 
+void ScriptC::setupGLState(Context *rsc) {
+    if (mEnviroment.mFragmentStore.get()) {
+        rsc->setProgramStore(mEnviroment.mFragmentStore.get());
+    }
+    if (mEnviroment.mFragment.get()) {
+        rsc->setProgramFragment(mEnviroment.mFragment.get());
+    }
+    if (mEnviroment.mVertex.get()) {
+        rsc->setProgramVertex(mEnviroment.mVertex.get());
+    }
+    if (mEnviroment.mRaster.get()) {
+        rsc->setProgramRaster(mEnviroment.mRaster.get());
+    }
+}
 
-uint32_t ScriptC::run(Context *rsc, uint32_t launchIndex)
-{
-    if (mProgram.mScript == NULL) {
+uint32_t ScriptC::run(Context *rsc) {
+    if (mHal.info.root == NULL) {
         rsc->setError(RS_ERROR_BAD_SCRIPT, "Attempted to run bad script");
         return 0;
     }
 
-    Context::ScriptTLSStruct * tls =
-    (Context::ScriptTLSStruct *)pthread_getspecific(Context::gThreadTLSKey);
-    rsAssert(tls);
-
-    if (mEnviroment.mFragmentStore.get()) {
-        rsc->setFragmentStore(mEnviroment.mFragmentStore.get());
-    }
-    if (mEnviroment.mFragment.get()) {
-        rsc->setFragment(mEnviroment.mFragment.get());
-    }
-    if (mEnviroment.mVertex.get()) {
-        rsc->setVertex(mEnviroment.mVertex.get());
-    }
-    if (mEnviroment.mRaster.get()) {
-        rsc->setRaster(mEnviroment.mRaster.get());
-    }
-
-    if (launchIndex == 0) {
-        mEnviroment.mStartTimeMillis
-                = nanoseconds_to_milliseconds(systemTime(SYSTEM_TIME_MONOTONIC));
-    }
-    setupScript();
+    setupGLState(rsc);
+    setupScript(rsc);
 
     uint32_t ret = 0;
-    tls->mScript = this;
-    ret = mProgram.mScript(launchIndex);
-    tls->mScript = NULL;
+
+    if (rsc->props.mLogScripts) {
+        LOGV("%p ScriptC::run invoking root,  ptr %p", rsc, mHal.info.root);
+    }
+
+    ret = rsc->mHal.funcs.script.invokeRoot(rsc, this);
+
+    if (rsc->props.mLogScripts) {
+        LOGV("%p ScriptC::run invoking complete, ret=%i", rsc, ret);
+    }
+
     return ret;
 }
 
-ScriptCState::ScriptCState()
-{
-    mScript = NULL;
-    clear();
+
+void ScriptC::runForEach(Context *rsc,
+                         const Allocation * ain,
+                         Allocation * aout,
+                         const void * usr,
+                         size_t usrBytes,
+                         const RsScriptCall *sc) {
+
+    Context::PushState ps(rsc);
+
+    setupGLState(rsc);
+    setupScript(rsc);
+    rsc->mHal.funcs.script.invokeForEach(rsc, this, 0, ain, aout, usr, usrBytes, sc);
 }
 
-ScriptCState::~ScriptCState()
-{
-    delete mScript;
-    mScript = NULL;
-}
-
-void ScriptCState::clear()
-{
-    for (uint32_t ct=0; ct < MAX_SCRIPT_BANKS; ct++) {
-        mConstantBufferTypes[ct].clear();
-        mSlotNames[ct].setTo("");
-        mInvokableNames[ct].setTo("");
-        mSlotWritable[ct] = false;
+void ScriptC::Invoke(Context *rsc, uint32_t slot, const void *data, size_t len) {
+    if (slot >= mHal.info.exportedFunctionCount) {
+        rsc->setError(RS_ERROR_BAD_SCRIPT, "Calling invoke on bad script");
+        return;
     }
+    setupScript(rsc);
 
-    delete mScript;
-    mScript = new ScriptC(NULL);
-
-    mInt32Defines.clear();
-    mFloatDefines.clear();
+    if (rsc->props.mLogScripts) {
+        LOGV("%p ScriptC::Invoke invoking slot %i,  ptr %p", rsc, slot, this);
+    }
+    rsc->mHal.funcs.script.invokeFunction(rsc, this, slot, data, len);
 }
 
-static ACCvoid* symbolLookup(ACCvoid* pContext, const ACCchar* name)
-{
-    const ScriptCState::SymbolTable_t *sym = ScriptCState::lookupSymbol(name);
+ScriptCState::ScriptCState() {
+}
+
+ScriptCState::~ScriptCState() {
+}
+
+/*
+static void* symbolLookup(void* pContext, char const* name) {
+    const ScriptCState::SymbolTable_t *sym;
+    ScriptC *s = (ScriptC *)pContext;
+    if (!strcmp(name, "__isThreadable")) {
+      return (void*) s->mHal.info.isThreadable;
+    } else if (!strcmp(name, "__clearThreadable")) {
+      s->mHal.info.isThreadable = false;
+      return NULL;
+    }
+    sym = ScriptCState::lookupSymbol(name);
+    if (!sym) {
+        sym = ScriptCState::lookupSymbolCL(name);
+    }
+    if (!sym) {
+        sym = ScriptCState::lookupSymbolGL(name);
+    }
     if (sym) {
+        s->mHal.info.isThreadable &= sym->threadable;
         return sym->mPtr;
     }
     LOGE("ScriptC sym lookup failed for %s", name);
     return NULL;
 }
+*/
 
-void ScriptCState::runCompiler(Context *rsc, ScriptC *s)
-{
-    s->mAccScript = accCreateScript();
-    String8 tmp;
+#if 0
+extern const char rs_runtime_lib_bc[];
+extern unsigned rs_runtime_lib_bc_size;
+#endif
 
-    rsc->appendNameDefines(&tmp);
-    appendDecls(&tmp);
-    appendVarDefines(rsc, &tmp);
-    appendTypes(rsc, &tmp);
-    tmp.append("#line 1\n");
+bool ScriptC::runCompiler(Context *rsc,
+                          const char *resName,
+                          const char *cacheDir,
+                          const uint8_t *bitcode,
+                          size_t bitcodeLen) {
 
-    const char* scriptSource[] = {tmp.string(), s->mEnviroment.mScriptText};
-    int scriptLength[] = {tmp.length(), s->mEnviroment.mScriptTextLength} ;
-    accScriptSource(s->mAccScript, sizeof(scriptLength) / sizeof(int), scriptSource, scriptLength);
-    accRegisterSymbolCallback(s->mAccScript, symbolLookup, NULL);
-    accCompileScript(s->mAccScript);
-    accGetScriptLabel(s->mAccScript, "main", (ACCvoid**) &s->mProgram.mScript);
-    accGetScriptLabel(s->mAccScript, "init", (ACCvoid**) &s->mProgram.mInit);
-    rsAssert(s->mProgram.mScript);
-
-    if (!s->mProgram.mScript) {
-        ACCchar buf[4096];
-        ACCsizei len;
-        accGetScriptInfoLog(s->mAccScript, sizeof(buf), &len, buf);
-        LOGE("%s", buf);
-        rsc->setError(RS_ERROR_BAD_SCRIPT, "Error compiling user script.");
-        return;
+    //LOGE("runCompiler %p %p %p %p %p %i", rsc, this, resName, cacheDir, bitcode, bitcodeLen);
+#ifndef ANDROID_RS_SERIALIZE
+    uint32_t sdkVersion = rsc->getTargetSdkVersion();
+    if (BT) {
+        delete BT;
     }
-
-    if (s->mProgram.mInit) {
-        s->mProgram.mInit();
+    BT = new bcinfo::BitcodeTranslator((const char *)bitcode, bitcodeLen,
+                                       sdkVersion);
+    if (!BT->translate()) {
+        LOGE("Failed to translate bitcode from version: %u", sdkVersion);
+        delete BT;
+        BT = NULL;
+        return false;
     }
+    bitcode = (const uint8_t *) BT->getTranslatedBitcode();
+    bitcodeLen = BT->getTranslatedBitcodeSize();
+#endif
 
-    for (int ct=0; ct < MAX_SCRIPT_BANKS; ct++) {
-        if (mSlotNames[ct].length() > 0) {
-            accGetScriptLabel(s->mAccScript,
-                              mSlotNames[ct].string(),
-                              (ACCvoid**) &s->mProgram.mSlotPointers[ct]);
-        }
-    }
+    rsc->mHal.funcs.script.init(rsc, this, resName, cacheDir, bitcode, bitcodeLen, 0);
 
-    for (int ct=0; ct < MAX_SCRIPT_BANKS; ct++) {
-        if (mInvokableNames[ct].length() > 0) {
-            accGetScriptLabel(s->mAccScript,
-                              mInvokableNames[ct].string(),
-                              (ACCvoid**) &s->mEnviroment.mInvokables[ct]);
-        }
-    }
+    mEnviroment.mFragment.set(rsc->getDefaultProgramFragment());
+    mEnviroment.mVertex.set(rsc->getDefaultProgramVertex());
+    mEnviroment.mFragmentStore.set(rsc->getDefaultProgramStore());
+    mEnviroment.mRaster.set(rsc->getDefaultProgramRaster());
 
-    s->mEnviroment.mFragment.set(rsc->getDefaultProgramFragment());
-    s->mEnviroment.mVertex.set(rsc->getDefaultProgramVertex());
-    s->mEnviroment.mFragmentStore.set(rsc->getDefaultProgramFragmentStore());
-    s->mEnviroment.mRaster.set(rsc->getDefaultProgramRaster());
+    rsc->mHal.funcs.script.invokeInit(rsc, this);
 
-    if (s->mProgram.mScript) {
-        const static int pragmaMax = 16;
-        ACCsizei pragmaCount;
-        ACCchar * str[pragmaMax];
-        accGetPragmas(s->mAccScript, &pragmaCount, pragmaMax, &str[0]);
-
-        for (int ct=0; ct < pragmaCount; ct+=2) {
-            if (!strcmp(str[ct], "version")) {
+    for (size_t i=0; i < mHal.info.exportedPragmaCount; ++i) {
+        const char * key = mHal.info.exportedPragmaKeyList[i];
+        const char * value = mHal.info.exportedPragmaValueList[i];
+        //LOGE("pragma %s %s", keys[i], values[i]);
+        if (!strcmp(key, "version")) {
+            if (!strcmp(value, "1")) {
                 continue;
             }
-
-            if (!strcmp(str[ct], "stateVertex")) {
-                if (!strcmp(str[ct+1], "default")) {
-                    continue;
-                }
-                if (!strcmp(str[ct+1], "parent")) {
-                    s->mEnviroment.mVertex.clear();
-                    continue;
-                }
-                ProgramVertex * pv = (ProgramVertex *)rsc->lookupName(str[ct+1]);
-                if (pv != NULL) {
-                    s->mEnviroment.mVertex.set(pv);
-                    continue;
-                }
-                LOGE("Unreconized value %s passed to stateVertex", str[ct+1]);
-            }
-
-            if (!strcmp(str[ct], "stateRaster")) {
-                if (!strcmp(str[ct+1], "default")) {
-                    continue;
-                }
-                if (!strcmp(str[ct+1], "parent")) {
-                    s->mEnviroment.mRaster.clear();
-                    continue;
-                }
-                ProgramRaster * pr = (ProgramRaster *)rsc->lookupName(str[ct+1]);
-                if (pr != NULL) {
-                    s->mEnviroment.mRaster.set(pr);
-                    continue;
-                }
-                LOGE("Unreconized value %s passed to stateRaster", str[ct+1]);
-            }
-
-            if (!strcmp(str[ct], "stateFragment")) {
-                if (!strcmp(str[ct+1], "default")) {
-                    continue;
-                }
-                if (!strcmp(str[ct+1], "parent")) {
-                    s->mEnviroment.mFragment.clear();
-                    continue;
-                }
-                ProgramFragment * pf = (ProgramFragment *)rsc->lookupName(str[ct+1]);
-                if (pf != NULL) {
-                    s->mEnviroment.mFragment.set(pf);
-                    continue;
-                }
-                LOGE("Unreconized value %s passed to stateFragment", str[ct+1]);
-            }
-
-            if (!strcmp(str[ct], "stateStore")) {
-                if (!strcmp(str[ct+1], "default")) {
-                    continue;
-                }
-                if (!strcmp(str[ct+1], "parent")) {
-                    s->mEnviroment.mFragmentStore.clear();
-                    continue;
-                }
-                ProgramFragmentStore * pfs =
-                    (ProgramFragmentStore *)rsc->lookupName(str[ct+1]);
-                if (pfs != NULL) {
-                    s->mEnviroment.mFragmentStore.set(pfs);
-                    continue;
-                }
-                LOGE("Unreconized value %s passed to stateStore", str[ct+1]);
-            }
-
+            LOGE("Invalid version pragma value: %s\n", value);
+            return false;
         }
 
-
-    } else {
-        // Deal with an error.
-    }
-}
-
-static void appendElementBody(String8 *s, const Element *e)
-{
-    s->append(" {\n");
-    for (size_t ct2=0; ct2 < e->getFieldCount(); ct2++) {
-        const Element *c = e->getField(ct2);
-        s->append("    ");
-        s->append(c->getCType());
-        s->append(" ");
-        s->append(e->getFieldName(ct2));
-        s->append(";\n");
-    }
-    s->append("}");
-}
-
-void ScriptCState::appendVarDefines(const Context *rsc, String8 *str)
-{
-    char buf[256];
-    if (rsc->props.mLogScripts) {
-        LOGD("appendVarDefines mInt32Defines.size()=%d mFloatDefines.size()=%d\n",
-                mInt32Defines.size(), mFloatDefines.size());
-    }
-    for (size_t ct=0; ct < mInt32Defines.size(); ct++) {
-        str->append("#define ");
-        str->append(mInt32Defines.keyAt(ct));
-        str->append(" ");
-        sprintf(buf, "%i\n", (int)mInt32Defines.valueAt(ct));
-        str->append(buf);
-    }
-    for (size_t ct=0; ct < mFloatDefines.size(); ct++) {
-        str->append("#define ");
-        str->append(mFloatDefines.keyAt(ct));
-        str->append(" ");
-        sprintf(buf, "%ff\n", mFloatDefines.valueAt(ct));
-        str->append(buf);
-    }
-}
-
-
-
-void ScriptCState::appendTypes(const Context *rsc, String8 *str)
-{
-    char buf[256];
-    String8 tmp;
-
-    str->append("struct vecF32_2_s {float x; float y;};\n");
-    str->append("struct vecF32_3_s {float x; float y; float z;};\n");
-    str->append("struct vecF32_4_s {float x; float y; float z; float w;};\n");
-    str->append("struct vecU8_4_s {char r; char g; char b; char a;};\n");
-    str->append("#define vecF32_2_t struct vecF32_2_s\n");
-    str->append("#define vecF32_3_t struct vecF32_3_s\n");
-    str->append("#define vecF32_4_t struct vecF32_4_s\n");
-    str->append("#define vecU8_4_t struct vecU8_4_s\n");
-    str->append("#define vecI8_4_t struct vecU8_4_s\n");
-
-    for (size_t ct=0; ct < MAX_SCRIPT_BANKS; ct++) {
-        const Type *t = mConstantBufferTypes[ct].get();
-        if (!t) {
-            continue;
-        }
-        const Element *e = t->getElement();
-        if (e->getName() && (e->getFieldCount() > 1)) {
-            String8 s("struct struct_");
-            s.append(e->getName());
-            s.append(e->getCStructBody());
-            s.append(";\n");
-
-            s.append("#define ");
-            s.append(e->getName());
-            s.append("_t struct struct_");
-            s.append(e->getName());
-            s.append("\n\n");
-            if (rsc->props.mLogScripts) {
-                LOGV("%s", static_cast<const char*>(s));
+        if (!strcmp(key, "stateVertex")) {
+            if (!strcmp(value, "default")) {
+                continue;
             }
-            str->append(s);
+            if (!strcmp(value, "parent")) {
+                mEnviroment.mVertex.clear();
+                continue;
+            }
+            LOGE("Unrecognized value %s passed to stateVertex", value);
+            return false;
         }
 
-        if (mSlotNames[ct].length() > 0) {
-            String8 s;
-            if (e->getName()) {
-                // Use the named struct
-                s.setTo(e->getName());
-            } else {
-                // create an struct named from the slot.
-                s.setTo("struct ");
-                s.append(mSlotNames[ct]);
-                s.append("_s");
-                s.append(e->getCStructBody());
-                //appendElementBody(&s, e);
-                s.append(";\n");
-                s.append("struct ");
-                s.append(mSlotNames[ct]);
-                s.append("_s");
+        if (!strcmp(key, "stateRaster")) {
+            if (!strcmp(value, "default")) {
+                continue;
             }
+            if (!strcmp(value, "parent")) {
+                mEnviroment.mRaster.clear();
+                continue;
+            }
+            LOGE("Unrecognized value %s passed to stateRaster", value);
+            return false;
+        }
 
-            s.append(" * ");
-            s.append(mSlotNames[ct]);
-            s.append(";\n");
-            if (rsc->props.mLogScripts) {
-                LOGV("%s", static_cast<const char*>(s));
+        if (!strcmp(key, "stateFragment")) {
+            if (!strcmp(value, "default")) {
+                continue;
             }
-            str->append(s);
+            if (!strcmp(value, "parent")) {
+                mEnviroment.mFragment.clear();
+                continue;
+            }
+            LOGE("Unrecognized value %s passed to stateFragment", value);
+            return false;
+        }
+
+        if (!strcmp(key, "stateStore")) {
+            if (!strcmp(value, "default")) {
+                continue;
+            }
+            if (!strcmp(value, "parent")) {
+                mEnviroment.mFragmentStore.clear();
+                continue;
+            }
+            LOGE("Unrecognized value %s passed to stateStore", value);
+            return false;
         }
     }
-}
 
+    mSlots = new ObjectBaseRef<Allocation>[mHal.info.exportedVariableCount];
+    mTypes = new ObjectBaseRef<const Type>[mHal.info.exportedVariableCount];
+
+    return true;
+}
 
 namespace android {
 namespace renderscript {
 
-void rsi_ScriptCBegin(Context * rsc)
+RsScript rsi_ScriptCCreate(Context *rsc,
+                           const char *resName, size_t resName_length,
+                           const char *cacheDir, size_t cacheDir_length,
+                           const char *text, size_t text_length)
 {
-    ScriptCState *ss = &rsc->mScriptC;
-    ss->clear();
-}
+    ScriptC *s = new ScriptC(rsc);
 
-void rsi_ScriptCSetScript(Context * rsc, void *vp)
-{
-    rsAssert(0);
-    //ScriptCState *ss = &rsc->mScriptC;
-    //ss->mProgram.mScript = reinterpret_cast<ScriptC::RunScript_t>(vp);
-}
-
-void rsi_ScriptCSetText(Context *rsc, const char *text, uint32_t len)
-{
-    ScriptCState *ss = &rsc->mScriptC;
-
-    char *t = (char *)malloc(len + 1);
-    memcpy(t, text, len);
-    t[len] = 0;
-    ss->mScript->mEnviroment.mScriptText = t;
-    ss->mScript->mEnviroment.mScriptTextLength = len;
-}
-
-
-RsScript rsi_ScriptCCreate(Context * rsc)
-{
-    ScriptCState *ss = &rsc->mScriptC;
-
-    ScriptC *s = ss->mScript;
-    ss->mScript = NULL;
-
-    ss->runCompiler(rsc, s);
-    s->incUserRef();
-    s->setContext(rsc);
-    for (int ct=0; ct < MAX_SCRIPT_BANKS; ct++) {
-        s->mTypes[ct].set(ss->mConstantBufferTypes[ct].get());
-        s->mSlotNames[ct] = ss->mSlotNames[ct];
-        s->mSlotWritable[ct] = ss->mSlotWritable[ct];
+    if (!s->runCompiler(rsc, resName, cacheDir, (uint8_t *)text, text_length)) {
+        // Error during compile, destroy s and return null.
+        delete s;
+        return NULL;
     }
 
-    ss->clear();
+    s->incUserRef();
     return s;
 }
 
-void rsi_ScriptCSetDefineF(Context *rsc, const char* name, float value)
-{
-    ScriptCState *ss = &rsc->mScriptC;
-    ss->mFloatDefines.add(String8(name), value);
-}
-
-void rsi_ScriptCSetDefineI32(Context *rsc, const char* name, int32_t value)
-{
-    ScriptCState *ss = &rsc->mScriptC;
-    ss->mInt32Defines.add(String8(name), value);
-}
-
 }
 }
-
-

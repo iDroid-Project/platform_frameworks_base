@@ -2,23 +2,22 @@
 **
 ** Copyright 2006, The Android Open Source Project
 **
-** Licensed under the Apache License, Version 2.0 (the "License"); 
-** you may not use this file except in compliance with the License. 
-** You may obtain a copy of the License at 
+** Licensed under the Apache License, Version 2.0 (the "License");
+** you may not use this file except in compliance with the License.
+** You may obtain a copy of the License at
 **
-**     http://www.apache.org/licenses/LICENSE-2.0 
+**     http://www.apache.org/licenses/LICENSE-2.0
 **
-** Unless required by applicable law or agreed to in writing, software 
-** distributed under the License is distributed on an "AS IS" BASIS, 
-** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. 
-** See the License for the specific language governing permissions and 
+** Unless required by applicable law or agreed to in writing, software
+** distributed under the License is distributed on an "AS IS" BASIS,
+** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+** See the License for the specific language governing permissions and
 ** limitations under the License.
 */
 
-// This file was generated from the C++ include file: SkPaint.h
-// Any changes made to this file will be discarded by the build.
-// To change this file, either edit the include, or device/tools/gluemaker/main.cpp, 
-// or one of the auxilary file specifications in device/tools/gluemaker.
+#define LOG_TAG "Paint"
+
+#include <utils/Log.h>
 
 #include "jni.h"
 #include "GraphicsJNI.h"
@@ -31,6 +30,12 @@
 #include "SkShader.h"
 #include "SkTypeface.h"
 #include "SkXfermode.h"
+#include "unicode/ushape.h"
+#include "TextLayout.h"
+
+// temporary for debugging
+#include <Caches.h>
+#include <utils/Log.h>
 
 namespace android {
 
@@ -49,14 +54,15 @@ static jclass   gFontMetricsInt_class;
 static JMetricsID gFontMetricsInt_fieldID;
 
 static void defaultSettingsForAndroid(SkPaint* paint) {
-    // looks best we decided
-    paint->setHinting(SkPaint::kSlight_Hinting);
     // utf16 is required for java
     paint->setTextEncoding(SkPaint::kUTF16_TextEncoding);
 }
 
 class SkPaintGlue {
 public:
+    enum MoveOpt {
+        AFTER, AT_OR_AFTER, BEFORE, AT_OR_BEFORE, AT
+    };
 
     static void finalizer(JNIEnv* env, jobject clazz, SkPaint* obj) {
         delete obj;
@@ -72,214 +78,226 @@ public:
         SkPaint* obj = new SkPaint(*paint);
         return obj;
     }
- 
+
     static void reset(JNIEnv* env, jobject clazz, SkPaint* obj) {
         obj->reset();
         defaultSettingsForAndroid(obj);
     }
- 
+
     static void assign(JNIEnv* env, jobject clazz, SkPaint* dst, const SkPaint* src) {
         *dst = *src;
     }
- 
+
     static jint getFlags(JNIEnv* env, jobject paint) {
         NPE_CHECK_RETURN_ZERO(env, paint);
         return GraphicsJNI::getNativePaint(env, paint)->getFlags();
     }
- 
+
     static void setFlags(JNIEnv* env, jobject paint, jint flags) {
         NPE_CHECK_RETURN_VOID(env, paint);
         GraphicsJNI::getNativePaint(env, paint)->setFlags(flags);
     }
- 
+
+    static jint getHinting(JNIEnv* env, jobject paint) {
+        NPE_CHECK_RETURN_ZERO(env, paint);
+        return GraphicsJNI::getNativePaint(env, paint)->getHinting()
+                == SkPaint::kNo_Hinting ? 0 : 1;
+    }
+
+    static void setHinting(JNIEnv* env, jobject paint, jint mode) {
+        NPE_CHECK_RETURN_VOID(env, paint);
+        GraphicsJNI::getNativePaint(env, paint)->setHinting(
+                mode == 0 ? SkPaint::kNo_Hinting : SkPaint::kSlight_Hinting);
+    }
+
     static void setAntiAlias(JNIEnv* env, jobject paint, jboolean aa) {
         NPE_CHECK_RETURN_VOID(env, paint);
         GraphicsJNI::getNativePaint(env, paint)->setAntiAlias(aa);
     }
- 
+
     static void setLinearText(JNIEnv* env, jobject paint, jboolean linearText) {
         NPE_CHECK_RETURN_VOID(env, paint);
         GraphicsJNI::getNativePaint(env, paint)->setLinearText(linearText);
     }
-    
+
     static void setSubpixelText(JNIEnv* env, jobject paint, jboolean subpixelText) {
         NPE_CHECK_RETURN_VOID(env, paint);
         GraphicsJNI::getNativePaint(env, paint)->setSubpixelText(subpixelText);
     }
-    
+
     static void setUnderlineText(JNIEnv* env, jobject paint, jboolean underlineText) {
         NPE_CHECK_RETURN_VOID(env, paint);
         GraphicsJNI::getNativePaint(env, paint)->setUnderlineText(underlineText);
     }
- 
+
     static void setStrikeThruText(JNIEnv* env, jobject paint, jboolean strikeThruText) {
         NPE_CHECK_RETURN_VOID(env, paint);
         GraphicsJNI::getNativePaint(env, paint)->setStrikeThruText(strikeThruText);
     }
- 
+
     static void setFakeBoldText(JNIEnv* env, jobject paint, jboolean fakeBoldText) {
         NPE_CHECK_RETURN_VOID(env, paint);
         GraphicsJNI::getNativePaint(env, paint)->setFakeBoldText(fakeBoldText);
     }
-    
+
     static void setFilterBitmap(JNIEnv* env, jobject paint, jboolean filterBitmap) {
         NPE_CHECK_RETURN_VOID(env, paint);
         GraphicsJNI::getNativePaint(env, paint)->setFilterBitmap(filterBitmap);
     }
-    
+
     static void setDither(JNIEnv* env, jobject paint, jboolean dither) {
         NPE_CHECK_RETURN_VOID(env, paint);
         GraphicsJNI::getNativePaint(env, paint)->setDither(dither);
     }
-    
+
     static jint getStyle(JNIEnv* env, jobject clazz, SkPaint* obj) {
         return obj->getStyle();
     }
- 
+
     static void setStyle(JNIEnv* env, jobject clazz, SkPaint* obj, SkPaint::Style style) {
         obj->setStyle(style);
     }
- 
+
     static jint getColor(JNIEnv* env, jobject paint) {
         NPE_CHECK_RETURN_ZERO(env, paint);
         return GraphicsJNI::getNativePaint(env, paint)->getColor();
     }
- 
+
     static jint getAlpha(JNIEnv* env, jobject paint) {
         NPE_CHECK_RETURN_ZERO(env, paint);
         return GraphicsJNI::getNativePaint(env, paint)->getAlpha();
     }
- 
+
     static void setColor(JNIEnv* env, jobject paint, jint color) {
         NPE_CHECK_RETURN_VOID(env, paint);
         GraphicsJNI::getNativePaint(env, paint)->setColor(color);
     }
- 
+
     static void setAlpha(JNIEnv* env, jobject paint, jint a) {
         NPE_CHECK_RETURN_VOID(env, paint);
         GraphicsJNI::getNativePaint(env, paint)->setAlpha(a);
     }
- 
+
     static jfloat getStrokeWidth(JNIEnv* env, jobject paint) {
         NPE_CHECK_RETURN_ZERO(env, paint);
         return SkScalarToFloat(GraphicsJNI::getNativePaint(env, paint)->getStrokeWidth());
     }
- 
+
     static void setStrokeWidth(JNIEnv* env, jobject paint, jfloat width) {
         NPE_CHECK_RETURN_VOID(env, paint);
         GraphicsJNI::getNativePaint(env, paint)->setStrokeWidth(SkFloatToScalar(width));
     }
- 
+
     static jfloat getStrokeMiter(JNIEnv* env, jobject paint) {
         NPE_CHECK_RETURN_ZERO(env, paint);
         return SkScalarToFloat(GraphicsJNI::getNativePaint(env, paint)->getStrokeMiter());
     }
- 
+
     static void setStrokeMiter(JNIEnv* env, jobject paint, jfloat miter) {
         NPE_CHECK_RETURN_VOID(env, paint);
         GraphicsJNI::getNativePaint(env, paint)->setStrokeMiter(SkFloatToScalar(miter));
     }
- 
+
     static jint getStrokeCap(JNIEnv* env, jobject clazz, SkPaint* obj) {
         return obj->getStrokeCap();
     }
- 
+
     static void setStrokeCap(JNIEnv* env, jobject clazz, SkPaint* obj, SkPaint::Cap cap) {
         obj->setStrokeCap(cap);
     }
- 
+
     static jint getStrokeJoin(JNIEnv* env, jobject clazz, SkPaint* obj) {
         return obj->getStrokeJoin();
     }
- 
+
     static void setStrokeJoin(JNIEnv* env, jobject clazz, SkPaint* obj, SkPaint::Join join) {
         obj->setStrokeJoin(join);
     }
- 
+
     static jboolean getFillPath(JNIEnv* env, jobject clazz, SkPaint* obj, SkPath* src, SkPath* dst) {
         return obj->getFillPath(*src, dst);
     }
- 
+
     static SkShader* setShader(JNIEnv* env, jobject clazz, SkPaint* obj, SkShader* shader) {
         return obj->setShader(shader);
     }
- 
+
     static SkColorFilter* setColorFilter(JNIEnv* env, jobject clazz, SkPaint* obj, SkColorFilter* filter) {
         return obj->setColorFilter(filter);
     }
- 
+
     static SkXfermode* setXfermode(JNIEnv* env, jobject clazz, SkPaint* obj, SkXfermode* xfermode) {
         return obj->setXfermode(xfermode);
     }
- 
+
     static SkPathEffect* setPathEffect(JNIEnv* env, jobject clazz, SkPaint* obj, SkPathEffect* effect) {
         return obj->setPathEffect(effect);
     }
- 
+
     static SkMaskFilter* setMaskFilter(JNIEnv* env, jobject clazz, SkPaint* obj, SkMaskFilter* maskfilter) {
         return obj->setMaskFilter(maskfilter);
     }
- 
+
     static SkTypeface* setTypeface(JNIEnv* env, jobject clazz, SkPaint* obj, SkTypeface* typeface) {
         return obj->setTypeface(typeface);
     }
- 
+
     static SkRasterizer* setRasterizer(JNIEnv* env, jobject clazz, SkPaint* obj, SkRasterizer* rasterizer) {
         return obj->setRasterizer(rasterizer);
     }
- 
+
     static jint getTextAlign(JNIEnv* env, jobject clazz, SkPaint* obj) {
         return obj->getTextAlign();
     }
- 
+
     static void setTextAlign(JNIEnv* env, jobject clazz, SkPaint* obj, SkPaint::Align align) {
         obj->setTextAlign(align);
     }
- 
+
     static jfloat getTextSize(JNIEnv* env, jobject paint) {
         NPE_CHECK_RETURN_ZERO(env, paint);
         return SkScalarToFloat(GraphicsJNI::getNativePaint(env, paint)->getTextSize());
     }
- 
+
     static void setTextSize(JNIEnv* env, jobject paint, jfloat textSize) {
         NPE_CHECK_RETURN_VOID(env, paint);
         GraphicsJNI::getNativePaint(env, paint)->setTextSize(SkFloatToScalar(textSize));
     }
- 
+
     static jfloat getTextScaleX(JNIEnv* env, jobject paint) {
         NPE_CHECK_RETURN_ZERO(env, paint);
         return SkScalarToFloat(GraphicsJNI::getNativePaint(env, paint)->getTextScaleX());
     }
- 
+
     static void setTextScaleX(JNIEnv* env, jobject paint, jfloat scaleX) {
         NPE_CHECK_RETURN_VOID(env, paint);
         GraphicsJNI::getNativePaint(env, paint)->setTextScaleX(SkFloatToScalar(scaleX));
     }
- 
+
     static jfloat getTextSkewX(JNIEnv* env, jobject paint) {
         NPE_CHECK_RETURN_ZERO(env, paint);
         return SkScalarToFloat(GraphicsJNI::getNativePaint(env, paint)->getTextSkewX());
     }
- 
+
     static void setTextSkewX(JNIEnv* env, jobject paint, jfloat skewX) {
         NPE_CHECK_RETURN_VOID(env, paint);
         GraphicsJNI::getNativePaint(env, paint)->setTextSkewX(SkFloatToScalar(skewX));
     }
- 
+
     static jfloat ascent(JNIEnv* env, jobject paint) {
         NPE_CHECK_RETURN_ZERO(env, paint);
         SkPaint::FontMetrics    metrics;
         (void)GraphicsJNI::getNativePaint(env, paint)->getFontMetrics(&metrics);
         return SkScalarToFloat(metrics.fAscent);
     }
- 
+
     static jfloat descent(JNIEnv* env, jobject paint) {
         NPE_CHECK_RETURN_ZERO(env, paint);
         SkPaint::FontMetrics    metrics;
         (void)GraphicsJNI::getNativePaint(env, paint)->getFontMetrics(&metrics);
         return SkScalarToFloat(metrics.fDescent);
     }
- 
+
     static jfloat getFontMetrics(JNIEnv* env, jobject paint, jobject metricsObj) {
         NPE_CHECK_RETURN_ZERO(env, paint);
         SkPaint::FontMetrics metrics;
@@ -295,11 +313,11 @@ public:
         }
         return SkScalarToFloat(spacing);
     }
-    
+
     static jint getFontMetricsInt(JNIEnv* env, jobject paint, jobject metricsObj) {
         NPE_CHECK_RETURN_ZERO(env, paint);
         SkPaint::FontMetrics metrics;
-        
+
         GraphicsJNI::getNativePaint(env, paint)->getFontMetrics(&metrics);
         int ascent = SkScalarRound(metrics.fAscent);
         int descent = SkScalarRound(metrics.fDescent);
@@ -321,99 +339,391 @@ public:
         NPE_CHECK_RETURN_ZERO(env, text);
 
         size_t textLength = env->GetArrayLength(text);
-        
         if ((index | count) < 0 || (size_t)(index + count) > textLength) {
-            doThrow(env, "java/lang/ArrayIndexOutOfBoundsException");
+            doThrowAIOOBE(env);
+            return 0;
+        }
+        if (count == 0) {
             return 0;
         }
 
-        const SkPaint* paint = GraphicsJNI::getNativePaint(env, jpaint);        
+        SkPaint* paint = GraphicsJNI::getNativePaint(env, jpaint);
         const jchar* textArray = env->GetCharArrayElements(text, NULL);
+        jfloat result = 0;
+#if RTL_USE_HARFBUZZ
+        TextLayout::getTextRunAdvances(paint, textArray, index, count, textLength,
+                paint->getFlags(), NULL /* dont need all advances */, &result);
+#else
         // we double count, since measureText wants a byteLength
         SkScalar width = paint->measureText(textArray + index, count << 1);
-        env->ReleaseCharArrayElements(text, const_cast<jchar*>(textArray),
-                                      JNI_ABORT);
-
-        return SkScalarToFloat(width);
+        result = SkScalarToFloat(width);
+#endif
+        env->ReleaseCharArrayElements(text, const_cast<jchar*>(textArray), JNI_ABORT);
+        return result;
     }
- 
+
     static jfloat measureText_StringII(JNIEnv* env, jobject jpaint, jstring text, int start, int end) {
         NPE_CHECK_RETURN_ZERO(env, jpaint);
         NPE_CHECK_RETURN_ZERO(env, text);
-        
-        SkPaint* paint = GraphicsJNI::getNativePaint(env, jpaint);        
-        const jchar* textArray = env->GetStringChars(text, NULL);
+
         size_t textLength = env->GetStringLength(text);
-        
         int count = end - start;
-        if ((start | count) < 0 || (size_t)count > textLength) {
-            doThrow(env, "java/lang/IndexOutOfBoundsException");
+        if ((start | count) < 0 || (size_t)end > textLength) {
+            doThrowAIOOBE(env);
             return 0;
         }
-        
-        jfloat width = SkScalarToFloat(paint->measureText(textArray + start, count << 1));
+        if (count == 0) {
+            return 0;
+        }
+
+        const jchar* textArray = env->GetStringChars(text, NULL);
+        SkPaint* paint = GraphicsJNI::getNativePaint(env, jpaint);
+        jfloat width = 0;
+
+#if RTL_USE_HARFBUZZ
+        TextLayout::getTextRunAdvances(paint, textArray, start, count, textLength,
+                paint->getFlags(), NULL /* dont need all advances */, &width);
+#else
+
+        width = SkScalarToFloat(paint->measureText(textArray + start, count << 1));
+#endif
         env->ReleaseStringChars(text, textArray);
         return width;
     }
-    
+
     static jfloat measureText_String(JNIEnv* env, jobject jpaint, jstring text) {
         NPE_CHECK_RETURN_ZERO(env, jpaint);
         NPE_CHECK_RETURN_ZERO(env, text);
-        
-        SkPaint* paint = GraphicsJNI::getNativePaint(env, jpaint);        
-        const jchar* textArray = env->GetStringChars(text, NULL);
+
         size_t textLength = env->GetStringLength(text);
-        
-        jfloat width = SkScalarToFloat(paint->measureText(textArray, textLength << 1));
+        if (textLength == 0) {
+            return 0;
+        }
+
+        const jchar* textArray = env->GetStringChars(text, NULL);
+        SkPaint* paint = GraphicsJNI::getNativePaint(env, jpaint);
+        jfloat width = 0;
+
+#if RTL_USE_HARFBUZZ
+        TextLayout::getTextRunAdvances(paint, textArray, 0, textLength, textLength,
+                paint->getFlags(), NULL /* dont need all advances */, &width);
+#else
+        width = SkScalarToFloat(paint->measureText(textArray, textLength << 1));
+#endif
         env->ReleaseStringChars(text, textArray);
         return width;
     }
-    
+
     static int dotextwidths(JNIEnv* env, SkPaint* paint, const jchar text[], int count, jfloatArray widths) {
+        NPE_CHECK_RETURN_ZERO(env, paint);
+        NPE_CHECK_RETURN_ZERO(env, text);
+
+        if (count < 0 || !widths) {
+            doThrowAIOOBE(env);
+            return 0;
+        }
+        if (count == 0) {
+            return 0;
+        }
+        size_t widthsLength = env->GetArrayLength(widths);
+        if ((size_t)count > widthsLength) {
+            doThrowAIOOBE(env);
+            return 0;
+        }
+
         AutoJavaFloatArray autoWidths(env, widths, count);
         jfloat* widthsArray = autoWidths.ptr();
+
+#if RTL_USE_HARFBUZZ
+        TextLayout::getTextRunAdvances(paint, text, 0, count, count,
+                paint->getFlags(), widthsArray, NULL /* dont need totalAdvance */);
+#else
         SkScalar* scalarArray = (SkScalar*)widthsArray;
 
-        count = paint->getTextWidths(text, count << 1, scalarArray);        
+        count = paint->getTextWidths(text, count << 1, scalarArray);
         for (int i = 0; i < count; i++) {
             widthsArray[i] = SkScalarToFloat(scalarArray[i]);
         }
+#endif
         return count;
     }
-    
+
     static int getTextWidths___CII_F(JNIEnv* env, jobject clazz, SkPaint* paint, jcharArray text, int index, int count, jfloatArray widths) {
         const jchar* textArray = env->GetCharArrayElements(text, NULL);
         count = dotextwidths(env, paint, textArray + index, count, widths);
         env->ReleaseCharArrayElements(text, const_cast<jchar*>(textArray),
-                                      JNI_ABORT);        
+                                      JNI_ABORT);
         return count;
     }
- 
-    static int getTextWidths__StringII_F(JNIEnv* env, jobject clazz, SkPaint* paint, jstring text, int start, int end, jfloatArray widths) {
+
+    static int getTextWidths__StringII_F(JNIEnv* env, jobject clazz, SkPaint* paint, jstring text,
+            int start, int end, jfloatArray widths) {
         const jchar* textArray = env->GetStringChars(text, NULL);
         int count = dotextwidths(env, paint, textArray + start, end - start, widths);
         env->ReleaseStringChars(text, textArray);
         return count;
     }
-    
-    static void getTextPath___CIIFFPath(JNIEnv* env, jobject clazz, SkPaint* paint, jcharArray text, int index, int count, jfloat x, jfloat y, SkPath* path) {
-        const jchar* textArray = env->GetCharArrayElements(text, NULL);
-        paint->getTextPath(textArray + index, count << 1, SkFloatToScalar(x), SkFloatToScalar(y), path);
-        env->ReleaseCharArrayElements(text, const_cast<jchar*>(textArray),
-                                      JNI_ABORT);
+
+    static int doTextGlyphs(JNIEnv* env, SkPaint* paint, const jchar* text, jint start, jint count,
+            jint contextCount, jint flags, jcharArray glyphs) {
+        NPE_CHECK_RETURN_ZERO(env, paint);
+        NPE_CHECK_RETURN_ZERO(env, text);
+
+        if ((start | count | contextCount) < 0 || contextCount < count || !glyphs) {
+            doThrowAIOOBE(env);
+            return 0;
+        }
+        if (count == 0) {
+            return 0;
+        }
+        size_t glypthsLength = env->GetArrayLength(glyphs);
+        if ((size_t)count > glypthsLength) {
+            doThrowAIOOBE(env);
+            return 0;
+        }
+
+        jchar* glyphsArray = env->GetCharArrayElements(glyphs, NULL);
+
+        TextLayoutCacheValue value;
+        value.computeValues(paint, text, start, count, contextCount, flags);
+        const jchar* shapedGlyphs = value.getGlyphs();
+        size_t glyphsCount = value.getGlyphsCount();
+        memcpy(glyphsArray, shapedGlyphs, sizeof(jchar) * glyphsCount);
+
+        env->ReleaseCharArrayElements(glyphs, glyphsArray, JNI_ABORT);
+        return glyphsCount;
     }
- 
-    static void getTextPath__StringIIFFPath(JNIEnv* env, jobject clazz, SkPaint* paint, jstring text, int start, int end, jfloat x, jfloat y, SkPath* path) {
+
+    static int getTextGlyphs__StringIIIII_C(JNIEnv* env, jobject clazz, SkPaint* paint,
+            jstring text, jint start, jint end, jint contextStart, jint contextEnd, jint flags,
+            jcharArray glyphs) {
         const jchar* textArray = env->GetStringChars(text, NULL);
-        paint->getTextPath(textArray + start, (end - start) << 1, SkFloatToScalar(x), SkFloatToScalar(y), path);
+        int count = doTextGlyphs(env, paint, textArray + contextStart, start - contextStart,
+                end - start, contextEnd - contextStart, flags, glyphs);
+        env->ReleaseStringChars(text, textArray);
+        return count;
+    }
+
+    static jfloat doTextRunAdvances(JNIEnv *env, SkPaint *paint, const jchar *text,
+                                    jint start, jint count, jint contextCount, jint flags,
+                                    jfloatArray advances, jint advancesIndex) {
+        NPE_CHECK_RETURN_ZERO(env, paint);
+        NPE_CHECK_RETURN_ZERO(env, text);
+
+        if ((start | count | contextCount | advancesIndex) < 0 || contextCount < count) {
+            doThrowAIOOBE(env);
+            return 0;
+        }
+        if (count == 0) {
+            return 0;
+        }
+        if (advances) {
+            size_t advancesLength = env->GetArrayLength(advances);
+            if ((size_t)count > advancesLength) {
+                doThrowAIOOBE(env);
+                return 0;
+            }
+        }
+        jfloat advancesArray[count];
+        jfloat totalAdvance = 0;
+
+        TextLayout::getTextRunAdvances(paint, text, start, count, contextCount, flags,
+                                       advancesArray, &totalAdvance);
+
+        if (advances != NULL) {
+            env->SetFloatArrayRegion(advances, advancesIndex, count, advancesArray);
+        }
+        return totalAdvance;
+    }
+
+    static jfloat doTextRunAdvancesICU(JNIEnv *env, SkPaint *paint, const jchar *text,
+                                    jint start, jint count, jint contextCount, jint flags,
+                                    jfloatArray advances, jint advancesIndex) {
+        NPE_CHECK_RETURN_ZERO(env, paint);
+        NPE_CHECK_RETURN_ZERO(env, text);
+
+        if ((start | count | contextCount | advancesIndex) < 0 || contextCount < count) {
+            doThrowAIOOBE(env);
+            return 0;
+        }
+        if (count == 0) {
+            return 0;
+        }
+        if (advances) {
+            size_t advancesLength = env->GetArrayLength(advances);
+            if ((size_t)count > advancesLength) {
+                doThrowAIOOBE(env);
+                return 0;
+            }
+        }
+
+        jfloat advancesArray[count];
+        jfloat totalAdvance = 0;
+
+        TextLayout::getTextRunAdvancesICU(paint, text, start, count, contextCount, flags,
+                                       advancesArray, totalAdvance);
+
+        if (advances != NULL) {
+            env->SetFloatArrayRegion(advances, advancesIndex, count, advancesArray);
+        }
+        return totalAdvance;
+    }
+
+    static float getTextRunAdvances___CIIIII_FII(JNIEnv* env, jobject clazz, SkPaint* paint,
+            jcharArray text, jint index, jint count, jint contextIndex, jint contextCount,
+            jint flags, jfloatArray advances, jint advancesIndex, jint reserved) {
+        jchar* textArray = env->GetCharArrayElements(text, NULL);
+        jfloat result = (reserved == 0) ?
+                doTextRunAdvances(env, paint, textArray + contextIndex, index - contextIndex,
+                        count, contextCount, flags, advances, advancesIndex) :
+                doTextRunAdvancesICU(env, paint, textArray + contextIndex, index - contextIndex,
+                        count, contextCount, flags, advances, advancesIndex);
+        env->ReleaseCharArrayElements(text, textArray, JNI_ABORT);
+        return result;
+    }
+
+    static float getTextRunAdvances__StringIIIII_FII(JNIEnv* env, jobject clazz, SkPaint* paint,
+            jstring text, jint start, jint end, jint contextStart, jint contextEnd, jint flags,
+            jfloatArray advances, jint advancesIndex, jint reserved) {
+        const jchar* textArray = env->GetStringChars(text, NULL);
+        jfloat result = (reserved == 0) ?
+                doTextRunAdvances(env, paint, textArray + contextStart, start - contextStart,
+                        end - start, contextEnd - contextStart, flags, advances, advancesIndex) :
+                doTextRunAdvancesICU(env, paint, textArray + contextStart, start - contextStart,
+                        end - start, contextEnd - contextStart, flags, advances, advancesIndex);
+        env->ReleaseStringChars(text, textArray);
+        return result;
+    }
+
+    static jint doTextRunCursor(JNIEnv *env, SkPaint* paint, const jchar *text, jint start,
+            jint count, jint flags, jint offset, jint opt) {
+#if RTL_USE_HARFBUZZ
+        jfloat scalarArray[count];
+
+        TextLayout::getTextRunAdvances(paint, text, start, count, count, flags,
+                scalarArray, NULL /* dont need totalAdvance */);
+#else
+        SkScalar scalarArray[count];
+        jchar buffer[count];
+
+        // this is where we'd call harfbuzz
+        // for now we just use ushape.c and widths returned from skia
+
+        int widths;
+        if (flags & 0x1) { // rtl, call arabic shaping in case
+            UErrorCode status = U_ZERO_ERROR;
+            // Use fixed length since we need to keep start and count valid
+            u_shapeArabic(text + start, count, buffer, count,
+                    U_SHAPE_LENGTH_FIXED_SPACES_NEAR | U_SHAPE_TEXT_DIRECTION_LOGICAL |
+                    U_SHAPE_LETTERS_SHAPE | U_SHAPE_X_LAMALEF_SUB_ALTERNATE, &status);
+            // we shouldn't fail unless there's an out of memory condition,
+            // in which case we're hosed anyway
+            for (int i = 0; i < count; ++i) {
+              if (buffer[i] == 0xffff) {
+                buffer[i] = 0x200b; // zero-width-space for skia
+              }
+            }
+            widths = paint->getTextWidths(buffer, count << 1, scalarArray);
+        } else {
+            widths = paint->getTextWidths(text + start, count << 1, scalarArray);
+        }
+
+        if (widths < count) {
+            // Skia operates on code points, not code units, so surrogate pairs return only one
+            // value. Expand the result so we have one value per UTF-16 code unit.
+
+            // Note, skia's getTextWidth gets confused if it encounters a surrogate pair,
+            // leaving the remaining widths zero.  Not nice.
+            const jchar *chars = text + start;
+            for (int i = count, p = widths - 1; --i > p;) {
+                if (chars[i] >= 0xdc00 && chars[i] < 0xe000 &&
+                        chars[i-1] >= 0xd800 && chars[i-1] < 0xdc00) {
+                    scalarArray[i] = 0;
+                } else {
+                  scalarArray[i] = scalarArray[--p];
+                }
+            }
+        }
+#endif
+        jint pos = offset - start;
+        switch (opt) {
+        case AFTER:
+          if (pos < count) {
+            pos += 1;
+          }
+          // fall through
+        case AT_OR_AFTER:
+          while (pos < count && scalarArray[pos] == 0) {
+            ++pos;
+          }
+          break;
+        case BEFORE:
+          if (pos > 0) {
+            --pos;
+          }
+          // fall through
+        case AT_OR_BEFORE:
+          while (pos > 0 && scalarArray[pos] == 0) {
+            --pos;
+          }
+          break;
+        case AT:
+        default:
+          if (scalarArray[pos] == 0) {
+            pos = -1;
+          }
+          break;
+        }
+
+        if (pos != -1) {
+          pos += start;
+        }
+
+        return pos;
+    }
+
+    static jint getTextRunCursor___C(JNIEnv* env, jobject clazz, SkPaint* paint, jcharArray text,
+            jint contextStart, jint contextCount, jint flags, jint offset, jint cursorOpt) {
+        jchar* textArray = env->GetCharArrayElements(text, NULL);
+        jint result = doTextRunCursor(env, paint, textArray, contextStart, contextCount, flags,
+                offset, cursorOpt);
+        env->ReleaseCharArrayElements(text, textArray, JNI_ABORT);
+        return result;
+    }
+
+    static jint getTextRunCursor__String(JNIEnv* env, jobject clazz, SkPaint* paint, jstring text,
+            jint contextStart, jint contextEnd, jint flags, jint offset, jint cursorOpt) {
+        const jchar* textArray = env->GetStringChars(text, NULL);
+        jint result = doTextRunCursor(env, paint, textArray, contextStart,
+                contextEnd - contextStart, flags, offset, cursorOpt);
+        env->ReleaseStringChars(text, textArray);
+        return result;
+    }
+
+    static void getTextPath(JNIEnv* env, SkPaint* paint, const jchar* text, jint count,
+                            jint bidiFlags, jfloat x, jfloat y, SkPath *path) {
+        TextLayout::getTextPath(paint, text, count, bidiFlags, x, y, path);
+    }
+
+    static void getTextPath___C(JNIEnv* env, jobject clazz, SkPaint* paint, jint bidiFlags,
+            jcharArray text, int index, int count, jfloat x, jfloat y, SkPath* path) {
+        const jchar* textArray = env->GetCharArrayElements(text, NULL);
+        getTextPath(env, paint, textArray + index, count, bidiFlags, x, y, path);
+        env->ReleaseCharArrayElements(text, const_cast<jchar*>(textArray), JNI_ABORT);
+    }
+
+    static void getTextPath__String(JNIEnv* env, jobject clazz, SkPaint* paint, jint bidiFlags,
+            jstring text, int start, int end, jfloat x, jfloat y, SkPath* path) {
+        const jchar* textArray = env->GetStringChars(text, NULL);
+        getTextPath(env, paint, textArray + start, end - start, bidiFlags, x, y, path);
         env->ReleaseStringChars(text, textArray);
     }
- 
+
     static void setShadowLayer(JNIEnv* env, jobject jpaint, jfloat radius,
                                jfloat dx, jfloat dy, int color) {
         NPE_CHECK_RETURN_VOID(env, jpaint);
-        
-        SkPaint* paint = GraphicsJNI::getNativePaint(env, jpaint);        
+
+        SkPaint* paint = GraphicsJNI::getNativePaint(env, jpaint);
         if (radius <= 0) {
             paint->setLooper(NULL);
         }
@@ -458,7 +768,7 @@ public:
         }
 
         if ((index < 0) || (index + count > env->GetArrayLength(jtext))) {
-            doThrow(env, "java/lang/ArrayIndexOutOfBoundsException");
+            doThrowAIOOBE(env);
             return 0;
         }
 
@@ -494,7 +804,7 @@ public:
     {
         SkRect  r;
         SkIRect ir;
-        
+
         paint.measureText(text, count << 1, &r);
         r.roundOut(&ir);
         GraphicsJNI::irect_to_jrect(ir, env, bounds);
@@ -507,7 +817,7 @@ public:
         doTextBounds(env, textArray + start, end - start, bounds, *paint);
         env->ReleaseStringChars(text, textArray);
     }
-    
+
     static void getCharArrayBounds(JNIEnv* env, jobject, const SkPaint* paint,
                         jcharArray text, int index, int count, jobject bounds)
     {
@@ -516,7 +826,7 @@ public:
         env->ReleaseCharArrayElements(text, const_cast<jchar*>(textArray),
                                       JNI_ABORT);
     }
-    
+
 };
 
 static JNINativeMethod methods[] = {
@@ -527,6 +837,8 @@ static JNINativeMethod methods[] = {
     {"native_set","(II)V", (void*) SkPaintGlue::assign},
     {"getFlags","()I", (void*) SkPaintGlue::getFlags},
     {"setFlags","(I)V", (void*) SkPaintGlue::setFlags},
+    {"getHinting","()I", (void*) SkPaintGlue::getHinting},
+    {"setHinting","(I)V", (void*) SkPaintGlue::setHinting},
     {"setAntiAlias","(Z)V", (void*) SkPaintGlue::setAntiAlias},
     {"setSubpixelText","(Z)V", (void*) SkPaintGlue::setSubpixelText},
     {"setLinearText","(Z)V", (void*) SkPaintGlue::setLinearText},
@@ -576,13 +888,24 @@ static JNINativeMethod methods[] = {
     {"native_breakText","(Ljava/lang/String;ZF[F)I", (void*) SkPaintGlue::breakTextS},
     {"native_getTextWidths","(I[CII[F)I", (void*) SkPaintGlue::getTextWidths___CII_F},
     {"native_getTextWidths","(ILjava/lang/String;II[F)I", (void*) SkPaintGlue::getTextWidths__StringII_F},
-    {"native_getTextPath","(I[CIIFFI)V", (void*) SkPaintGlue::getTextPath___CIIFFPath},
-    {"native_getTextPath","(ILjava/lang/String;IIFFI)V", (void*) SkPaintGlue::getTextPath__StringIIFFPath},
+    {"native_getTextRunAdvances","(I[CIIIII[FII)F",
+        (void*) SkPaintGlue::getTextRunAdvances___CIIIII_FII},
+    {"native_getTextRunAdvances","(ILjava/lang/String;IIIII[FII)F",
+        (void*) SkPaintGlue::getTextRunAdvances__StringIIIII_FII},
+
+
+    {"native_getTextGlyphs","(ILjava/lang/String;IIIII[C)I",
+        (void*) SkPaintGlue::getTextGlyphs__StringIIIII_C},
+    {"native_getTextRunCursor", "(I[CIIIII)I", (void*) SkPaintGlue::getTextRunCursor___C},
+    {"native_getTextRunCursor", "(ILjava/lang/String;IIIII)I",
+        (void*) SkPaintGlue::getTextRunCursor__String},
+    {"native_getTextPath","(II[CIIFFI)V", (void*) SkPaintGlue::getTextPath___C},
+    {"native_getTextPath","(IILjava/lang/String;IIFFI)V", (void*) SkPaintGlue::getTextPath__String},
     {"nativeGetStringBounds", "(ILjava/lang/String;IILandroid/graphics/Rect;)V",
                                         (void*) SkPaintGlue::getStringBounds },
     {"nativeGetCharArrayBounds", "(I[CIILandroid/graphics/Rect;)V",
                                     (void*) SkPaintGlue::getCharArrayBounds },
-    {"setShadowLayer", "(FFFI)V", (void*)SkPaintGlue::setShadowLayer}
+    {"nSetShadowLayer", "(FFFI)V", (void*)SkPaintGlue::setShadowLayer}
 };
 
 static jfieldID req_fieldID(jfieldID id) {

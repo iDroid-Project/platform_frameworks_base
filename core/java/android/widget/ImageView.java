@@ -30,14 +30,14 @@ import android.graphics.RectF;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
+import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.RemotableViewMethod;
 import android.view.View;
+import android.view.ViewDebug;
 import android.view.accessibility.AccessibilityEvent;
-import android.view.accessibility.AccessibilityManager;
 import android.widget.RemoteViews.RemoteView;
-
 
 /**
  * Displays an arbitrary image, such as an icon.  The ImageView class
@@ -86,7 +86,8 @@ public class ImageView extends View {
 
     private boolean mCropToPadding;
 
-    private boolean mBaselineAligned = false;
+    private int mBaseline = -1;
+    private boolean mBaselineAlignBottom = false;
 
     private static final ScaleType[] sScaleTypeArray = {
         ScaleType.MATRIX,
@@ -120,9 +121,12 @@ public class ImageView extends View {
             setImageDrawable(d);
         }
 
-        mBaselineAligned = a.getBoolean(
+        mBaselineAlignBottom = a.getBoolean(
                 com.android.internal.R.styleable.ImageView_baselineAlignBottom, false);
-        
+
+        mBaseline = a.getDimensionPixelSize(
+                com.android.internal.R.styleable.ImageView_baseline, -1);
+
         setAdjustViewBounds(
             a.getBoolean(com.android.internal.R.styleable.ImageView_adjustViewBounds,
             false));
@@ -143,6 +147,11 @@ public class ImageView extends View {
             setColorFilter(tint);
         }
         
+        int alpha = a.getInt(com.android.internal.R.styleable.ImageView_drawableAlpha, 255);
+        if (alpha != 255) {
+            setAlpha(alpha);
+        }
+
         mCropToPadding = a.getBoolean(
                 com.android.internal.R.styleable.ImageView_cropToPadding, false);
         
@@ -162,6 +171,12 @@ public class ImageView extends View {
     }
     
     @Override
+    public void jumpDrawablesToCurrentState() {
+        super.jumpDrawablesToCurrentState();
+        if (mDrawable != null) mDrawable.jumpToCurrentState();
+    }
+
+    @Override
     public void invalidateDrawable(Drawable dr) {
         if (dr == mDrawable) {
             /* we invalidate the whole view in this case because it's very
@@ -176,7 +191,16 @@ public class ImageView extends View {
             super.invalidateDrawable(dr);
         }
     }
-    
+
+    /**
+     * @hide
+     */
+    @Override
+    public int getResolvedLayoutDirection(Drawable dr) {
+        return (dr == mDrawable) ?
+                getResolvedLayoutDirection() : super.getResolvedLayoutDirection(dr);
+    }
+
     @Override
     protected boolean onSetAlpha(int alpha) {
         if (getBackground() == null) {
@@ -190,7 +214,16 @@ public class ImageView extends View {
         }
         return false;
     }
-    
+
+    @Override
+    public void onPopulateAccessibilityEvent(AccessibilityEvent event) {
+        super.onPopulateAccessibilityEvent(event);
+        CharSequence contentDescription = getContentDescription();
+        if (!TextUtils.isEmpty(contentDescription)) {
+            event.getText().add(contentDescription);
+        }
+    }
+
     /**
      * Set this to true if you want the ImageView to adjust its bounds
      * to preserve the aspect ratio of its drawable.
@@ -209,15 +242,16 @@ public class ImageView extends View {
     
     /**
      * An optional argument to supply a maximum width for this view. Only valid if
-     * {@link #setAdjustViewBounds} has been set to true. To set an image to be a maximum of 100 x
-     * 100 while preserving the original aspect ratio, do the following: 1) set adjustViewBounds to
-     * true 2) set maxWidth and maxHeight to 100 3) set the height and width layout params to
-     * WRAP_CONTENT.
+     * {@link #setAdjustViewBounds(boolean)} has been set to true. To set an image to be a maximum
+     * of 100 x 100 while preserving the original aspect ratio, do the following: 1) set
+     * adjustViewBounds to true 2) set maxWidth and maxHeight to 100 3) set the height and width
+     * layout params to WRAP_CONTENT.
      * 
      * <p>
      * Note that this view could be still smaller than 100 x 100 using this approach if the original
      * image is small. To set an image to a fixed size, specify that size in the layout params and
-     * then use {@link #setScaleType} to determine how to fit the image within the bounds.
+     * then use {@link #setScaleType(android.widget.ImageView.ScaleType)} to determine how to fit
+     * the image within the bounds.
      * </p>
      * 
      * @param maxWidth maximum width for this view
@@ -231,15 +265,16 @@ public class ImageView extends View {
     
     /**
      * An optional argument to supply a maximum height for this view. Only valid if
-     * {@link #setAdjustViewBounds} has been set to true. To set an image to be a maximum of 100 x
-     * 100 while preserving the original aspect ratio, do the following: 1) set adjustViewBounds to
-     * true 2) set maxWidth and maxHeight to 100 3) set the height and width layout params to
-     * WRAP_CONTENT.
+     * {@link #setAdjustViewBounds(boolean)} has been set to true. To set an image to be a
+     * maximum of 100 x 100 while preserving the original aspect ratio, do the following: 1) set
+     * adjustViewBounds to true 2) set maxWidth and maxHeight to 100 3) set the height and width
+     * layout params to WRAP_CONTENT.
      * 
      * <p>
      * Note that this view could be still smaller than 100 x 100 using this approach if the original
      * image is small. To set an image to a fixed size, specify that size in the layout params and
-     * then use {@link #setScaleType} to determine how to fit the image within the bounds.
+     * then use {@link #setScaleType(android.widget.ImageView.ScaleType)} to determine how to fit
+     * the image within the bounds.
      * </p>
      * 
      * @param maxHeight maximum height for this view
@@ -263,8 +298,8 @@ public class ImageView extends View {
      *
      * <p class="note">This does Bitmap reading and decoding on the UI
      * thread, which can cause a latency hiccup.  If that's a concern,
-     * consider using {@link #setImageDrawable} or
-     * {@link #setImageBitmap} and
+     * consider using {@link #setImageDrawable(android.graphics.drawable.Drawable)} or
+     * {@link #setImageBitmap(android.graphics.Bitmap)} and
      * {@link android.graphics.BitmapFactory} instead.</p>
      *
      * @param resId the resource identifier of the the drawable
@@ -288,8 +323,8 @@ public class ImageView extends View {
      *
      * <p class="note">This does Bitmap reading and decoding on the UI
      * thread, which can cause a latency hiccup.  If that's a concern,
-     * consider using {@link #setImageDrawable} or
-     * {@link #setImageBitmap} and
+     * consider using {@link #setImageDrawable(android.graphics.drawable.Drawable)} or
+     * {@link #setImageBitmap(android.graphics.Bitmap)} and
      * {@link android.graphics.BitmapFactory} instead.</p>
      *
      * @param uri The Uri of an image
@@ -308,7 +343,6 @@ public class ImageView extends View {
         }
     }
 
-    
     /**
      * Sets a drawable as the content of this ImageView.
      * 
@@ -318,8 +352,15 @@ public class ImageView extends View {
         if (mDrawable != drawable) {
             mResource = 0;
             mUri = null;
+
+            int oldWidth = mDrawableWidth;
+            int oldHeight = mDrawableHeight;
+
             updateDrawable(drawable);
-            requestLayout();
+
+            if (oldWidth != mDrawableWidth || oldHeight != mDrawableHeight) {
+                requestLayout();
+            }
             invalidate();
         }
     }
@@ -569,6 +610,8 @@ public class ImageView extends View {
             mDrawableHeight = d.getIntrinsicHeight();
             applyColorMod();
             configureBounds();
+        } else {
+            mDrawableWidth = mDrawableHeight = -1;
         }
     }
 
@@ -614,6 +657,9 @@ public class ImageView extends View {
         // We are allowed to change the view's height
         boolean resizeHeight = false;
         
+        final int widthSpecMode = MeasureSpec.getMode(widthMeasureSpec);
+        final int heightSpecMode = MeasureSpec.getMode(heightMeasureSpec);
+
         if (mDrawable == null) {
             // If no drawable, its intrinsic size is 0.
             mDrawableWidth = -1;
@@ -624,18 +670,14 @@ public class ImageView extends View {
             h = mDrawableHeight;
             if (w <= 0) w = 1;
             if (h <= 0) h = 1;
-            
+
             // We are supposed to adjust view bounds to match the aspect
             // ratio of our drawable. See if that is possible.
             if (mAdjustViewBounds) {
-                
-                int widthSpecMode = MeasureSpec.getMode(widthMeasureSpec);
-                int heightSpecMode = MeasureSpec.getMode(heightMeasureSpec);
-                
                 resizeWidth = widthSpecMode != MeasureSpec.EXACTLY;
                 resizeHeight = heightSpecMode != MeasureSpec.EXACTLY;
                 
-                desiredAspect = (float)w/(float)h;
+                desiredAspect = (float) w / (float) h;
             }
         }
         
@@ -654,13 +696,11 @@ public class ImageView extends View {
             */
 
             // Get the max possible width given our constraints
-            widthSize = resolveAdjustedSize(w + pleft + pright,
-                                                 mMaxWidth, widthMeasureSpec);
-            
+            widthSize = resolveAdjustedSize(w + pleft + pright, mMaxWidth, widthMeasureSpec);
+
             // Get the max possible height given our constraints
-            heightSize = resolveAdjustedSize(h + ptop + pbottom,
-                                                mMaxHeight, heightMeasureSpec);
-            
+            heightSize = resolveAdjustedSize(h + ptop + pbottom, mMaxHeight, heightMeasureSpec);
+
             if (desiredAspect != 0.0f) {
                 // See what our actual aspect ratio is
                 float actualAspect = (float)(widthSize - pleft - pright) /
@@ -672,9 +712,8 @@ public class ImageView extends View {
                     
                     // Try adjusting width to be proportional to height
                     if (resizeWidth) {
-                        int newWidth = (int)(desiredAspect *
-                                            (heightSize - ptop - pbottom))
-                                            + pleft + pright;
+                        int newWidth = (int)(desiredAspect * (heightSize - ptop - pbottom)) +
+                                pleft + pright;
                         if (newWidth <= widthSize) {
                             widthSize = newWidth;
                             done = true;
@@ -683,11 +722,11 @@ public class ImageView extends View {
                     
                     // Try adjusting height to be proportional to width
                     if (!done && resizeHeight) {
-                        int newHeight = (int)((widthSize - pleft - pright)
-                                            / desiredAspect) + ptop + pbottom;
+                        int newHeight = (int)((widthSize - pleft - pright) / desiredAspect) +
+                                ptop + pbottom;
                         if (newHeight <= heightSize) {
                             heightSize = newHeight;
-                        } 
+                        }
                     }
                 }
             }
@@ -702,8 +741,8 @@ public class ImageView extends View {
             w = Math.max(w, getSuggestedMinimumWidth());
             h = Math.max(h, getSuggestedMinimumHeight());
 
-            widthSize = resolveSize(w, widthMeasureSpec);
-            heightSize = resolveSize(h, heightMeasureSpec);
+            widthSize = resolveSizeAndState(w, widthMeasureSpec, 0);
+            heightSize = resolveSizeAndState(h, heightMeasureSpec, 0);
         }
 
         setMeasuredDimension(widthSize, heightSize);
@@ -808,7 +847,7 @@ public class ImageView extends View {
                 if (dwidth <= vwidth && dheight <= vheight) {
                     scale = 1.0f;
                 } else {
-                    scale = Math.min((float) vwidth / (float) dwidth, 
+                    scale = Math.min((float) vwidth / (float) dwidth,
                             (float) vheight / (float) dheight);
                 }
                 
@@ -823,8 +862,7 @@ public class ImageView extends View {
                 mTempDst.set(0, 0, vwidth, vheight);
                 
                 mDrawMatrix = mMatrix;
-                mDrawMatrix.setRectToRect(mTempSrc, mTempDst,
-                                          scaleTypeToScaleToFit(mScaleType));
+                mDrawMatrix.setRectToRect(mTempSrc, mTempDst, scaleTypeToScaleToFit(mScaleType));
             }
         }
     }
@@ -874,9 +912,63 @@ public class ImageView extends View {
         }
     }
 
+    /**
+     * <p>Return the offset of the widget's text baseline from the widget's top
+     * boundary. </p>
+     *
+     * @return the offset of the baseline within the widget's bounds or -1
+     *         if baseline alignment is not supported.
+     */
     @Override
+    @ViewDebug.ExportedProperty(category = "layout")
     public int getBaseline() {
-        return mBaselineAligned ? getMeasuredHeight() : -1;
+        if (mBaselineAlignBottom) {
+            return getMeasuredHeight();
+        } else {
+            return mBaseline;
+        }
+    }
+
+    /**
+     * <p>Set the offset of the widget's text baseline from the widget's top
+     * boundary.  This value is overridden by the {@link #setBaselineAlignBottom(boolean)}
+     * property.</p>
+     *
+     * @param baseline The baseline to use, or -1 if none is to be provided.
+     *
+     * @see #setBaseline(int) 
+     * @attr ref android.R.styleable#ImageView_baseline
+     */
+    public void setBaseline(int baseline) {
+        if (mBaseline != baseline) {
+            mBaseline = baseline;
+            requestLayout();
+        }
+    }
+
+    /**
+     * Set whether to set the baseline of this view to the bottom of the view.
+     * Setting this value overrides any calls to setBaseline.
+     *
+     * @param aligned If true, the image view will be baseline aligned with
+     *      based on its bottom edge.
+     *
+     * @attr ref android.R.styleable#ImageView_baselineAlignBottom
+     */
+    public void setBaselineAlignBottom(boolean aligned) {
+        if (mBaselineAlignBottom != aligned) {
+            mBaselineAlignBottom = aligned;
+            requestLayout();
+        }
+    }
+
+    /**
+     * Return whether this view's baseline will be considered the bottom of the view.
+     *
+     * @see #setBaselineAlignBottom(boolean)
+     */
+    public boolean getBaselineAlignBottom() {
+        return mBaselineAlignBottom;
     }
 
     /**

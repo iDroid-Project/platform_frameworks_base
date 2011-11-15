@@ -205,10 +205,13 @@ public class HttpsConnection extends Connection {
                 BasicHttpRequest proxyReq = new BasicHttpRequest
                     ("CONNECT", mHost.toHostString());
 
-                // add all 'proxy' headers from the original request
+                // add all 'proxy' headers from the original request, we also need
+                // to add 'host' header unless we want proxy to answer us with a
+                // 400 Bad Request
                 for (Header h : req.mHttpRequest.getAllHeaders()) {
                     String headerName = h.getName().toLowerCase();
-                    if (headerName.startsWith("proxy") || headerName.equals("keep-alive")) {
+                    if (headerName.startsWith("proxy") || headerName.equals("keep-alive")
+                            || headerName.equals("host")) {
                         proxyReq.addHeader(h);
                     }
                 }
@@ -286,11 +289,9 @@ public class HttpsConnection extends Connection {
         } else {
             // if we do not have a proxy, we simply connect to the host
             try {
-                sslSock = (SSLSocket) getSocketFactory().createSocket();
-
+                sslSock = (SSLSocket) getSocketFactory().createSocket(
+                        mHost.getHostName(), mHost.getPort());
                 sslSock.setSoTimeout(SOCKET_TIMEOUT);
-                sslSock.connect(new InetSocketAddress(mHost.getHostName(),
-                        mHost.getPort()));
             } catch(IOException e) {
                 if (sslSock != null) {
                     sslSock.close();

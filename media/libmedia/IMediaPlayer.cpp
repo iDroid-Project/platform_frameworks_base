@@ -21,12 +21,20 @@
 #include <binder/Parcel.h>
 
 #include <media/IMediaPlayer.h>
+#include <media/IStreamSource.h>
+
 #include <surfaceflinger/ISurface.h>
+#include <surfaceflinger/Surface.h>
+#include <gui/ISurfaceTexture.h>
+#include <utils/String8.h>
 
 namespace android {
 
 enum {
     DISCONNECT = IBinder::FIRST_CALL_TRANSACTION,
+    SET_DATA_SOURCE_URL,
+    SET_DATA_SOURCE_FD,
+    SET_DATA_SOURCE_STREAM,
     SET_VIDEO_SURFACE,
     PREPARE_ASYNC,
     START,
@@ -43,10 +51,11 @@ enum {
     INVOKE,
     SET_METADATA_FILTER,
     GET_METADATA,
-    SUSPEND,
-    RESUME,
     SET_AUX_EFFECT_SEND_LEVEL,
-    ATTACH_AUX_EFFECT
+    ATTACH_AUX_EFFECT,
+    SET_VIDEO_SURFACETEXTURE,
+    SET_PARAMETER,
+    GET_PARAMETER,
 };
 
 class BpMediaPlayer: public BpInterface<IMediaPlayer>
@@ -65,12 +74,62 @@ public:
         remote()->transact(DISCONNECT, data, &reply);
     }
 
-    status_t setVideoSurface(const sp<ISurface>& surface)
+    status_t setDataSource(const char* url,
+            const KeyedVector<String8, String8>* headers)
     {
         Parcel data, reply;
         data.writeInterfaceToken(IMediaPlayer::getInterfaceDescriptor());
-        data.writeStrongBinder(surface->asBinder());
+        data.writeCString(url);
+        if (headers == NULL) {
+            data.writeInt32(0);
+        } else {
+            // serialize the headers
+            data.writeInt32(headers->size());
+            for (size_t i = 0; i < headers->size(); ++i) {
+                data.writeString8(headers->keyAt(i));
+                data.writeString8(headers->valueAt(i));
+            }
+        }
+        remote()->transact(SET_DATA_SOURCE_URL, data, &reply);
+        return reply.readInt32();
+    }
+
+    status_t setDataSource(int fd, int64_t offset, int64_t length) {
+        Parcel data, reply;
+        data.writeInterfaceToken(IMediaPlayer::getInterfaceDescriptor());
+        data.writeFileDescriptor(fd);
+        data.writeInt64(offset);
+        data.writeInt64(length);
+        remote()->transact(SET_DATA_SOURCE_FD, data, &reply);
+        return reply.readInt32();
+    }
+
+    status_t setDataSource(const sp<IStreamSource> &source) {
+        Parcel data, reply;
+        data.writeInterfaceToken(IMediaPlayer::getInterfaceDescriptor());
+        data.writeStrongBinder(source->asBinder());
+        remote()->transact(SET_DATA_SOURCE_STREAM, data, &reply);
+        return reply.readInt32();
+    }
+
+    // pass the buffered Surface to the media player service
+    status_t setVideoSurface(const sp<Surface>& surface)
+    {
+        Parcel data, reply;
+        data.writeInterfaceToken(IMediaPlayer::getInterfaceDescriptor());
+        Surface::writeToParcel(surface, &data);
         remote()->transact(SET_VIDEO_SURFACE, data, &reply);
+        return reply.readInt32();
+    }
+
+    // pass the buffered ISurfaceTexture to the media player service
+    status_t setVideoSurfaceTexture(const sp<ISurfaceTexture>& surfaceTexture)
+    {
+        Parcel data, reply;
+        data.writeInterfaceToken(IMediaPlayer::getInterfaceDescriptor());
+        sp<IBinder> b(surfaceTexture->asBinder());
+        data.writeStrongBinder(b);
+        remote()->transact(SET_VIDEO_SURFACETEXTURE, data, &reply);
         return reply.readInt32();
     }
 
@@ -179,8 +238,9 @@ public:
     }
 
     status_t invoke(const Parcel& request, Parcel *reply)
-    { // Avoid doing any extra copy. The interface descriptor should
-      // have been set by MediaPlayer.java.
+    {
+        // Avoid doing any extra copy. The interface descriptor should
+        // have been set by MediaPlayer.java.
         return remote()->transact(INVOKE, request, reply);
     }
 
@@ -204,26 +264,6 @@ public:
         return reply->readInt32();
     }
 
-    status_t suspend() {
-        Parcel request;
-        request.writeInterfaceToken(IMediaPlayer::getInterfaceDescriptor());
-
-        Parcel reply;
-        remote()->transact(SUSPEND, request, &reply);
-
-        return reply.readInt32();
-    }
-
-    status_t resume() {
-        Parcel request;
-        request.writeInterfaceToken(IMediaPlayer::getInterfaceDescriptor());
-
-        Parcel reply;
-        remote()->transact(RESUME, request, &reply);
-
-        return reply.readInt32();
-    }
-
     status_t setAuxEffectSendLevel(float level)
     {
         Parcel data, reply;
@@ -241,6 +281,27 @@ public:
         remote()->transact(ATTACH_AUX_EFFECT, data, &reply);
         return reply.readInt32();
     }
+
+    status_t setParameter(int key, const Parcel& request)
+    {
+        Parcel data, reply;
+        data.writeInterfaceToken(IMediaPlayer::getInterfaceDescriptor());
+        data.writeInt32(key);
+        if (request.dataSize() > 0) {
+            data.appendFrom(const_cast<Parcel *>(&request), 0, request.dataSize());
+        }
+        remote()->transact(SET_PARAMETER, data, &reply);
+        return reply.readInt32();
+    }
+
+    status_t getParameter(int key, Parcel *reply)
+    {
+        Parcel data;
+        data.writeInterfaceToken(IMediaPlayer::getInterfaceDescriptor());
+        data.writeInt32(key);
+        return remote()->transact(GET_PARAMETER, data, reply);
+    }
+
 };
 
 IMPLEMENT_META_INTERFACE(MediaPlayer, "android.media.IMediaPlayer");
@@ -256,10 +317,45 @@ status_t BnMediaPlayer::onTransact(
             disconnect();
             return NO_ERROR;
         } break;
+        case SET_DATA_SOURCE_URL: {
+            CHECK_INTERFACE(IMediaPlayer, data, reply);
+            const char* url = data.readCString();
+            KeyedVector<String8, String8> headers;
+            int32_t numHeaders = data.readInt32();
+            for (int i = 0; i < numHeaders; ++i) {
+                String8 key = data.readString8();
+                String8 value = data.readString8();
+                headers.add(key, value);
+            }
+            reply->writeInt32(setDataSource(url, numHeaders > 0 ? &headers : NULL));
+            return NO_ERROR;
+        } break;
+        case SET_DATA_SOURCE_FD: {
+            CHECK_INTERFACE(IMediaPlayer, data, reply);
+            int fd = data.readFileDescriptor();
+            int64_t offset = data.readInt64();
+            int64_t length = data.readInt64();
+            reply->writeInt32(setDataSource(fd, offset, length));
+            return NO_ERROR;
+        }
+        case SET_DATA_SOURCE_STREAM: {
+            CHECK_INTERFACE(IMediaPlayer, data, reply);
+            sp<IStreamSource> source =
+                interface_cast<IStreamSource>(data.readStrongBinder());
+            reply->writeInt32(setDataSource(source));
+            return NO_ERROR;
+        }
         case SET_VIDEO_SURFACE: {
             CHECK_INTERFACE(IMediaPlayer, data, reply);
-            sp<ISurface> surface = interface_cast<ISurface>(data.readStrongBinder());
+            sp<Surface> surface = Surface::readFromParcel(data);
             reply->writeInt32(setVideoSurface(surface));
+            return NO_ERROR;
+        } break;
+        case SET_VIDEO_SURFACETEXTURE: {
+            CHECK_INTERFACE(IMediaPlayer, data, reply);
+            sp<ISurfaceTexture> surfaceTexture =
+                    interface_cast<ISurfaceTexture>(data.readStrongBinder());
+            reply->writeInt32(setVideoSurfaceTexture(surfaceTexture));
             return NO_ERROR;
         } break;
         case PREPARE_ASYNC: {
@@ -328,32 +424,26 @@ status_t BnMediaPlayer::onTransact(
         } break;
         case SET_VOLUME: {
             CHECK_INTERFACE(IMediaPlayer, data, reply);
-            reply->writeInt32(setVolume(data.readFloat(), data.readFloat()));
+            float leftVolume = data.readFloat();
+            float rightVolume = data.readFloat();
+            reply->writeInt32(setVolume(leftVolume, rightVolume));
             return NO_ERROR;
         } break;
         case INVOKE: {
             CHECK_INTERFACE(IMediaPlayer, data, reply);
-            invoke(data, reply);
-            return NO_ERROR;
+            status_t result = invoke(data, reply);
+            return result;
         } break;
         case SET_METADATA_FILTER: {
             CHECK_INTERFACE(IMediaPlayer, data, reply);
             reply->writeInt32(setMetadataFilter(data));
             return NO_ERROR;
         } break;
-        case SUSPEND: {
-            CHECK_INTERFACE(IMediaPlayer, data, reply);
-            reply->writeInt32(suspend());
-            return NO_ERROR;
-        } break;
-        case RESUME: {
-            CHECK_INTERFACE(IMediaPlayer, data, reply);
-            reply->writeInt32(resume());
-            return NO_ERROR;
-        } break;
         case GET_METADATA: {
             CHECK_INTERFACE(IMediaPlayer, data, reply);
-            const status_t retcode = getMetadata(data.readInt32(), data.readInt32(), reply);
+            bool update_only = static_cast<bool>(data.readInt32());
+            bool apply_filter = static_cast<bool>(data.readInt32());
+            const status_t retcode = getMetadata(update_only, apply_filter, reply);
             reply->setDataPosition(0);
             reply->writeInt32(retcode);
             reply->setDataPosition(0);
@@ -368,6 +458,23 @@ status_t BnMediaPlayer::onTransact(
             CHECK_INTERFACE(IMediaPlayer, data, reply);
             reply->writeInt32(attachAuxEffect(data.readInt32()));
             return NO_ERROR;
+        } break;
+        case SET_PARAMETER: {
+            CHECK_INTERFACE(IMediaPlayer, data, reply);
+            int key = data.readInt32();
+
+            Parcel request;
+            if (data.dataAvail() > 0) {
+                request.appendFrom(
+                        const_cast<Parcel *>(&data), data.dataPosition(), data.dataAvail());
+            }
+            request.setDataPosition(0);
+            reply->writeInt32(setParameter(key, request));
+            return NO_ERROR;
+        } break;
+        case GET_PARAMETER: {
+            CHECK_INTERFACE(IMediaPlayer, data, reply);
+            return getParameter(data.readInt32(), reply);
         } break;
         default:
             return BBinder::onTransact(code, data, reply, flags);

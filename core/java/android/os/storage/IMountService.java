@@ -20,13 +20,15 @@ import android.os.Binder;
 import android.os.IBinder;
 import android.os.IInterface;
 import android.os.Parcel;
+import android.os.Parcelable;
 import android.os.RemoteException;
+import android.os.storage.StorageVolume;
 
 /**
  * WARNING! Update IMountService.h and IMountService.cpp if you change this
  * file. In particular, the ordering of the methods below must match the
  * _TRANSACTION enum in IMountService.cpp
- * 
+ *
  * @hide - Applications should use android.os.storage.StorageManager to access
  *       storage functions.
  */
@@ -34,7 +36,7 @@ public interface IMountService extends IInterface {
     /** Local-side IPC implementation stub class. */
     public static abstract class Stub extends Binder implements IMountService {
         private static class Proxy implements IMountService {
-            private IBinder mRemote;
+            private final IBinder mRemote;
 
             Proxy(IBinder remote) {
                 mRemote = remote;
@@ -167,13 +169,15 @@ public interface IMountService extends IInterface {
              * is an asynchronous operation. Applications should register
              * StorageEventListener for storage related status changes.
              */
-            public void unmountVolume(String mountPoint, boolean force) throws RemoteException {
+            public void unmountVolume(String mountPoint, boolean force, boolean removeEncryption)
+                    throws RemoteException {
                 Parcel _data = Parcel.obtain();
                 Parcel _reply = Parcel.obtain();
                 try {
                     _data.writeInterfaceToken(DESCRIPTOR);
                     _data.writeString(mountPoint);
                     _data.writeInt((force ? 1 : 0));
+                    _data.writeInt((removeEncryption ? 1 : 0));
                     mRemote.transact(Stub.TRANSACTION_unmountVolume, _data, _reply, 0);
                     _reply.readException();
                 } finally {
@@ -567,6 +571,146 @@ public interface IMountService extends IInterface {
                 }
                 return _result;
             }
+
+            /**
+             * Returns whether the external storage is emulated.
+             */
+            public boolean isExternalStorageEmulated() throws RemoteException {
+                Parcel _data = Parcel.obtain();
+                Parcel _reply = Parcel.obtain();
+                boolean _result;
+                try {
+                    _data.writeInterfaceToken(DESCRIPTOR);
+                    mRemote.transact(Stub.TRANSACTION_isExternalStorageEmulated, _data, _reply, 0);
+                    _reply.readException();
+                    _result = 0 != _reply.readInt();
+                } finally {
+                    _reply.recycle();
+                    _data.recycle();
+                }
+                return _result;
+            }
+
+            public int getEncryptionState() throws RemoteException {
+                Parcel _data = Parcel.obtain();
+                Parcel _reply = Parcel.obtain();
+                int _result;
+                try {
+                    _data.writeInterfaceToken(DESCRIPTOR);
+                    mRemote.transact(Stub.TRANSACTION_getEncryptionState, _data, _reply, 0);
+                    _reply.readException();
+                    _result = _reply.readInt();
+                } finally {
+                    _reply.recycle();
+                    _data.recycle();
+                }
+                return _result;
+            }
+
+            public int decryptStorage(String password) throws RemoteException {
+                Parcel _data = Parcel.obtain();
+                Parcel _reply = Parcel.obtain();
+                int _result;
+                try {
+                    _data.writeInterfaceToken(DESCRIPTOR);
+                    _data.writeString(password);
+                    mRemote.transact(Stub.TRANSACTION_decryptStorage, _data, _reply, 0);
+                    _reply.readException();
+                    _result = _reply.readInt();
+                } finally {
+                    _reply.recycle();
+                    _data.recycle();
+                }
+                return _result;
+            }
+
+            public int encryptStorage(String password) throws RemoteException {
+                Parcel _data = Parcel.obtain();
+                Parcel _reply = Parcel.obtain();
+                int _result;
+                try {
+                    _data.writeInterfaceToken(DESCRIPTOR);
+                    _data.writeString(password);
+                    mRemote.transact(Stub.TRANSACTION_encryptStorage, _data, _reply, 0);
+                    _reply.readException();
+                    _result = _reply.readInt();
+                } finally {
+                    _reply.recycle();
+                    _data.recycle();
+                }
+                return _result;
+            }
+
+            public int changeEncryptionPassword(String password) throws RemoteException {
+                Parcel _data = Parcel.obtain();
+                Parcel _reply = Parcel.obtain();
+                int _result;
+                try {
+                    _data.writeInterfaceToken(DESCRIPTOR);
+                    _data.writeString(password);
+                    mRemote.transact(Stub.TRANSACTION_changeEncryptionPassword, _data, _reply, 0);
+                    _reply.readException();
+                    _result = _reply.readInt();
+                } finally {
+                    _reply.recycle();
+                    _data.recycle();
+                }
+                return _result;
+            }
+
+            @Override
+            public int verifyEncryptionPassword(String password) throws RemoteException {
+                Parcel _data = Parcel.obtain();
+                Parcel _reply = Parcel.obtain();
+                int _result;
+                try {
+                    _data.writeInterfaceToken(DESCRIPTOR);
+                    _data.writeString(password);
+                    mRemote.transact(Stub.TRANSACTION_verifyEncryptionPassword, _data, _reply, 0);
+                    _reply.readException();
+                    _result = _reply.readInt();
+                } finally {
+                    _reply.recycle();
+                    _data.recycle();
+                }
+                return _result;
+            }
+
+            public Parcelable[] getVolumeList() throws RemoteException {
+                Parcel _data = Parcel.obtain();
+                Parcel _reply = Parcel.obtain();
+                Parcelable[] _result;
+                try {
+                    _data.writeInterfaceToken(DESCRIPTOR);
+                    mRemote.transact(Stub.TRANSACTION_getVolumeList, _data, _reply, 0);
+                    _reply.readException();
+                    _result = _reply.readParcelableArray(StorageVolume.class.getClassLoader());
+                } finally {
+                    _reply.recycle();
+                    _data.recycle();
+                }
+                return _result;
+            }
+
+            /*
+             * Returns the filesystem path of a mounted secure container.
+             */
+            public String getSecureContainerFilesystemPath(String id) throws RemoteException {
+                Parcel _data = Parcel.obtain();
+                Parcel _reply = Parcel.obtain();
+                String _result;
+                try {
+                    _data.writeInterfaceToken(DESCRIPTOR);
+                    _data.writeString(id);
+                    mRemote.transact(Stub.TRANSACTION_getSecureContainerFilesystemPath, _data, _reply, 0);
+                    _reply.readException();
+                    _result = _reply.readString();
+                } finally {
+                    _reply.recycle();
+                    _data.recycle();
+                }
+                return _result;
+            }
         }
 
         private static final String DESCRIPTOR = "IMountService";
@@ -620,6 +764,22 @@ public interface IMountService extends IInterface {
         static final int TRANSACTION_isObbMounted = IBinder.FIRST_CALL_TRANSACTION + 23;
 
         static final int TRANSACTION_getMountedObbPath = IBinder.FIRST_CALL_TRANSACTION + 24;
+
+        static final int TRANSACTION_isExternalStorageEmulated = IBinder.FIRST_CALL_TRANSACTION + 25;
+
+        static final int TRANSACTION_decryptStorage = IBinder.FIRST_CALL_TRANSACTION + 26;
+
+        static final int TRANSACTION_encryptStorage = IBinder.FIRST_CALL_TRANSACTION + 27;
+
+        static final int TRANSACTION_changeEncryptionPassword = IBinder.FIRST_CALL_TRANSACTION + 28;
+
+        static final int TRANSACTION_getVolumeList = IBinder.FIRST_CALL_TRANSACTION + 29;
+
+        static final int TRANSACTION_getSecureContainerFilesystemPath = IBinder.FIRST_CALL_TRANSACTION + 30;
+
+        static final int TRANSACTION_getEncryptionState = IBinder.FIRST_CALL_TRANSACTION + 31;
+
+        static final int TRANSACTION_verifyEncryptionPassword = IBinder.FIRST_CALL_TRANSACTION + 32;
 
         /**
          * Cast an IBinder object into an IMountService interface, generating a
@@ -704,9 +864,9 @@ public interface IMountService extends IInterface {
                     data.enforceInterface(DESCRIPTOR);
                     String mountPoint;
                     mountPoint = data.readString();
-                    boolean force;
-                    force = 0 != data.readInt();
-                    unmountVolume(mountPoint, force);
+                    boolean force = 0 != data.readInt();
+                    boolean removeEncrypt = 0 != data.readInt();
+                    unmountVolume(mountPoint, force, removeEncrypt);
                     reply.writeNoException();
                     return true;
                 }
@@ -895,6 +1055,60 @@ public interface IMountService extends IInterface {
                     reply.writeString(mountedPath);
                     return true;
                 }
+                case TRANSACTION_isExternalStorageEmulated: {
+                    data.enforceInterface(DESCRIPTOR);
+                    boolean emulated = isExternalStorageEmulated();
+                    reply.writeNoException();
+                    reply.writeInt(emulated ? 1 : 0);
+                    return true;
+                }
+                case TRANSACTION_decryptStorage: {
+                    data.enforceInterface(DESCRIPTOR);
+                    String password = data.readString();
+                    int result = decryptStorage(password);
+                    reply.writeNoException();
+                    reply.writeInt(result);
+                    return true;
+                }
+                case TRANSACTION_encryptStorage: {
+                    data.enforceInterface(DESCRIPTOR);
+                    String password = data.readString();
+                    int result = encryptStorage(password);
+                    reply.writeNoException();
+                    reply.writeInt(result);
+                    return true;
+                }
+                case TRANSACTION_changeEncryptionPassword: {
+                    data.enforceInterface(DESCRIPTOR);
+                    String password = data.readString();
+                    int result = changeEncryptionPassword(password);
+                    reply.writeNoException();
+                    reply.writeInt(result);
+                    return true;
+                }
+                case TRANSACTION_getVolumeList: {
+                    data.enforceInterface(DESCRIPTOR);
+                    Parcelable[] result = getVolumeList();
+                    reply.writeNoException();
+                    reply.writeParcelableArray(result, 0);
+                    return true;
+                }
+                case TRANSACTION_getSecureContainerFilesystemPath: {
+                    data.enforceInterface(DESCRIPTOR);
+                    String id;
+                    id = data.readString();
+                    String path = getSecureContainerFilesystemPath(id);
+                    reply.writeNoException();
+                    reply.writeString(path);
+                    return true;
+                }
+                case TRANSACTION_getEncryptionState: {
+                    data.enforceInterface(DESCRIPTOR);
+                    int result = getEncryptionState();
+                    reply.writeNoException();
+                    reply.writeInt(result);
+                    return true;
+                }
             }
             return super.onTransact(code, data, reply, flags);
         }
@@ -1042,11 +1256,65 @@ public interface IMountService extends IInterface {
      * Safely unmount external storage at given mount point. The unmount is an
      * asynchronous operation. Applications should register StorageEventListener
      * for storage related status changes.
+     * @param mountPoint the mount point
+     * @param force whether or not to forcefully unmount it (e.g. even if programs are using this
+     *     data currently)
+     * @param removeEncryption whether or not encryption mapping should be removed from the volume.
+     *     This value implies {@code force}.
      */
-    public void unmountVolume(String mountPoint, boolean force) throws RemoteException;
+    public void unmountVolume(String mountPoint, boolean force, boolean removeEncryption)
+            throws RemoteException;
 
     /**
      * Unregisters an IMountServiceListener
      */
     public void unregisterListener(IMountServiceListener listener) throws RemoteException;
+
+    /**
+     * Returns whether or not the external storage is emulated.
+     */
+    public boolean isExternalStorageEmulated() throws RemoteException;
+
+    /** The volume is not encrypted. */
+    static final int ENCRYPTION_STATE_NONE = 1;
+    /** The volume has been encrypted succesfully. */
+    static final int ENCRYPTION_STATE_OK = 0;
+    /** The volume is in a bad state. */
+    static final int ENCRYPTION_STATE_ERROR_UNKNOWN = -1;
+    /** The volume is in a bad state - partially encrypted. Data is likely irrecoverable. */
+    static final int ENCRYPTION_STATE_ERROR_INCOMPLETE = -2;
+
+    /**
+     * Determines the encryption state of the volume.
+     * @return a numerical value. See {@code ENCRYPTION_STATE_*} for possible values.
+     */
+    public int getEncryptionState() throws RemoteException;
+
+    /**
+     * Decrypts any encrypted volumes.
+     */
+    public int decryptStorage(String password) throws RemoteException;
+
+    /**
+     * Encrypts storage.
+     */
+    public int encryptStorage(String password) throws RemoteException;
+
+    /**
+     * Changes the encryption password.
+     */
+    public int changeEncryptionPassword(String password) throws RemoteException;
+
+    /**
+     * Verify the encryption password against the stored volume.  This method
+     * may only be called by the system process.
+     */
+    public int verifyEncryptionPassword(String password) throws RemoteException;
+
+    /**
+     * Returns list of all mountable volumes.
+     */
+    public Parcelable[] getVolumeList() throws RemoteException;
+
+    public String getSecureContainerFilesystemPath(String id) throws RemoteException;
 }

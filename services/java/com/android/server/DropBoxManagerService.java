@@ -28,7 +28,6 @@ import android.os.Debug;
 import android.os.DropBoxManager;
 import android.os.FileUtils;
 import android.os.Handler;
-import android.os.ParcelFileDescriptor;
 import android.os.StatFs;
 import android.os.SystemClock;
 import android.provider.Settings;
@@ -45,14 +44,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
-import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
 import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.zip.GZIPOutputStream;
@@ -97,10 +91,18 @@ public final class DropBoxManagerService extends IDropBoxManagerService.Stub {
     // Ensure that all log entries have a unique timestamp
     private long mLastTimestamp = 0;
 
+    private volatile boolean mBooted = false;
+
     /** Receives events that might indicate a need to clean up files. */
     private final BroadcastReceiver mReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
+            if (intent != null && Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) {
+                mBooted = true;
+                return;
+            }
+
+            // Else, for ACTION_DEVICE_STORAGE_LOW:
             mCachedQuotaUptimeMillis = 0;  // Force a re-check of quota size
 
             // Run the initialization in the background (not this main thread).
@@ -132,7 +134,11 @@ public final class DropBoxManagerService extends IDropBoxManagerService.Stub {
         // Set up intent receivers
         mContext = context;
         mContentResolver = context.getContentResolver();
-        context.registerReceiver(mReceiver, new IntentFilter(Intent.ACTION_DEVICE_STORAGE_LOW));
+
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(Intent.ACTION_DEVICE_STORAGE_LOW);
+        filter.addAction(Intent.ACTION_BOOT_COMPLETED);
+        context.registerReceiver(mReceiver, filter);
 
         mContentResolver.registerContentObserver(
             Settings.Secure.CONTENT_URI, true,
@@ -218,8 +224,17 @@ public final class DropBoxManagerService extends IDropBoxManagerService.Stub {
                 }
             } while (read > 0);
 
-            createEntry(temp, tag, flags);
+            long time = createEntry(temp, tag, flags);
             temp = null;
+
+            Intent dropboxIntent = new Intent(DropBoxManager.ACTION_DROPBOX_ENTRY_ADDED);
+            dropboxIntent.putExtra(DropBoxManager.EXTRA_TAG, tag);
+            dropboxIntent.putExtra(DropBoxManager.EXTRA_TIME, time);
+            if (!mBooted) {
+                dropboxIntent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
+            }
+            mContext.sendBroadcast(dropboxIntent, android.Manifest.permission.READ_LOGS);
+
         } catch (IOException e) {
             Slog.e(TAG, "Can't write: " + tag, e);
         } finally {
@@ -343,16 +358,17 @@ public final class DropBoxManagerService extends IDropBoxManagerService.Stub {
 
             if ((entry.flags & DropBoxManager.IS_TEXT) != 0 && (doPrint || !doFile)) {
                 DropBoxManager.Entry dbe = null;
+                InputStreamReader isr = null;
                 try {
                     dbe = new DropBoxManager.Entry(
                              entry.tag, entry.timestampMillis, entry.file, entry.flags);
 
                     if (doPrint) {
-                        InputStreamReader r = new InputStreamReader(dbe.getInputStream());
+                        isr = new InputStreamReader(dbe.getInputStream());
                         char[] buf = new char[4096];
                         boolean newline = false;
                         for (;;) {
-                            int n = r.read(buf);
+                            int n = isr.read(buf);
                             if (n <= 0) break;
                             out.append(buf, 0, n);
                             newline = (buf[n - 1] == '\n');
@@ -376,6 +392,12 @@ public final class DropBoxManagerService extends IDropBoxManagerService.Stub {
                     Slog.e(TAG, "Can't read: " + entry.file, e);
                 } finally {
                     if (dbe != null) dbe.close();
+                    if (isr != null) {
+                        try {
+                            isr.close();
+                        } catch (IOException unused) {
+                        }
+                    }
                 }
             }
 
@@ -597,7 +619,7 @@ public final class DropBoxManagerService extends IDropBoxManagerService.Stub {
     }
 
     /** Moves a temporary file to a final log filename and enrolls it. */
-    private synchronized void createEntry(File temp, String tag, int flags) throws IOException {
+    private synchronized long createEntry(File temp, String tag, int flags) throws IOException {
         long t = System.currentTimeMillis();
 
         // Require each entry to have a unique timestamp; if there are entries
@@ -636,6 +658,7 @@ public final class DropBoxManagerService extends IDropBoxManagerService.Stub {
         } else {
             enrollEntry(new EntryFile(temp, mDropBoxDir, tag, t, flags, mBlockSize));
         }
+        return t;
     }
 
     /**

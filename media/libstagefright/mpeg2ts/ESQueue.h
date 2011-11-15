@@ -19,6 +19,7 @@
 #define ES_QUEUE_H_
 
 #include <media/stagefright/foundation/ABase.h>
+#include <utils/Errors.h>
 #include <utils/List.h>
 #include <utils/RefBase.h>
 
@@ -30,31 +31,42 @@ struct MetaData;
 struct ElementaryStreamQueue {
     enum Mode {
         H264,
-        AAC
+        AAC,
+        MPEG_AUDIO,
+        MPEG_VIDEO,
+        MPEG4_VIDEO,
     };
     ElementaryStreamQueue(Mode mode);
 
     status_t appendData(const void *data, size_t size, int64_t timeUs);
-    void clear();
+    void clear(bool clearFormat);
 
     sp<ABuffer> dequeueAccessUnit();
 
     sp<MetaData> getFormat();
 
 private:
+    struct RangeInfo {
+        int64_t mTimestampUs;
+        size_t mLength;
+    };
+
     Mode mMode;
 
     sp<ABuffer> mBuffer;
-    List<int64_t> mTimestamps;
+    List<RangeInfo> mRangeInfos;
 
     sp<MetaData> mFormat;
 
     sp<ABuffer> dequeueAccessUnitH264();
     sp<ABuffer> dequeueAccessUnitAAC();
+    sp<ABuffer> dequeueAccessUnitMPEGAudio();
+    sp<ABuffer> dequeueAccessUnitMPEGVideo();
+    sp<ABuffer> dequeueAccessUnitMPEG4Video();
 
-    static sp<MetaData> MakeAACCodecSpecificData(
-            unsigned profile, unsigned sampling_freq_index,
-            unsigned channel_configuration);
+    // consume a logical (compressed) access unit of size "size",
+    // returns its timestamp in us (or -1 if no time information).
+    int64_t fetchTimestamp(size_t size);
 
     DISALLOW_EVIL_CONSTRUCTORS(ElementaryStreamQueue);
 };

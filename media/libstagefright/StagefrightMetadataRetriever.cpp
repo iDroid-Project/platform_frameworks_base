@@ -27,6 +27,7 @@
 #include <media/stagefright/MediaExtractor.h>
 #include <media/stagefright/MetaData.h>
 #include <media/stagefright/OMXCodec.h>
+#include <media/stagefright/MediaDefs.h>
 
 namespace android {
 
@@ -48,7 +49,8 @@ StagefrightMetadataRetriever::~StagefrightMetadataRetriever() {
     mClient.disconnect();
 }
 
-status_t StagefrightMetadataRetriever::setDataSource(const char *uri) {
+status_t StagefrightMetadataRetriever::setDataSource(
+        const char *uri, const KeyedVector<String8, String8> *headers) {
     LOGV("setDataSource(%s)", uri);
 
     mParsedMetaData = false;
@@ -56,7 +58,7 @@ status_t StagefrightMetadataRetriever::setDataSource(const char *uri) {
     delete mAlbumArt;
     mAlbumArt = NULL;
 
-    mSource = DataSource::CreateFromURI(uri);
+    mSource = DataSource::CreateFromURI(uri, headers);
 
     if (mSource == NULL) {
         return UNKNOWN_ERROR;
@@ -144,7 +146,11 @@ static VideoFrame *extractVideoFrameWithCodecFlags(
             static_cast<MediaSource::ReadOptions::SeekMode>(seekMode);
 
     int64_t thumbNailTime;
-    if (frameTimeUs < 0 && trackMeta->findInt64(kKeyThumbnailTime, &thumbNailTime)) {
+    if (frameTimeUs < 0) {
+        if (!trackMeta->findInt64(kKeyThumbnailTime, &thumbNailTime)
+                || thumbNailTime < 0) {
+            thumbNailTime = 0;
+        }
         options.setSeekTo(thumbNailTime, mode);
     } else {
         thumbNailTime = -1;
@@ -205,19 +211,36 @@ static VideoFrame *extractVideoFrameWithCodecFlags(
     CHECK(meta->findInt32(kKeyWidth, &width));
     CHECK(meta->findInt32(kKeyHeight, &height));
 
+    int32_t crop_left, crop_top, crop_right, crop_bottom;
+    if (!meta->findRect(
+                kKeyCropRect,
+                &crop_left, &crop_top, &crop_right, &crop_bottom)) {
+        crop_left = crop_top = 0;
+        crop_right = width - 1;
+        crop_bottom = height - 1;
+    }
+
     int32_t rotationAngle;
     if (!trackMeta->findInt32(kKeyRotation, &rotationAngle)) {
         rotationAngle = 0;  // By default, no rotation
     }
 
     VideoFrame *frame = new VideoFrame;
-    frame->mWidth = width;
-    frame->mHeight = height;
-    frame->mDisplayWidth = width;
-    frame->mDisplayHeight = height;
-    frame->mSize = width * height * 2;
+    frame->mWidth = crop_right - crop_left + 1;
+    frame->mHeight = crop_bottom - crop_top + 1;
+    frame->mDisplayWidth = frame->mWidth;
+    frame->mDisplayHeight = frame->mHeight;
+    frame->mSize = frame->mWidth * frame->mHeight * 2;
     frame->mData = new uint8_t[frame->mSize];
     frame->mRotationAngle = rotationAngle;
+
+    int32_t displayWidth, displayHeight;
+    if (meta->findInt32(kKeyDisplayWidth, &displayWidth)) {
+        frame->mDisplayWidth = displayWidth;
+    }
+    if (meta->findInt32(kKeyDisplayHeight, &displayHeight)) {
+        frame->mDisplayHeight = displayHeight;
+    }
 
     int32_t srcFormat;
     CHECK(meta->findInt32(kKeyColorFormat, &srcFormat));
@@ -226,16 +249,26 @@ static VideoFrame *extractVideoFrameWithCodecFlags(
             (OMX_COLOR_FORMATTYPE)srcFormat, OMX_COLOR_Format16bitRGB565);
     CHECK(converter.isValid());
 
-    converter.convert(
-            width, height,
+    err = converter.convert(
             (const uint8_t *)buffer->data() + buffer->range_offset(),
-            0,
-            frame->mData, width * 2);
+            width, height,
+            crop_left, crop_top, crop_right, crop_bottom,
+            frame->mData,
+            frame->mWidth,
+            frame->mHeight,
+            0, 0, frame->mWidth - 1, frame->mHeight - 1);
 
     buffer->release();
     buffer = NULL;
 
     decoder->stop();
+
+    if (err != OK) {
+        LOGE("Colorconverter failed to convert frame.");
+
+        delete frame;
+        frame = NULL;
+    }
 
     return frame;
 }
@@ -247,6 +280,19 @@ VideoFrame *StagefrightMetadataRetriever::getFrameAtTime(
 
     if (mExtractor.get() == NULL) {
         LOGV("no extractor.");
+        return NULL;
+    }
+
+    sp<MetaData> fileMeta = mExtractor->getMetaData();
+
+    if (fileMeta == NULL) {
+        LOGV("extractor doesn't publish metadata, failed to initialize?");
+        return NULL;
+    }
+
+    int32_t drm = 0;
+    if (fileMeta->findInt32(kKeyIsDRM, &drm) && drm != 0) {
+        LOGE("frame grab not allowed.");
         return NULL;
     }
 
@@ -276,6 +322,17 @@ VideoFrame *StagefrightMetadataRetriever::getFrameAtTime(
     if (source.get() == NULL) {
         LOGV("unable to instantiate video track.");
         return NULL;
+    }
+
+    const void *data;
+    uint32_t type;
+    size_t dataSize;
+    if (fileMeta->findData(kKeyAlbumArt, &type, &data, &dataSize)
+            && mAlbumArt == NULL) {
+        mAlbumArt = new MediaAlbumArt;
+        mAlbumArt->mSize = dataSize;
+        mAlbumArt->mData = new uint8_t[dataSize];
+        memcpy(mAlbumArt->mData, data, dataSize);
     }
 
     VideoFrame *frame =
@@ -337,6 +394,11 @@ const char *StagefrightMetadataRetriever::extractMetadata(int keyCode) {
 void StagefrightMetadataRetriever::parseMetaData() {
     sp<MetaData> meta = mExtractor->getMetaData();
 
+    if (meta == NULL) {
+        LOGV("extractor doesn't publish metadata, failed to initialize?");
+        return;
+    }
+
     struct Map {
         int from;
         int to;
@@ -369,7 +431,8 @@ void StagefrightMetadataRetriever::parseMetaData() {
     const void *data;
     uint32_t type;
     size_t dataSize;
-    if (meta->findData(kKeyAlbumArt, &type, &data, &dataSize)) {
+    if (meta->findData(kKeyAlbumArt, &type, &data, &dataSize)
+            && mAlbumArt == NULL) {
         mAlbumArt = new MediaAlbumArt;
         mAlbumArt->mSize = dataSize;
         mAlbumArt->mData = new uint8_t[dataSize];
@@ -383,8 +446,15 @@ void StagefrightMetadataRetriever::parseMetaData() {
 
     mMetaData.add(METADATA_KEY_NUM_TRACKS, String8(tmp));
 
+    bool hasAudio = false;
+    bool hasVideo = false;
+    int32_t videoWidth = -1;
+    int32_t videoHeight = -1;
+    int32_t audioBitrate = -1;
+
     // The overall duration is the duration of the longest track.
     int64_t maxDurationUs = 0;
+    String8 timedTextLang;
     for (size_t i = 0; i < numTracks; ++i) {
         sp<MetaData> trackMeta = mExtractor->getTrackMetaData(i);
 
@@ -394,11 +464,66 @@ void StagefrightMetadataRetriever::parseMetaData() {
                 maxDurationUs = durationUs;
             }
         }
+
+        const char *mime;
+        if (trackMeta->findCString(kKeyMIMEType, &mime)) {
+            if (!hasAudio && !strncasecmp("audio/", mime, 6)) {
+                hasAudio = true;
+
+                if (!trackMeta->findInt32(kKeyBitRate, &audioBitrate)) {
+                    audioBitrate = -1;
+                }
+            } else if (!hasVideo && !strncasecmp("video/", mime, 6)) {
+                hasVideo = true;
+
+                CHECK(trackMeta->findInt32(kKeyWidth, &videoWidth));
+                CHECK(trackMeta->findInt32(kKeyHeight, &videoHeight));
+            } else if (!strcasecmp(mime, MEDIA_MIMETYPE_TEXT_3GPP)) {
+                const char *lang;
+                trackMeta->findCString(kKeyMediaLanguage, &lang);
+                timedTextLang.append(String8(lang));
+                timedTextLang.append(String8(":"));
+            }
+        }
+    }
+
+    // To save the language codes for all timed text tracks
+    // If multiple text tracks present, the format will look
+    // like "eng:chi"
+    if (!timedTextLang.isEmpty()) {
+        mMetaData.add(METADATA_KEY_TIMED_TEXT_LANGUAGES, timedTextLang);
     }
 
     // The duration value is a string representing the duration in ms.
     sprintf(tmp, "%lld", (maxDurationUs + 500) / 1000);
     mMetaData.add(METADATA_KEY_DURATION, String8(tmp));
+
+    if (hasAudio) {
+        mMetaData.add(METADATA_KEY_HAS_AUDIO, String8("yes"));
+    }
+
+    if (hasVideo) {
+        mMetaData.add(METADATA_KEY_HAS_VIDEO, String8("yes"));
+
+        sprintf(tmp, "%d", videoWidth);
+        mMetaData.add(METADATA_KEY_VIDEO_WIDTH, String8(tmp));
+
+        sprintf(tmp, "%d", videoHeight);
+        mMetaData.add(METADATA_KEY_VIDEO_HEIGHT, String8(tmp));
+    }
+
+    if (numTracks == 1 && hasAudio && audioBitrate >= 0) {
+        sprintf(tmp, "%d", audioBitrate);
+        mMetaData.add(METADATA_KEY_BITRATE, String8(tmp));
+    } else {
+        off64_t sourceSize;
+        if (mSource->getSize(&sourceSize) == OK) {
+            int64_t avgBitRate = (int64_t)(sourceSize * 8E6 / maxDurationUs);
+
+            sprintf(tmp, "%lld", avgBitRate);
+            mMetaData.add(METADATA_KEY_BITRATE, String8(tmp));
+        }
+    }
 
     if (numTracks == 1) {
         const char *fileMIME;
@@ -417,7 +542,11 @@ void StagefrightMetadataRetriever::parseMetaData() {
             }
         }
     }
-}
 
+    // To check whether the media file is drm-protected
+    if (mExtractor->getDrmFlag()) {
+        mMetaData.add(METADATA_KEY_IS_DRM, String8("1"));
+    }
+}
 
 }  // namespace android

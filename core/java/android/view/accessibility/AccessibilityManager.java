@@ -16,8 +16,7 @@
 
 package android.view.accessibility;
 
-import static android.util.Config.LOGV;
-
+import android.accessibilityservice.AccessibilityServiceInfo;
 import android.content.Context;
 import android.content.pm.ServiceInfo;
 import android.os.Binder;
@@ -29,30 +28,54 @@ import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemClock;
 import android.util.Log;
+import android.view.IWindow;
+import android.view.View;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * System level service that serves as an event dispatch for {@link AccessibilityEvent}s.
- * Such events are generated when something notable happens in the user interface,
+ * System level service that serves as an event dispatch for {@link AccessibilityEvent}s,
+ * and provides facilities for querying the accessibility state of the system.
+ * Accessibility events are generated when something notable happens in the user interface,
  * for example an {@link android.app.Activity} starts, the focus or selection of a
  * {@link android.view.View} changes etc. Parties interested in handling accessibility
  * events implement and register an accessibility service which extends
  * {@link android.accessibilityservice.AccessibilityService}.
+ * <p>
+ * To obtain a handle to the accessibility manager do the following:
+ * </p>
+ * <p>
+ * <code>
+ * <pre>AccessibilityManager accessibilityManager =
+ *        (AccessibilityManager) context.getSystemService(Context.ACCESSIBILITY_SERVICE);</pre>
+ * </code>
+ * </p>
  *
  * @see AccessibilityEvent
+ * @see AccessibilityNodeInfo
  * @see android.accessibilityservice.AccessibilityService
- * @see android.content.Context#getSystemService
+ * @see Context#getSystemService
+ * @see Context#ACCESSIBILITY_SERVICE
  */
 public final class AccessibilityManager {
+    private static final boolean DEBUG = false;
+
     private static final String LOG_TAG = "AccessibilityManager";
+
+    /** @hide */
+    public static final int STATE_FLAG_ACCESSIBILITY_ENABLED = 0x00000001;
+
+    /** @hide */
+    public static final int STATE_FLAG_TOUCH_EXPLORATION_ENABLED = 0x00000002;
 
     static final Object sInstanceSync = new Object();
 
     private static AccessibilityManager sInstance;
 
-    private static final int DO_SET_ENABLED = 10;
+    private static final int DO_SET_STATE = 10;
 
     final IAccessibilityManager mService;
 
@@ -60,9 +83,30 @@ public final class AccessibilityManager {
 
     boolean mIsEnabled;
 
+    boolean mIsTouchExplorationEnabled;
+
+    final CopyOnWriteArrayList<AccessibilityStateChangeListener> mAccessibilityStateChangeListeners =
+        new CopyOnWriteArrayList<AccessibilityStateChangeListener>();
+
+    /**
+     * Listener for the system accessibility state. To listen for changes to the accessibility
+     * state on the device, implement this interface and register it with the system by
+     * calling {@link AccessibilityManager#addAccessibilityStateChangeListener
+     * addAccessibilityStateChangeListener()}.
+     */
+    public interface AccessibilityStateChangeListener {
+
+        /**
+         * Called back on change in the accessibility state.
+         *
+         * @param enabled Whether accessibility is enabled.
+         */
+        public void onAccessibilityStateChanged(boolean enabled);
+    }
+
     final IAccessibilityManagerClient.Stub mClient = new IAccessibilityManagerClient.Stub() {
-        public void setEnabled(boolean enabled) {
-            mHandler.obtainMessage(DO_SET_ENABLED, enabled ? 1 : 0, 0).sendToTarget();
+        public void setState(int state) {
+            mHandler.obtainMessage(DO_SET_STATE, state, 0).sendToTarget();
         }
     };
 
@@ -75,10 +119,8 @@ public final class AccessibilityManager {
         @Override
         public void handleMessage(Message message) {
             switch (message.what) {
-                case DO_SET_ENABLED :
-                    synchronized (mHandler) {
-                        mIsEnabled = (message.arg1 == 1);
-                    }
+                case DO_SET_STATE :
+                    setState(message.arg1);
                     return;
                 default :
                     Log.w(LOG_TAG, "Unknown message type: " + message.what);
@@ -94,7 +136,9 @@ public final class AccessibilityManager {
     public static AccessibilityManager getInstance(Context context) {
         synchronized (sInstanceSync) {
             if (sInstance == null) {
-                sInstance = new AccessibilityManager(context);
+                IBinder iBinder = ServiceManager.getService(Context.ACCESSIBILITY_SERVICE);
+                IAccessibilityManager service = IAccessibilityManager.Stub.asInterface(iBinder);
+                sInstance = new AccessibilityManager(context, service);
             }
         }
         return sInstance;
@@ -104,22 +148,26 @@ public final class AccessibilityManager {
      * Create an instance.
      *
      * @param context A {@link Context}.
+     * @param service An interface to the backing service.
+     *
+     * @hide
      */
-    private AccessibilityManager(Context context) {
+    public AccessibilityManager(Context context, IAccessibilityManager service) {
         mHandler = new MyHandler(context.getMainLooper());
-        IBinder iBinder = ServiceManager.getService(Context.ACCESSIBILITY_SERVICE);
-        mService = IAccessibilityManager.Stub.asInterface(iBinder);
+        mService = service;
+
         try {
-            mService.addClient(mClient);
+            final int stateFlags = mService.addClient(mClient);
+            setState(stateFlags);
         } catch (RemoteException re) {
             Log.e(LOG_TAG, "AccessibilityManagerService is dead", re);
         }
     }
 
     /**
-     * Returns if the {@link AccessibilityManager} is enabled.
+     * Returns if the accessibility in the system is enabled.
      *
-     * @return True if this {@link AccessibilityManager} is enabled, false otherwise.
+     * @return True if accessibility is enabled, false otherwise.
      */
     public boolean isEnabled() {
         synchronized (mHandler) {
@@ -128,13 +176,34 @@ public final class AccessibilityManager {
     }
 
     /**
-     * Sends an {@link AccessibilityEvent}. If this {@link AccessibilityManager} is not
-     * enabled the call is a NOOP.
+     * Returns if the touch exploration in the system is enabled.
      *
-     * @param event The {@link AccessibilityEvent}.
+     * @return True if touch exploration is enabled, false otherwise.
+     */
+    public boolean isTouchExplorationEnabled() {
+        synchronized (mHandler) {
+            return mIsTouchExplorationEnabled;
+        }
+    }
+
+    /**
+     * Returns the client interface this instance registers in
+     * the centralized accessibility manager service.
      *
-     * @throws IllegalStateException if a client tries to send an {@link AccessibilityEvent}
-     *         while accessibility is not enabled.
+     * @return The client.
+     *
+     * @hide
+     */
+    public IAccessibilityManagerClient getClient() {
+       return (IAccessibilityManagerClient) mClient.asBinder();
+    }
+
+    /**
+     * Sends an {@link AccessibilityEvent}.
+     *
+     * @param event The event to send.
+     *
+     * @throws IllegalStateException if accessibility is not enabled.
      */
     public void sendAccessibilityEvent(AccessibilityEvent event) {
         if (!mIsEnabled) {
@@ -149,7 +218,7 @@ public final class AccessibilityManager {
             long identityToken = Binder.clearCallingIdentity();
             doRecycle = mService.sendAccessibilityEvent(event);
             Binder.restoreCallingIdentity(identityToken);
-            if (LOGV) {
+            if (DEBUG) {
                 Log.i(LOG_TAG, event + " sent");
             }
         } catch (RemoteException re) {
@@ -162,7 +231,7 @@ public final class AccessibilityManager {
     }
 
     /**
-     * Requests interruption of the accessibility feedback from all accessibility services.
+     * Requests feedback interruption from all accessibility services.
      */
     public void interrupt() {
         if (!mIsEnabled) {
@@ -170,7 +239,7 @@ public final class AccessibilityManager {
         }
         try {
             mService.interrupt();
-            if (LOGV) {
+            if (DEBUG) {
                 Log.i(LOG_TAG, "Requested interrupt from all services");
             }
         } catch (RemoteException re) {
@@ -182,17 +251,152 @@ public final class AccessibilityManager {
      * Returns the {@link ServiceInfo}s of the installed accessibility services.
      *
      * @return An unmodifiable list with {@link ServiceInfo}s.
+     *
+     * @deprecated Use {@link #getInstalledAccessibilityServiceList()}
      */
+    @Deprecated
     public List<ServiceInfo> getAccessibilityServiceList() {
-        List<ServiceInfo> services = null;
+        List<AccessibilityServiceInfo> infos = getInstalledAccessibilityServiceList();
+        List<ServiceInfo> services = new ArrayList<ServiceInfo>();
+        final int infoCount = infos.size();
+        for (int i = 0; i < infoCount; i++) {
+            AccessibilityServiceInfo info = infos.get(i);
+            services.add(info.getResolveInfo().serviceInfo);
+        }
+        return Collections.unmodifiableList(services);
+    }
+
+    /**
+     * Returns the {@link AccessibilityServiceInfo}s of the installed accessibility services.
+     *
+     * @return An unmodifiable list with {@link AccessibilityServiceInfo}s.
+     */
+    public List<AccessibilityServiceInfo> getInstalledAccessibilityServiceList() {
+        List<AccessibilityServiceInfo> services = null;
         try {
-            services = mService.getAccessibilityServiceList();
-            if (LOGV) {
+            services = mService.getInstalledAccessibilityServiceList();
+            if (DEBUG) {
                 Log.i(LOG_TAG, "Installed AccessibilityServices " + services);
             }
         } catch (RemoteException re) {
             Log.e(LOG_TAG, "Error while obtaining the installed AccessibilityServices. ", re);
         }
         return Collections.unmodifiableList(services);
+    }
+
+    /**
+     * Returns the {@link AccessibilityServiceInfo}s of the enabled accessibility services
+     * for a given feedback type.
+     *
+     * @param feedbackTypeFlags The feedback type flags.
+     * @return An unmodifiable list with {@link AccessibilityServiceInfo}s.
+     *
+     * @see AccessibilityServiceInfo#FEEDBACK_AUDIBLE
+     * @see AccessibilityServiceInfo#FEEDBACK_GENERIC
+     * @see AccessibilityServiceInfo#FEEDBACK_HAPTIC
+     * @see AccessibilityServiceInfo#FEEDBACK_SPOKEN
+     * @see AccessibilityServiceInfo#FEEDBACK_VISUAL
+     */
+    public List<AccessibilityServiceInfo> getEnabledAccessibilityServiceList(
+            int feedbackTypeFlags) {
+        List<AccessibilityServiceInfo> services = null;
+        try {
+            services = mService.getEnabledAccessibilityServiceList(feedbackTypeFlags);
+            if (DEBUG) {
+                Log.i(LOG_TAG, "Installed AccessibilityServices " + services);
+            }
+        } catch (RemoteException re) {
+            Log.e(LOG_TAG, "Error while obtaining the installed AccessibilityServices. ", re);
+        }
+        return Collections.unmodifiableList(services);
+    }
+
+    /**
+     * Registers an {@link AccessibilityStateChangeListener} for changes in
+     * the global accessibility state of the system.
+     *
+     * @param listener The listener.
+     * @return True if successfully registered.
+     */
+    public boolean addAccessibilityStateChangeListener(
+            AccessibilityStateChangeListener listener) {
+        return mAccessibilityStateChangeListeners.add(listener);
+    }
+
+    /**
+     * Unregisters an {@link AccessibilityStateChangeListener}.
+     *
+     * @param listener The listener.
+     * @return True if successfully unregistered.
+     */
+    public boolean removeAccessibilityStateChangeListener(
+            AccessibilityStateChangeListener listener) {
+        return mAccessibilityStateChangeListeners.remove(listener);
+    }
+
+    /**
+     * Sets the current state.
+     *
+     * @param stateFlags The state flags.
+     */
+    private void setState(int stateFlags) {
+        final boolean accessibilityEnabled = (stateFlags & STATE_FLAG_ACCESSIBILITY_ENABLED) != 0;
+        setAccessibilityState(accessibilityEnabled);
+        mIsTouchExplorationEnabled = (stateFlags & STATE_FLAG_TOUCH_EXPLORATION_ENABLED) != 0;
+    }
+
+    /**
+     * Sets the enabled state.
+     *
+     * @param isEnabled The accessibility state.
+     */
+    private void setAccessibilityState(boolean isEnabled) {
+        synchronized (mHandler) {
+            if (isEnabled != mIsEnabled) {
+                mIsEnabled = isEnabled;
+                notifyAccessibilityStateChanged();
+            }
+        }
+    }
+
+    /**
+     * Notifies the registered {@link AccessibilityStateChangeListener}s.
+     */
+    private void notifyAccessibilityStateChanged() {
+        final int listenerCount = mAccessibilityStateChangeListeners.size();
+        for (int i = 0; i < listenerCount; i++) {
+            mAccessibilityStateChangeListeners.get(i).onAccessibilityStateChanged(mIsEnabled);
+        }
+    }
+
+    /**
+     * Adds an accessibility interaction connection interface for a given window.
+     * @param windowToken The window token to which a connection is added.
+     * @param connection The connection.
+     *
+     * @hide
+     */
+    public int addAccessibilityInteractionConnection(IWindow windowToken,
+            IAccessibilityInteractionConnection connection) {
+        try {
+            return mService.addAccessibilityInteractionConnection(windowToken, connection);
+        } catch (RemoteException re) {
+            Log.e(LOG_TAG, "Error while adding an accessibility interaction connection. ", re);
+        }
+        return View.NO_ID;
+    }
+
+    /**
+     * Removed an accessibility interaction connection interface for a given window.
+     * @param windowToken The window token to which a connection is removed.
+     *
+     * @hide
+     */
+    public void removeAccessibilityInteractionConnection(IWindow windowToken) {
+        try {
+            mService.removeAccessibilityInteractionConnection(windowToken);
+        } catch (RemoteException re) {
+            Log.e(LOG_TAG, "Error while removing an accessibility interaction connection. ", re);
+        }
     }
 }

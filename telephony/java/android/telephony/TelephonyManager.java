@@ -23,13 +23,13 @@ import android.os.Bundle;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemProperties;
+import android.util.Log;
 
 import com.android.internal.telephony.IPhoneSubInfo;
 import com.android.internal.telephony.ITelephony;
 import com.android.internal.telephony.ITelephonyRegistry;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneFactory;
-import com.android.internal.telephony.RILConstants;
 import com.android.internal.telephony.TelephonyProperties;
 
 import java.util.List;
@@ -55,14 +55,22 @@ import java.util.List;
 public class TelephonyManager {
     private static final String TAG = "TelephonyManager";
 
-    private Context mContext;
-    private ITelephonyRegistry mRegistry;
+    private static Context sContext;
+    private static ITelephonyRegistry sRegistry;
 
     /** @hide */
     public TelephonyManager(Context context) {
-        mContext = context;
-        mRegistry = ITelephonyRegistry.Stub.asInterface(ServiceManager.getService(
+        context = context.getApplicationContext();
+        if (sContext == null) {
+            sContext = context;
+
+            sRegistry = ITelephonyRegistry.Stub.asInterface(ServiceManager.getService(
                     "telephony.registry"));
+        } else if (sContext != context) {
+            Log.e(TAG, "Hidden constructor called more than once per process!");
+            Log.e(TAG, "Original: " + sContext.getPackageName() + ", new: " +
+                    context.getPackageName());
+        }
     }
 
     /** @hide */
@@ -71,7 +79,8 @@ public class TelephonyManager {
 
     private static TelephonyManager sInstance = new TelephonyManager();
 
-    /** @hide */
+    /** @hide
+    /* @deprecated - use getSystemService as described above */
     public static TelephonyManager getDefault() {
         return sInstance;
     }
@@ -272,15 +281,21 @@ public class TelephonyManager {
     public static final int PHONE_TYPE_GSM = Phone.PHONE_TYPE_GSM;
     /** Phone radio is CDMA. */
     public static final int PHONE_TYPE_CDMA = Phone.PHONE_TYPE_CDMA;
+    /** Phone is via SIP. */
+    public static final int PHONE_TYPE_SIP = Phone.PHONE_TYPE_SIP;
 
     /**
-     * Returns a constant indicating the device phone type.
+     * Returns the current phone type.
+     * TODO: This is a last minute change and hence hidden.
      *
      * @see #PHONE_TYPE_NONE
      * @see #PHONE_TYPE_GSM
      * @see #PHONE_TYPE_CDMA
+     * @see #PHONE_TYPE_SIP
+     *
+     * {@hide}
      */
-    public int getPhoneType() {
+    public int getCurrentPhoneType() {
         try{
             ITelephony telephony = getITelephony();
             if (telephony != null) {
@@ -300,6 +315,21 @@ public class TelephonyManager {
         }
     }
 
+    /**
+     * Returns a constant indicating the device phone type.  This
+     * indicates the type of radio used to transmit voice calls.
+     *
+     * @see #PHONE_TYPE_NONE
+     * @see #PHONE_TYPE_GSM
+     * @see #PHONE_TYPE_CDMA
+     * @see #PHONE_TYPE_SIP
+     */
+    public int getPhoneType() {
+        if (!isVoiceCapable()) {
+            return PHONE_TYPE_NONE;
+        }
+        return getCurrentPhoneType();
+    }
 
     private int getPhoneTypeFromProperty() {
         int type =
@@ -393,14 +423,16 @@ public class TelephonyManager {
     public static final int NETWORK_TYPE_IDEN = 11;
     /** Current network is EVDO revision B*/
     public static final int NETWORK_TYPE_EVDO_B = 12;
-    /** @hide */
+    /** Current network is LTE */
     public static final int NETWORK_TYPE_LTE = 13;
-    /** @hide */
+    /** Current network is eHRPD */
     public static final int NETWORK_TYPE_EHRPD = 14;
+    /** Current network is HSPA+ */
+    public static final int NETWORK_TYPE_HSPAP = 15;
 
     /**
      * Returns a constant indicating the radio technology (network type)
-     * currently in use on the device.
+     * currently in use on the device for data transmission.
      * @return the network type
      *
      * @see #NETWORK_TYPE_UNKNOWN
@@ -415,6 +447,10 @@ public class TelephonyManager {
      * @see #NETWORK_TYPE_EVDO_A
      * @see #NETWORK_TYPE_EVDO_B
      * @see #NETWORK_TYPE_1xRTT
+     * @see #NETWORK_TYPE_IDEN
+     * @see #NETWORK_TYPE_LTE
+     * @see #NETWORK_TYPE_EHRPD
+     * @see #NETWORK_TYPE_HSPAP
      */
     public int getNetworkType() {
         try{
@@ -434,6 +470,46 @@ public class TelephonyManager {
         }
     }
 
+    /** Unknown network class. {@hide} */
+    public static final int NETWORK_CLASS_UNKNOWN = 0;
+    /** Class of broadly defined "2G" networks. {@hide} */
+    public static final int NETWORK_CLASS_2_G = 1;
+    /** Class of broadly defined "3G" networks. {@hide} */
+    public static final int NETWORK_CLASS_3_G = 2;
+    /** Class of broadly defined "4G" networks. {@hide} */
+    public static final int NETWORK_CLASS_4_G = 3;
+
+    /**
+     * Return general class of network type, such as "3G" or "4G". In cases
+     * where classification is contentious, this method is conservative.
+     *
+     * @hide
+     */
+    public static int getNetworkClass(int networkType) {
+        switch (networkType) {
+            case NETWORK_TYPE_GPRS:
+            case NETWORK_TYPE_EDGE:
+            case NETWORK_TYPE_CDMA:
+            case NETWORK_TYPE_1xRTT:
+            case NETWORK_TYPE_IDEN:
+                return NETWORK_CLASS_2_G;
+            case NETWORK_TYPE_UMTS:
+            case NETWORK_TYPE_EVDO_0:
+            case NETWORK_TYPE_EVDO_A:
+            case NETWORK_TYPE_HSDPA:
+            case NETWORK_TYPE_HSUPA:
+            case NETWORK_TYPE_HSPA:
+            case NETWORK_TYPE_EVDO_B:
+            case NETWORK_TYPE_EHRPD:
+            case NETWORK_TYPE_HSPAP:
+                return NETWORK_CLASS_3_G;
+            case NETWORK_TYPE_LTE:
+                return NETWORK_CLASS_4_G;
+            default:
+                return NETWORK_CLASS_UNKNOWN;
+        }
+    }
+
     /**
      * Returns a string representation of the radio technology (network type)
      * currently in use on the device.
@@ -442,7 +518,12 @@ public class TelephonyManager {
      * @hide pending API council review
      */
     public String getNetworkTypeName() {
-        switch (getNetworkType()) {
+        return getNetworkTypeName(getNetworkType());
+    }
+
+    /** {@hide} */
+    public static String getNetworkTypeName(int type) {
+        switch (type) {
             case NETWORK_TYPE_GPRS:
                 return "GPRS";
             case NETWORK_TYPE_EDGE:
@@ -465,6 +546,14 @@ public class TelephonyManager {
                 return "CDMA - EvDo rev. B";
             case NETWORK_TYPE_1xRTT:
                 return "CDMA - 1xRTT";
+            case NETWORK_TYPE_LTE:
+                return "LTE";
+            case NETWORK_TYPE_EHRPD:
+                return "CDMA - eHRPD";
+            case NETWORK_TYPE_IDEN:
+                return "iDEN";
+            case NETWORK_TYPE_HSPAP:
+                return "HSPA+";
             default:
                 return "UNKNOWN";
         }
@@ -588,6 +677,28 @@ public class TelephonyManager {
         }
     }
 
+    /**
+     * Return if the current radio is LTE on CDMA. This
+     * is a tri-state return value as for a period of time
+     * the mode may be unknown.
+     *
+     * @return {@link Phone#LTE_ON_CDMA_UNKNOWN}, {@link Phone#LTE_ON_CDMA_FALSE}
+     * or {@link Phone#LTE_ON_CDMA_TRUE}
+     *
+     * @hide
+     */
+    public int getLteOnCdmaMode() {
+        try {
+            return getITelephony().getLteOnCdmaMode();
+        } catch (RemoteException ex) {
+            // Assume no ICC card if remote exception which shouldn't happen
+            return Phone.LTE_ON_CDMA_UNKNOWN;
+        } catch (NullPointerException ex) {
+            // This could happen before phone restarts due to crashing
+            return Phone.LTE_ON_CDMA_UNKNOWN;
+        }
+    }
+
     //
     //
     // Subscriber Info
@@ -642,6 +753,26 @@ public class TelephonyManager {
     public String getLine1AlphaTag() {
         try {
             return getSubscriberInfo().getLine1AlphaTag();
+        } catch (RemoteException ex) {
+            return null;
+        } catch (NullPointerException ex) {
+            // This could happen before phone restarts due to crashing
+            return null;
+        }
+    }
+
+    /**
+     * Returns the MSISDN string.
+     * for a GSM phone. Return null if it is unavailable.
+     * <p>
+     * Requires Permission:
+     *   {@link android.Manifest.permission#READ_PHONE_STATE READ_PHONE_STATE}
+     *
+     * @hide
+     */
+    public String getMsisdn() {
+        try {
+            return getSubscriberInfo().getMsisdn();
         } catch (RemoteException ex) {
             return null;
         } catch (NullPointerException ex) {
@@ -722,6 +853,55 @@ public class TelephonyManager {
         }
     }
 
+    /**
+     * Returns the IMS private user identity (IMPI) that was loaded from the ISIM.
+     * @return the IMPI, or null if not present or not loaded
+     * @hide
+     */
+    public String getIsimImpi() {
+        try {
+            return getSubscriberInfo().getIsimImpi();
+        } catch (RemoteException ex) {
+            return null;
+        } catch (NullPointerException ex) {
+            // This could happen before phone restarts due to crashing
+            return null;
+        }
+    }
+
+    /**
+     * Returns the IMS home network domain name that was loaded from the ISIM.
+     * @return the IMS domain name, or null if not present or not loaded
+     * @hide
+     */
+    public String getIsimDomain() {
+        try {
+            return getSubscriberInfo().getIsimDomain();
+        } catch (RemoteException ex) {
+            return null;
+        } catch (NullPointerException ex) {
+            // This could happen before phone restarts due to crashing
+            return null;
+        }
+    }
+
+    /**
+     * Returns the IMS public user identities (IMPU) that were loaded from the ISIM.
+     * @return an array of IMPU strings, with one IMPU per string, or null if
+     *      not present or not loaded
+     * @hide
+     */
+    public String[] getIsimImpu() {
+        try {
+            return getSubscriberInfo().getIsimImpu();
+        } catch (RemoteException ex) {
+            return null;
+        } catch (NullPointerException ex) {
+            // This could happen before phone restarts due to crashing
+            return null;
+        }
+    }
+
     private IPhoneSubInfo getSubscriberInfo() {
         // get it each time because that process crashes a lot
         return IPhoneSubInfo.Stub.asInterface(ServiceManager.getService("iphonesubinfo"));
@@ -790,6 +970,10 @@ public class TelephonyManager {
       }
     }
 
+    /** Data connection state: Unknown.  Used before we know the state.
+     * @hide
+     */
+    public static final int DATA_UNKNOWN        = -1;
     /** Data connection state: Disconnected. IP traffic not available. */
     public static final int DATA_DISCONNECTED   = 0;
     /** Data connection state: Currently setting up a data connection. */
@@ -855,10 +1039,10 @@ public class TelephonyManager {
      *               LISTEN_ flags.
      */
     public void listen(PhoneStateListener listener, int events) {
-        String pkgForDebug = mContext != null ? mContext.getPackageName() : "<unknown>";
+        String pkgForDebug = sContext != null ? sContext.getPackageName() : "<unknown>";
         try {
             Boolean notifyNow = (getITelephony() != null);
-            mRegistry.listen(pkgForDebug, listener.callback, events, notifyNow);
+            sRegistry.listen(pkgForDebug, listener.callback, events, notifyNow);
         } catch (RemoteException ex) {
             // system process dead
         } catch (NullPointerException ex) {
@@ -914,5 +1098,44 @@ public class TelephonyManager {
         } catch (NullPointerException ex) {
             return null;
         }
+    }
+
+    /**
+     * @return true if the current device is "voice capable".
+     * <p>
+     * "Voice capable" means that this device supports circuit-switched
+     * (i.e. voice) phone calls over the telephony network, and is allowed
+     * to display the in-call UI while a cellular voice call is active.
+     * This will be false on "data only" devices which can't make voice
+     * calls and don't support any in-call UI.
+     * <p>
+     * Note: the meaning of this flag is subtly different from the
+     * PackageManager.FEATURE_TELEPHONY system feature, which is available
+     * on any device with a telephony radio, even if the device is
+     * data-only.
+     *
+     * @hide pending API review
+     */
+    public boolean isVoiceCapable() {
+        if (sContext == null) return true;
+        return sContext.getResources().getBoolean(
+                com.android.internal.R.bool.config_voice_capable);
+    }
+
+    /**
+     * @return true if the current device supports sms service.
+     * <p>
+     * If true, this means that the device supports both sending and
+     * receiving sms via the telephony network.
+     * <p>
+     * Note: Voicemail waiting sms, cell broadcasting sms, and MMS are
+     *       disabled when device doesn't support sms.
+     *
+     * @hide pending API review
+     */
+    public boolean isSmsCapable() {
+        if (sContext == null) return true;
+        return sContext.getResources().getBoolean(
+                com.android.internal.R.bool.config_sms_capable);
     }
 }

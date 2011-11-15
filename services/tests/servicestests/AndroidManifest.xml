@@ -15,14 +15,39 @@
 -->
 
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-          package="com.android.frameworks.servicestests">
+        package="com.android.frameworks.servicestests">
 
     <uses-permission android:name="android.permission.READ_LOGS" />
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
-    
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.BROADCAST_STICKY" />
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+    <uses-permission android:name="android.permission.UPDATE_DEVICE_STATS" />
+    <uses-permission android:name="android.permission.MANAGE_APP_TOKENS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <uses-permission android:name="android.permission.MANAGE_NETWORK_POLICY" />
+    <uses-permission android:name="android.permission.READ_NETWORK_USAGE_HISTORY" />
+    <uses-permission android:name="android.permission.MODIFY_NETWORK_ACCOUNTING" />
+    <uses-permission android:name="android.permission.CONNECTIVITY_INTERNAL" />
+
     <application>
         <uses-library android:name="android.test.runner" />
+
+        <service android:name="com.android.server.AccessibilityManagerServiceTest$MyFirstMockAccessibilityService">
+          <intent-filter>
+            <action android:name="android.accessibilityservice.AccessibilityService"/>
+          </intent-filter>
+        </service>
+
+        <service android:name="com.android.server.AccessibilityManagerServiceTest$MySecondMockAccessibilityService">
+          <intent-filter>
+            <action android:name="android.accessibilityservice.AccessibilityService"/>
+          </intent-filter>
+        </service>
+
     </application>
 
     <instrumentation

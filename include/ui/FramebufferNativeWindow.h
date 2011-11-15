@@ -23,12 +23,14 @@
 #include <EGL/egl.h>
 
 #include <utils/threads.h>
+#include <utils/String8.h>
 #include <ui/Rect.h>
 
 #include <pixelflinger/pixelflinger.h>
 
 #include <ui/egl/android_natives.h>
 
+#define NUM_FRAME_BUFFERS  2
 
 extern "C" EGLNativeWindowType android_createDisplaySurface(void);
 
@@ -55,7 +57,9 @@ public:
     bool isUpdateOnDemand() const { return mUpdateOnDemand; }
     status_t setUpdateRectangle(const Rect& updateRect);
     status_t compositionComplete();
-    
+
+    void dump(String8& result);
+
     // for debugging only
     int getCurrentBufferIndex() const;
 
@@ -63,16 +67,16 @@ private:
     friend class LightRefBase<FramebufferNativeWindow>;    
     ~FramebufferNativeWindow(); // this class cannot be overloaded
     static int setSwapInterval(ANativeWindow* window, int interval);
-    static int dequeueBuffer(ANativeWindow* window, android_native_buffer_t** buffer);
-    static int lockBuffer(ANativeWindow* window, android_native_buffer_t* buffer);
-    static int queueBuffer(ANativeWindow* window, android_native_buffer_t* buffer);
-    static int query(ANativeWindow* window, int what, int* value);
+    static int dequeueBuffer(ANativeWindow* window, ANativeWindowBuffer** buffer);
+    static int lockBuffer(ANativeWindow* window, ANativeWindowBuffer* buffer);
+    static int queueBuffer(ANativeWindow* window, ANativeWindowBuffer* buffer);
+    static int query(const ANativeWindow* window, int what, int* value);
     static int perform(ANativeWindow* window, int operation, ...);
     
     framebuffer_device_t* fbDev;
     alloc_device_t* grDev;
 
-    sp<NativeBuffer> buffers[2];
+    sp<NativeBuffer> buffers[NUM_FRAME_BUFFERS];
     sp<NativeBuffer> front;
     
     mutable Mutex mutex;

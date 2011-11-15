@@ -27,24 +27,24 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import android.net.Uri;
+import android.util.FastImmutableArraySet;
 import android.util.Log;
 import android.util.PrintWriterPrinter;
 import android.util.Slog;
 import android.util.LogPrinter;
 import android.util.Printer;
 
-import android.util.Config;
-import android.content.ContentResolver;
 import android.content.Intent;
 import android.content.IntentFilter;
 
 /**
  * {@hide}
  */
-public class IntentResolver<F extends IntentFilter, R extends Object> {
+public abstract class IntentResolver<F extends IntentFilter, R extends Object> {
     final private static String TAG = "IntentResolver";
     final private static boolean DEBUG = false;
-    final private static boolean localLOGV = DEBUG || Config.LOGV;
+    final private static boolean localLOGV = DEBUG || false;
 
     public void addFilter(F f) {
         if (localLOGV) {
@@ -207,10 +207,11 @@ public class IntentResolver<F extends IntentFilter, R extends Object> {
         final boolean debug = localLOGV ||
                 ((intent.getFlags() & Intent.FLAG_DEBUG_LOG_RESOLUTION) != 0);
 
+        FastImmutableArraySet<String> categories = getFastIntentCategories(intent);
         final String scheme = intent.getScheme();
         int N = listCut.size();
         for (int i = 0; i < N; ++i) {
-            buildResolveList(intent, debug, defaultOnly,
+            buildResolveList(intent, categories, debug, defaultOnly,
                              resolvedType, scheme, listCut.get(i), resultList);
         }
         sortResults(resultList);
@@ -286,20 +287,21 @@ public class IntentResolver<F extends IntentFilter, R extends Object> {
             if (debug) Slog.v(TAG, "Action list: " + firstTypeCut);
         }
 
+        FastImmutableArraySet<String> categories = getFastIntentCategories(intent);
         if (firstTypeCut != null) {
-            buildResolveList(intent, debug, defaultOnly,
+            buildResolveList(intent, categories, debug, defaultOnly,
                     resolvedType, scheme, firstTypeCut, finalList);
         }
         if (secondTypeCut != null) {
-            buildResolveList(intent, debug, defaultOnly,
+            buildResolveList(intent, categories, debug, defaultOnly,
                     resolvedType, scheme, secondTypeCut, finalList);
         }
         if (thirdTypeCut != null) {
-            buildResolveList(intent, debug, defaultOnly,
+            buildResolveList(intent, categories, debug, defaultOnly,
                     resolvedType, scheme, thirdTypeCut, finalList);
         }
         if (schemeCut != null) {
-            buildResolveList(intent, debug, defaultOnly,
+            buildResolveList(intent, categories, debug, defaultOnly,
                     resolvedType, scheme, schemeCut, finalList);
         }
         sortResults(finalList);
@@ -322,14 +324,28 @@ public class IntentResolver<F extends IntentFilter, R extends Object> {
         return true;
     }
 
-    protected String packageForFilter(F filter) {
-        return null;
+    /**
+     * Returns whether the object associated with the given filter is
+     * "stopped," that is whether it should not be included in the result
+     * if the intent requests to excluded stopped objects.
+     */
+    protected boolean isFilterStopped(F filter) {
+        return false;
     }
+
+    /**
+     * Return the package that owns this filter.  This must be implemented to
+     * provide correct filtering of Intents that have specified a package name
+     * they are to be delivered to.
+     */
+    protected abstract String packageForFilter(F filter);
     
+    @SuppressWarnings("unchecked")
     protected R newResult(F filter, int match) {
         return (R)filter;
     }
 
+    @SuppressWarnings("unchecked")
     protected void sortResults(List<R> results) {
         Collections.sort(results, mResolvePrioritySorter);
     }
@@ -478,9 +494,22 @@ public class IntentResolver<F extends IntentFilter, R extends Object> {
         return false;
     }
 
-    private void buildResolveList(Intent intent, boolean debug, boolean defaultOnly,
+    private static FastImmutableArraySet<String> getFastIntentCategories(Intent intent) {
+        final Set<String> categories = intent.getCategories();
+        if (categories == null) {
+            return null;
+        }
+        return new FastImmutableArraySet<String>(categories.toArray(new String[categories.size()]));
+    }
+
+    private void buildResolveList(Intent intent, FastImmutableArraySet<String> categories,
+            boolean debug, boolean defaultOnly,
             String resolvedType, String scheme, List<F> src, List<R> dest) {
-        Set<String> categories = intent.getCategories();
+        final String action = intent.getAction();
+        final Uri data = intent.getData();
+        final String packageName = intent.getPackage();
+
+        final boolean excludingStopped = intent.isExcludingStopped();
 
         final int N = src != null ? src.size() : 0;
         boolean hasNonDefaults = false;
@@ -490,6 +519,21 @@ public class IntentResolver<F extends IntentFilter, R extends Object> {
             int match;
             if (debug) Slog.v(TAG, "Matching against filter " + filter);
 
+            if (excludingStopped && isFilterStopped(filter)) {
+                if (debug) {
+                    Slog.v(TAG, "  Filter's target is stopped; skipping");
+                }
+                continue;
+            }
+
+            // Is delivery being limited to filters owned by a particular package?
+            if (packageName != null && !packageName.equals(packageForFilter(filter))) {
+                if (debug) {
+                    Slog.v(TAG, "  Filter is not from package " + packageName + "; skipping");
+                }
+                continue;
+            }
+
             // Do we already have this one?
             if (!allowFilterResult(filter, dest)) {
                 if (debug) {
@@ -498,8 +542,7 @@ public class IntentResolver<F extends IntentFilter, R extends Object> {
                 continue;
             }
 
-            match = filter.match(
-                    intent.getAction(), resolvedType, scheme, intent.getData(), categories, TAG);
+            match = filter.match(action, resolvedType, scheme, data, categories, TAG);
             if (match >= 0) {
                 if (debug) Slog.v(TAG, "  Filter matched!  match=0x" +
                         Integer.toHexString(match));
@@ -532,6 +575,7 @@ public class IntentResolver<F extends IntentFilter, R extends Object> {
     }
 
     // Sorts a List of IntentFilter objects into descending priority order.
+    @SuppressWarnings("rawtypes")
     private static final Comparator mResolvePrioritySorter = new Comparator() {
         public int compare(Object o1, Object o2) {
             final int q1 = ((IntentFilter) o1).getPriority();

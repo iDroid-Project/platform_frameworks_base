@@ -18,7 +18,6 @@ package android.graphics;
 
 import android.content.res.AssetManager;
 import android.content.res.Resources;
-import android.os.MemoryFile;
 import android.util.DisplayMetrics;
 import android.util.TypedValue;
 
@@ -42,6 +41,35 @@ public class BitmapFactory {
             inDither = false;
             inScaled = true;
         }
+
+        /**
+         * If set, decode methods that take the Options object will attempt to
+         * reuse this bitmap when loading content. If the decode operation cannot
+         * use this bitmap, the decode method will return <code>null</code> and
+         * will throw an IllegalArgumentException. The
+         * current implementation necessitates that the reused bitmap be of the
+         * same size as the source content and in jpeg or png format (whether as a
+         * resource or as a stream). The {@link android.graphics.Bitmap.Config
+         * configuration} of the reused bitmap will override the setting of
+         * {@link #inPreferredConfig}, if set.
+         *
+         * <p>You should still always use the returned Bitmap of the decode
+         * method and not assume that reusing the bitmap worked, due to the
+         * constraints outlined above and failure situations that can occur.
+         * Checking whether the return value matches the value of the inBitmap
+         * set in the Options structure is a way to see if the bitmap was reused,
+         * but in all cases you should use the returned Bitmap to make sure
+         * that you are using the bitmap that was used as the decode destination.</p>
+         */
+        public Bitmap inBitmap;
+
+        /**
+         * If set, decode methods will always return a mutable Bitmap instead of
+         * an immutable one. This can be used for instance to programmatically apply
+         * effects to a Bitmap loaded through BitmapFactory.
+         */
+        @SuppressWarnings({"UnusedDeclaration"}) // used in native code
+        public boolean inMutable;
 
         /**
          * If set to true, the decoder will return null (no bitmap), but
@@ -84,7 +112,7 @@ public class BitmapFactory {
         /**
          * The pixel density to use for the bitmap.  This will always result
          * in the returned bitmap having a density set for it (see
-         * {@link Bitmap#setDensity(int) Bitmap.setDensity(int)).  In addition,
+         * {@link Bitmap#setDensity(int) Bitmap.setDensity(int)}).  In addition,
          * if {@link #inScaled} is set (which it is by default} and this
          * density does not match {@link #inTargetDensity}, then the bitmap
          * will be scaled to the target density before being returned.
@@ -193,19 +221,6 @@ public class BitmapFactory {
         public boolean inInputShareable;
 
         /**
-         * Normally bitmap allocations count against the dalvik heap, which
-         * means they help trigger GCs when a lot have been allocated. However,
-         * in rare cases, the caller may want to allocate the bitmap outside of
-         * that heap. To request that, set inNativeAlloc to true. In these
-         * rare instances, it is solely up to the caller to ensure that OOM is
-         * managed explicitly by calling bitmap.recycle() as soon as such a
-         * bitmap is no longer needed.
-         *
-         * @hide pending API council approval
-         */
-        public boolean inNativeAlloc;
-
-        /**
          * If inPreferQualityOverSpeed is set to true, the decoder will try to
          * decode the reconstructed image to a higher quality even at the
          * expense of the decoding speed. Currently the field only affects JPEG
@@ -225,7 +240,7 @@ public class BitmapFactory {
         /**
          * The resulting height of the bitmap, set independent of the state of
          * inJustDecodeBounds. However, if there is an error trying to decode,
-         * outHeight will be set to -1.
+         * outHeight will be set to -1. 
          */
         public int outHeight;
 
@@ -370,6 +385,10 @@ public class BitmapFactory {
             }
         }
 
+        if (bm == null && opts != null && opts.inBitmap != null) {
+            throw new IllegalArgumentException("Problem decoding into existing bitmap");
+        }
+
         return bm;
     }
 
@@ -402,7 +421,11 @@ public class BitmapFactory {
         if ((offset | length) < 0 || data.length < offset + length) {
             throw new ArrayIndexOutOfBoundsException();
         }
-        return nativeDecodeByteArray(data, offset, length, opts);
+        Bitmap bm = nativeDecodeByteArray(data, offset, length, opts);
+        if (bm == null && opts != null && opts.inBitmap != null) {
+            throw new IllegalArgumentException("Problem decoding into existing bitmap");
+        }
+        return bm;
     }
 
     /**
@@ -469,6 +492,9 @@ public class BitmapFactory {
             if (tempStorage == null) tempStorage = new byte[16 * 1024];
             bm = nativeDecodeStream(is, tempStorage, outPadding, opts);
         }
+        if (bm == null && opts != null && opts.inBitmap != null) {
+            throw new IllegalArgumentException("Problem decoding into existing bitmap");
+        }
 
         return finishDecode(bm, outPadding, opts);
     }
@@ -505,7 +531,7 @@ public class BitmapFactory {
             }
             bm.setDensity(targetDensity);
         }
-        
+
         return bm;
     }
     
@@ -517,9 +543,7 @@ public class BitmapFactory {
      *
      * @param is The input stream that holds the raw data to be decoded into a
      *           bitmap.
-     * @return The decoded bitmap, or null if the image data could not be
-     *         decoded, or, if opts is non-null, if opts requested only the
-     *         size be returned (in opts.outWidth and opts.outHeight)
+     * @return The decoded bitmap, or null if the image data could not be decoded.
      */
     public static Bitmap decodeStream(InputStream is) {
         return decodeStream(is, null, null);
@@ -540,20 +564,22 @@ public class BitmapFactory {
      * @return the decoded bitmap, or null
      */
     public static Bitmap decodeFileDescriptor(FileDescriptor fd, Rect outPadding, Options opts) {
-        try {
-            if (MemoryFile.isMemoryFile(fd)) {
-                int mappedlength = MemoryFile.getSize(fd);
-                MemoryFile file = new MemoryFile(fd, mappedlength, "r");
-                InputStream is = file.getInputStream();
-                Bitmap bm = decodeStream(is, outPadding, opts);
-                return finishDecode(bm, outPadding, opts);
+        if (nativeIsSeekable(fd)) {
+            Bitmap bm = nativeDecodeFileDescriptor(fd, outPadding, opts);
+            if (bm == null && opts != null && opts.inBitmap != null) {
+                throw new IllegalArgumentException("Problem decoding into existing bitmap");
             }
-        } catch (IOException ex) {
-            // invalid filedescriptor, no need to call nativeDecodeFileDescriptor()
-            return null;
+            return finishDecode(bm, outPadding, opts);
+        } else {
+            FileInputStream fis = new FileInputStream(fd);
+            try {
+                return decodeStream(fis, outPadding, opts);
+            } finally {
+                try {
+                    fis.close();
+                } catch (Throwable t) {/* ignore */}
+            }
         }
-        Bitmap bm = nativeDecodeFileDescriptor(fd, outPadding, opts);
-        return finishDecode(bm, outPadding, opts);
     }
 
     /**
@@ -600,4 +626,5 @@ public class BitmapFactory {
     private static native Bitmap nativeDecodeByteArray(byte[] data, int offset,
             int length, Options opts);
     private static native byte[] nativeScaleNinePatch(byte[] chunk, float scale, Rect pad);
+    private static native boolean nativeIsSeekable(FileDescriptor fd);
 }

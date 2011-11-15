@@ -58,8 +58,7 @@ public class InputConnectionWrapper implements InputConnection {
         return mTarget.getCursorCapsMode(reqModes);
     }
     
-    public ExtractedText getExtractedText(ExtractedTextRequest request,
-            int flags) {
+    public ExtractedText getExtractedText(ExtractedTextRequest request, int flags) {
         return mTarget.getExtractedText(request, flags);
     }
 
@@ -85,6 +84,10 @@ public class InputConnectionWrapper implements InputConnection {
 
     public boolean commitCompletion(CompletionInfo text) {
         return mTarget.commitCompletion(text);
+    }
+
+    public boolean commitCorrection(CorrectionInfo correctionInfo) {
+        return mTarget.commitCorrection(correctionInfo);
     }
 
     public boolean setSelection(int start, int end) {

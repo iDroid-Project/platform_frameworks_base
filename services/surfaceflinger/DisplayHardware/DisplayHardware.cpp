@@ -36,11 +36,11 @@
 
 #include "DisplayHardware/DisplayHardware.h"
 
-#include <hardware/copybit.h>
-#include <hardware/overlay.h>
 #include <hardware/gralloc.h>
 
 #include "GLExtensions.h"
+#include "HWComposer.h"
+#include "SurfaceFlinger.h"
 
 using namespace android;
 
@@ -76,7 +76,7 @@ DisplayHardware::DisplayHardware(
         const sp<SurfaceFlinger>& flinger,
         uint32_t dpy)
     : DisplayHardwareBase(flinger, dpy),
-      mFlags(0)
+      mFlinger(flinger), mFlags(0), mHwc(0)
 {
     init(dpy);
 }
@@ -94,31 +94,75 @@ int DisplayHardware::getWidth() const           { return mWidth; }
 int DisplayHardware::getHeight() const          { return mHeight; }
 PixelFormat DisplayHardware::getFormat() const  { return mFormat; }
 uint32_t DisplayHardware::getMaxTextureSize() const { return mMaxTextureSize; }
-uint32_t DisplayHardware::getMaxViewportDims() const { return mMaxViewportDims; }
+
+uint32_t DisplayHardware::getMaxViewportDims() const {
+    return mMaxViewportDims[0] < mMaxViewportDims[1] ?
+            mMaxViewportDims[0] : mMaxViewportDims[1];
+}
+
+static status_t selectConfigForPixelFormat(
+        EGLDisplay dpy,
+        EGLint const* attrs,
+        PixelFormat format,
+        EGLConfig* outConfig)
+{
+    EGLConfig config = NULL;
+    EGLint numConfigs = -1, n=0;
+    eglGetConfigs(dpy, NULL, 0, &numConfigs);
+    EGLConfig* const configs = new EGLConfig[numConfigs];
+    eglChooseConfig(dpy, attrs, configs, numConfigs, &n);
+    for (int i=0 ; i<n ; i++) {
+        EGLint nativeVisualId = 0;
+        eglGetConfigAttrib(dpy, configs[i], EGL_NATIVE_VISUAL_ID, &nativeVisualId);
+        if (nativeVisualId>0 && format == nativeVisualId) {
+            *outConfig = configs[i];
+            delete [] configs;
+            return NO_ERROR;
+        }
+    }
+    delete [] configs;
+    return NAME_NOT_FOUND;
+}
+
 
 void DisplayHardware::init(uint32_t dpy)
 {
     mNativeWindow = new FramebufferNativeWindow();
     framebuffer_device_t const * fbDev = mNativeWindow->getDevice();
+    if (!fbDev) {
+        LOGE("Display subsystem failed to initialize. check logs. exiting...");
+        exit(0);
+    }
+
+    int format;
+    ANativeWindow const * const window = mNativeWindow.get();
+    window->query(window, NATIVE_WINDOW_FORMAT, &format);
     mDpiX = mNativeWindow->xdpi;
     mDpiY = mNativeWindow->ydpi;
     mRefreshRate = fbDev->fps;
 
-    mOverlayEngine = NULL;
-    hw_module_t const* module;
-    if (hw_get_module(OVERLAY_HARDWARE_MODULE_ID, &module) == 0) {
-        overlay_control_open(module, &mOverlayEngine);
-    }
+
+/* FIXME: this is a temporary HACK until we are able to report the refresh rate
+ * properly from the HAL. The WindowManagerService now relies on this value.
+ */
+#ifndef REFRESH_RATE
+    mRefreshRate = fbDev->fps;
+#else
+    mRefreshRate = REFRESH_RATE;
+#warning "refresh rate set via makefile to REFRESH_RATE"
+#endif
 
     EGLint w, h, dummy;
     EGLint numConfigs=0;
     EGLSurface surface;
     EGLContext context;
+    EGLBoolean result;
+    status_t err;
 
     // initialize EGL
     EGLint attribs[] = {
-            EGL_SURFACE_TYPE,   EGL_WINDOW_BIT,
-            EGL_NONE,           0,
+            EGL_SURFACE_TYPE,       EGL_WINDOW_BIT,
+            EGL_NONE,               0,
             EGL_NONE
     };
 
@@ -139,9 +183,8 @@ void DisplayHardware::init(uint32_t dpy)
     eglInitialize(display, NULL, NULL);
     eglGetConfigs(display, NULL, 0, &numConfigs);
 
-    EGLConfig config;
-    status_t err = EGLUtils::selectConfigForNativeWindow(
-            display, attribs, mNativeWindow.get(), &config);
+    EGLConfig config = NULL;
+    err = selectConfigForPixelFormat(display, attribs, format, &config);
     LOGE_IF(err, "couldn't find an EGLConfig matching the screen format");
     
     EGLint r,g,b,a;
@@ -222,7 +265,11 @@ void DisplayHardware::init(uint32_t dpy)
      * Gather OpenGL ES extensions
      */
 
-    eglMakeCurrent(display, surface, surface, context);
+    result = eglMakeCurrent(display, surface, surface, context);
+    if (!result) {
+        LOGE("Couldn't create a working GLES context. check logs. exiting...");
+        exit(0);
+    }
 
     GLExtensions& extensions(GLExtensions::getInstance());
     extensions.initWithGLStrings(
@@ -235,7 +282,7 @@ void DisplayHardware::init(uint32_t dpy)
             eglQueryString(display, EGL_EXTENSIONS));
 
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &mMaxTextureSize);
-    glGetIntegerv(GL_MAX_VIEWPORT_DIMS, &mMaxViewportDims);
+    glGetIntegerv(GL_MAX_VIEWPORT_DIMS, mMaxViewportDims);
 
 
 #ifdef EGL_ANDROID_swap_rectangle
@@ -267,11 +314,22 @@ void DisplayHardware::init(uint32_t dpy)
     LOGI("version   : %s", extensions.getVersion());
     LOGI("extensions: %s", extensions.getExtension());
     LOGI("GL_MAX_TEXTURE_SIZE = %d", mMaxTextureSize);
-    LOGI("GL_MAX_VIEWPORT_DIMS = %d", mMaxViewportDims);
+    LOGI("GL_MAX_VIEWPORT_DIMS = %d x %d", mMaxViewportDims[0], mMaxViewportDims[1]);
     LOGI("flags = %08x", mFlags);
 
     // Unbind the context from this thread
     eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+
+
+    // initialize the H/W composer
+    mHwc = new HWComposer(mFlinger);
+    if (mHwc->initCheck() == NO_ERROR) {
+        mHwc->setFrameBuffer(mDisplay, mSurface);
+    }
+}
+
+HWComposer& DisplayHardware::getHwComposer() const {
+    return *mHwc;
 }
 
 /*
@@ -285,12 +343,14 @@ void DisplayHardware::fini()
 {
     eglMakeCurrent(mDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     eglTerminate(mDisplay);
-    overlay_control_close(mOverlayEngine);
 }
 
 void DisplayHardware::releaseScreen() const
 {
     DisplayHardwareBase::releaseScreen();
+    if (mHwc->initCheck() == NO_ERROR) {
+        mHwc->release();
+    }
 }
 
 void DisplayHardware::acquireScreen() const
@@ -331,18 +391,17 @@ void DisplayHardware::flip(const Region& dirty) const
     }
     
     mPageFlipCount++;
-    eglSwapBuffers(dpy, surface);
+
+    if (mHwc->initCheck() == NO_ERROR) {
+        mHwc->commit();
+    } else {
+        eglSwapBuffers(dpy, surface);
+    }
     checkEGLErrors("eglSwapBuffers");
 
     // for debugging
     //glClearColor(1,0,0,0);
     //glClear(GL_COLOR_BUFFER_BIT);
-}
-
-status_t DisplayHardware::postBypassBuffer(const native_handle_t* handle) const
-{
-   framebuffer_device_t *fbDev = (framebuffer_device_t *)mNativeWindow->getDevice();
-   return fbDev->post(fbDev, handle);
 }
 
 uint32_t DisplayHardware::getFlags() const
@@ -353,4 +412,9 @@ uint32_t DisplayHardware::getFlags() const
 void DisplayHardware::makeCurrent() const
 {
     eglMakeCurrent(mDisplay, mSurface, mSurface, mContext);
+}
+
+void DisplayHardware::dump(String8& res) const
+{
+    mNativeWindow->dump(res);
 }

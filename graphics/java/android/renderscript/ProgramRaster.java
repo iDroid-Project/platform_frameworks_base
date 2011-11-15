@@ -17,95 +17,100 @@
 package android.renderscript;
 
 
-import android.util.Config;
 import android.util.Log;
 
 
 /**
- * @hide
- *
+ * Program raster is primarily used to specify whether point sprites are enabled and to control
+ * the culling mode. By default, back faces are culled.
  **/
 public class ProgramRaster extends BaseObj {
+
+    public enum CullMode {
+        BACK (0),
+        FRONT (1),
+        NONE (2);
+
+        int mID;
+        CullMode(int id) {
+            mID = id;
+        }
+    }
+
     boolean mPointSmooth;
     boolean mLineSmooth;
     boolean mPointSprite;
-    float mPointSize;
     float mLineWidth;
-    Element mIn;
-    Element mOut;
+    CullMode mCullMode;
 
     ProgramRaster(int id, RenderScript rs) {
-        super(rs);
-        mID = id;
+        super(id, rs);
 
-        mPointSize = 1.0f;
         mLineWidth = 1.0f;
         mPointSmooth = false;
         mLineSmooth = false;
         mPointSprite = false;
+
+        mCullMode = CullMode.BACK;
     }
 
-    public void setLineWidth(float w) {
-        mRS.validate();
-        mLineWidth = w;
-        mRS.nProgramRasterSetLineWidth(mID, w);
-    }
-
-    public void setPointSize(float s) {
-        mRS.validate();
-        mPointSize = s;
-        mRS.nProgramRasterSetPointSize(mID, s);
-    }
-
-    void internalInit() {
-        int inID = 0;
-        int outID = 0;
-        if (mIn != null) {
-            inID = mIn.mID;
+    public static ProgramRaster CULL_BACK(RenderScript rs) {
+        if(rs.mProgramRaster_CULL_BACK == null) {
+            ProgramRaster.Builder builder = new ProgramRaster.Builder(rs);
+            builder.setCullMode(CullMode.BACK);
+            rs.mProgramRaster_CULL_BACK = builder.create();
         }
-        if (mOut != null) {
-            outID = mOut.mID;
-        }
-        mID = mRS.nProgramRasterCreate(inID, outID, mPointSmooth, mLineSmooth, mPointSprite);
+        return rs.mProgramRaster_CULL_BACK;
     }
 
+    public static ProgramRaster CULL_FRONT(RenderScript rs) {
+        if(rs.mProgramRaster_CULL_FRONT == null) {
+            ProgramRaster.Builder builder = new ProgramRaster.Builder(rs);
+            builder.setCullMode(CullMode.FRONT);
+            rs.mProgramRaster_CULL_FRONT = builder.create();
+        }
+        return rs.mProgramRaster_CULL_FRONT;
+    }
+
+    public static ProgramRaster CULL_NONE(RenderScript rs) {
+        if(rs.mProgramRaster_CULL_NONE == null) {
+            ProgramRaster.Builder builder = new ProgramRaster.Builder(rs);
+            builder.setCullMode(CullMode.NONE);
+            rs.mProgramRaster_CULL_NONE = builder.create();
+        }
+        return rs.mProgramRaster_CULL_NONE;
+    }
 
     public static class Builder {
         RenderScript mRS;
-        ProgramRaster mPR;
+        boolean mPointSprite;
+        CullMode mCullMode;
 
-        public Builder(RenderScript rs, Element in, Element out) {
+        public Builder(RenderScript rs) {
             mRS = rs;
-            mPR = new ProgramRaster(0, rs);
+            mPointSprite = false;
+            mCullMode = CullMode.BACK;
         }
 
-        public void setPointSpriteEnable(boolean enable) {
-            mPR.mPointSprite = enable;
+        public Builder setPointSpriteEnabled(boolean enable) {
+            mPointSprite = enable;
+            return this;
         }
 
-        public void setPointSmoothEnable(boolean enable) {
-            mPR.mPointSmooth = enable;
-        }
-
-        public void setLineSmoothEnable(boolean enable) {
-            mPR.mLineSmooth = enable;
-        }
-
-
-        static synchronized ProgramRaster internalCreate(RenderScript rs, Builder b) {
-            b.mPR.internalInit();
-            ProgramRaster pr = b.mPR;
-            b.mPR = new ProgramRaster(0, b.mRS);
-            return pr;
+        public Builder setCullMode(CullMode m) {
+            mCullMode = m;
+            return this;
         }
 
         public ProgramRaster create() {
             mRS.validate();
-            return internalCreate(mRS, this);
+            int id = mRS.nProgramRasterCreate(mPointSprite, mCullMode.mID);
+            return new ProgramRaster(id, mRS);
         }
     }
 
 }
+
 
 
 

@@ -20,23 +20,16 @@
 #include "android_runtime/AndroidRuntime.h"
 #include <utils/misc.h>
 #include <hardware_legacy/power.h>
-#include <sys/reboot.h>
+#include <cutils/android_reboot.h>
 
 namespace android
 {
-
-static void throw_NullPointerException(JNIEnv *env, const char* msg)
-{
-    jclass clazz;
-    clazz = env->FindClass("java/lang/NullPointerException");
-    env->ThrowNew(clazz, msg);
-}
 
 static void
 acquireWakeLock(JNIEnv *env, jobject clazz, jint lock, jstring idObj)
 {
     if (idObj == NULL) {
-        throw_NullPointerException(env, "id is null");
+        jniThrowNullPointerException(env, "id is null");
         return ;
     }
 
@@ -51,7 +44,7 @@ static void
 releaseWakeLock(JNIEnv *env, jobject clazz, jstring idObj)
 {
     if (idObj == NULL) {
-        throw_NullPointerException(env, "id is null");
+        jniThrowNullPointerException(env, "id is null");
         return ;
     }
 
@@ -77,26 +70,19 @@ setScreenState(JNIEnv *env, jobject clazz, jboolean on)
 
 static void android_os_Power_shutdown(JNIEnv *env, jobject clazz)
 {
-    sync();
-#ifdef HAVE_ANDROID_OS
-    reboot(RB_POWER_OFF);
-#endif
+    android_reboot(ANDROID_RB_POWEROFF, 0, 0);
 }
 
 static void android_os_Power_reboot(JNIEnv *env, jobject clazz, jstring reason)
 {
-    sync();
-#ifdef HAVE_ANDROID_OS
     if (reason == NULL) {
-        reboot(RB_AUTOBOOT);
+        android_reboot(ANDROID_RB_RESTART, 0, 0);
     } else {
         const char *chars = env->GetStringUTFChars(reason, NULL);
-        __reboot(LINUX_REBOOT_MAGIC1, LINUX_REBOOT_MAGIC2,
-                 LINUX_REBOOT_CMD_RESTART2, (char*) chars);
+        android_reboot(ANDROID_RB_RESTART2, 0, (char *) chars);
         env->ReleaseStringUTFChars(reason, chars);  // In case it fails.
     }
     jniThrowIOException(env, errno);
-#endif
 }
 
 static JNINativeMethod method_table[] = {

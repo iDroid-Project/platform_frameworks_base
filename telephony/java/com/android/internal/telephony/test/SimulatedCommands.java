@@ -16,7 +16,6 @@
 
 package com.android.internal.telephony.test;
 
-
 import android.os.AsyncResult;
 import android.os.HandlerThread;
 import android.os.Looper;
@@ -27,7 +26,6 @@ import com.android.internal.telephony.BaseCommands;
 import com.android.internal.telephony.CommandException;
 import com.android.internal.telephony.CommandsInterface;
 import com.android.internal.telephony.DataCallState;
-import com.android.internal.telephony.IccCard;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.UUSInfo;
 import com.android.internal.telephony.gsm.CallFailCause;
@@ -333,35 +331,31 @@ public final class SimulatedCommands extends BaseCommands
         mSsnNotifyOn = enable;
     }
 
-    /**
-     * (AsyncResult)response.obj).result will be an Integer representing
-     * the sum of enabled serivice classes (sum of SERVICE_CLASS_*)
-     *
-     * @param facility one of CB_FACILTY_*
-     * @param pin password or "" if not required
-     * @param serviceClass is a sum of SERVICE_CLASS_*
-     */
-
-    public void queryFacilityLock (String facility, String pin,
+    @Override
+    public void queryFacilityLock(String facility, String pin,
                                    int serviceClass, Message result) {
-        if (facility != null &&
-                facility.equals(CommandsInterface.CB_FACILITY_BA_SIM)) {
+        queryFacilityLockForApp(facility, pin, serviceClass, null, result);
+    }
+
+    @Override
+    public void queryFacilityLockForApp(String facility, String pin, int serviceClass,
+            String appId, Message result) {
+        if (facility != null && facility.equals(CommandsInterface.CB_FACILITY_BA_SIM)) {
             if (result != null) {
                 int[] r = new int[1];
                 r[0] = (mSimLockEnabled ? 1 : 0);
-                Log.i(LOG_TAG, "[SimCmd] queryFacilityLock: SIM is " +
-                        (r[0] == 0 ? "unlocked" : "locked"));
+                Log.i(LOG_TAG, "[SimCmd] queryFacilityLock: SIM is "
+                        + (r[0] == 0 ? "unlocked" : "locked"));
                 AsyncResult.forMessage(result, r, null);
                 result.sendToTarget();
             }
             return;
-        } else if (facility != null &&
-                facility.equals(CommandsInterface.CB_FACILITY_BA_FD)) {
+        } else if (facility != null && facility.equals(CommandsInterface.CB_FACILITY_BA_FD)) {
             if (result != null) {
                 int[] r = new int[1];
                 r[0] = (mSimFdnEnabled ? 1 : 0);
-                Log.i(LOG_TAG, "[SimCmd] queryFacilityLock: FDN is " +
-                        (r[0] == 0 ? "disabled" : "enabled"));
+                Log.i(LOG_TAG, "[SimCmd] queryFacilityLock: FDN is "
+                        + (r[0] == 0 ? "disabled" : "enabled"));
                 AsyncResult.forMessage(result, r, null);
                 result.sendToTarget();
             }
@@ -371,14 +365,15 @@ public final class SimulatedCommands extends BaseCommands
         unimplemented(result);
     }
 
-    /**
-     * @param facility one of CB_FACILTY_*
-     * @param lockEnabled true if SIM lock is enabled
-     * @param pin the SIM pin or "" if not required
-     * @param serviceClass is a sum of SERVICE_CLASS_*
-     */
-    public void setFacilityLock (String facility, boolean lockEnabled,
-                                 String pin, int serviceClass,
+    @Override
+    public void setFacilityLock(String facility, boolean lockEnabled, String pin, int serviceClass,
+            Message result) {
+        setFacilityLockForApp(facility, lockEnabled, pin, serviceClass, null, result);
+    }
+
+    @Override
+    public void setFacilityLockForApp(String facility, boolean lockEnabled,
+                                 String pin, int serviceClass, String appId,
                                  Message result) {
         if (facility != null &&
                 facility.equals(CommandsInterface.CB_FACILITY_BA_SIM)) {
@@ -441,7 +436,7 @@ public final class SimulatedCommands extends BaseCommands
      *  returned message
      *  retMsg.obj = AsyncResult ar
      *  ar.exception carries exception on failure
-     *  ar.userObject contains the orignal value of result.obj
+     *  ar.userObject contains the original value of result.obj
      *  ar.result contains a List of DriverCall
      *      The ar.result List is sorted by DriverCall.index
      */
@@ -468,7 +463,7 @@ public final class SimulatedCommands extends BaseCommands
      *  returned message
      *  retMsg.obj = AsyncResult ar
      *  ar.exception carries exception on failure
-     *  ar.userObject contains the orignal value of result.obj
+     *  ar.userObject contains the original value of result.obj
      *  ar.result contains a List of DataCallState
      */
     public void getDataCallList(Message result) {
@@ -479,7 +474,7 @@ public final class SimulatedCommands extends BaseCommands
      *  returned message
      *  retMsg.obj = AsyncResult ar
      *  ar.exception carries exception on failure
-     *  ar.userObject contains the orignal value of result.obj
+     *  ar.userObject contains the original value of result.obj
      *  ar.result is null on success and failure
      *
      * CLIR_DEFAULT     == on "use subscription default value"
@@ -496,7 +491,7 @@ public final class SimulatedCommands extends BaseCommands
      *  returned message
      *  retMsg.obj = AsyncResult ar
      *  ar.exception carries exception on failure
-     *  ar.userObject contains the orignal value of result.obj
+     *  ar.userObject contains the original value of result.obj
      *  ar.result is null on success and failure
      *
      * CLIR_DEFAULT     == on "use subscription default value"
@@ -513,7 +508,7 @@ public final class SimulatedCommands extends BaseCommands
      *  returned message
      *  retMsg.obj = AsyncResult ar
      *  ar.exception carries exception on failure
-     *  ar.userObject contains the orignal value of result.obj
+     *  ar.userObject contains the original value of result.obj
      *  ar.result is String containing IMSI on success
      */
     public void getIMSI(Message result) {
@@ -524,7 +519,7 @@ public final class SimulatedCommands extends BaseCommands
      *  returned message
      *  retMsg.obj = AsyncResult ar
      *  ar.exception carries exception on failure
-     *  ar.userObject contains the orignal value of result.obj
+     *  ar.userObject contains the original value of result.obj
      *  ar.result is String containing IMEI on success
      */
     public void getIMEI(Message result) {
@@ -535,7 +530,7 @@ public final class SimulatedCommands extends BaseCommands
      *  returned message
      *  retMsg.obj = AsyncResult ar
      *  ar.exception carries exception on failure
-     *  ar.userObject contains the orignal value of result.obj
+     *  ar.userObject contains the original value of result.obj
      *  ar.result is String containing IMEISV on success
      */
     public void getIMEISV(Message result) {
@@ -547,7 +542,7 @@ public final class SimulatedCommands extends BaseCommands
      *  returned message
      *  retMsg.obj = AsyncResult ar
      *  ar.exception carries exception on failure
-     *  ar.userObject contains the orignal value of result.obj
+     *  ar.userObject contains the original value of result.obj
      *  ar.result is null on success and failure
      *
      *  3GPP 22.030 6.5.5
@@ -572,7 +567,7 @@ public final class SimulatedCommands extends BaseCommands
      *  "Releases all held calls or sets User Determined User Busy (UDUB)
      *   for a waiting call."
      *  ar.exception carries exception on failure
-     *  ar.userObject contains the orignal value of result.obj
+     *  ar.userObject contains the original value of result.obj
      *  ar.result is null on success and failure
      */
     public void hangupWaitingOrBackground (Message result) {
@@ -593,7 +588,7 @@ public final class SimulatedCommands extends BaseCommands
      *  the other (held or waiting) call."
      *
      *  ar.exception carries exception on failure
-     *  ar.userObject contains the orignal value of result.obj
+     *  ar.userObject contains the original value of result.obj
      *  ar.result is null on success and failure
      */
     public void hangupForegroundResumeBackground (Message result) {
@@ -614,7 +609,7 @@ public final class SimulatedCommands extends BaseCommands
      *  the other (held or waiting) call."
      *
      *  ar.exception carries exception on failure
-     *  ar.userObject contains the orignal value of result.obj
+     *  ar.userObject contains the original value of result.obj
      *  ar.result is null on success and failure
      */
     public void switchWaitingOrHoldingAndActive (Message result) {
@@ -634,7 +629,7 @@ public final class SimulatedCommands extends BaseCommands
      * "Adds a held call to the conversation"
      *
      *  ar.exception carries exception on failure
-     *  ar.userObject contains the orignal value of result.obj
+     *  ar.userObject contains the original value of result.obj
      *  ar.result is null on success and failure
      */
     public void conference (Message result) {
@@ -654,7 +649,7 @@ public final class SimulatedCommands extends BaseCommands
      * "Connects the two calls and disconnects the subscriber from both calls"
      *
      *  ar.exception carries exception on failure
-     *  ar.userObject contains the orignal value of result.obj
+     *  ar.userObject contains the original value of result.obj
      *  ar.result is null on success and failure
      */
     public void explicitCallTransfer (Message result) {
@@ -690,7 +685,7 @@ public final class SimulatedCommands extends BaseCommands
     /**
      *
      *  ar.exception carries exception on failure
-     *  ar.userObject contains the orignal value of result.obj
+     *  ar.userObject contains the original value of result.obj
      *  ar.result is null on success and failure
      */
     public void acceptCall (Message result) {
@@ -708,7 +703,7 @@ public final class SimulatedCommands extends BaseCommands
     /**
      *  also known as UDUB
      *  ar.exception carries exception on failure
-     *  ar.userObject contains the orignal value of result.obj
+     *  ar.userObject contains the original value of result.obj
      *  ar.result is null on success and failure
      */
     public void rejectCall (Message result) {
@@ -785,7 +780,7 @@ public final class SimulatedCommands extends BaseCommands
      *
      * @param result is callback message
      *        ((AsyncResult)response.obj).result  is an int[] with every
-     *        element representing one avialable BM_*_BAND
+     *        element representing one available BM_*_BAND
      */
     public void queryAvailableBandMode (Message result) {
         int ret[] = new int [4];
@@ -827,7 +822,7 @@ public final class SimulatedCommands extends BaseCommands
      * Please note that registration state 4 ("unknown") is treated
      * as "out of service" above
      */
-    public void getRegistrationState (Message result) {
+    public void getVoiceRegistrationState (Message result) {
         String ret[] = new String[14];
 
         ret[0] = "5"; // registered roam
@@ -865,7 +860,7 @@ public final class SimulatedCommands extends BaseCommands
      * Please note that registration state 4 ("unknown") is treated
      * as "out of service" in the Android telephony system
      */
-    public void getGPRSRegistrationState (Message result) {
+    public void getDataRegistrationState (Message result) {
         String ret[] = new String[4];
 
         ret[0] = "5"; // registered roam
@@ -894,7 +889,7 @@ public final class SimulatedCommands extends BaseCommands
 
     /**
      *  ar.exception carries exception on failure
-     *  ar.userObject contains the orignal value of result.obj
+     *  ar.userObject contains the original value of result.obj
      *  ar.result is null on success and failure
      */
     public void sendDtmf(char c, Message result) {
@@ -903,7 +898,7 @@ public final class SimulatedCommands extends BaseCommands
 
     /**
      *  ar.exception carries exception on failure
-     *  ar.userObject contains the orignal value of result.obj
+     *  ar.userObject contains the original value of result.obj
      *  ar.result is null on success and failure
      */
     public void startDtmf(char c, Message result) {
@@ -912,7 +907,7 @@ public final class SimulatedCommands extends BaseCommands
 
     /**
      *  ar.exception carries exception on failure
-     *  ar.userObject contains the orignal value of result.obj
+     *  ar.userObject contains the original value of result.obj
      *  ar.result is null on success and failure
      */
     public void stopDtmf(Message result) {
@@ -921,7 +916,7 @@ public final class SimulatedCommands extends BaseCommands
 
     /**
      *  ar.exception carries exception on failure
-     *  ar.userObject contains the orignal value of result.obj
+     *  ar.userObject contains the original value of result.obj
      *  ar.result is null on success and failure
      */
     public void sendBurstDtmf(String dtmfString, int on, int off, Message result) {
@@ -956,22 +951,13 @@ public final class SimulatedCommands extends BaseCommands
         unimplemented(response);
     }
 
-    public void setupDefaultPDP(String apn, String user, String password, Message result) {
-        unimplemented(result);
-    }
-
     public void setupDataCall(String radioTechnology, String profile,
             String apn, String user, String password, String authType,
             String protocol, Message result) {
         unimplemented(result);
     }
 
-    public void deactivateDataCall(int cid, Message result) {unimplemented(result);}
-
-    /**
-     * @deprecated
-     */
-    public void deactivateDefaultPDP(int cid, Message result) {unimplemented(result);}
+    public void deactivateDataCall(int cid, int reason, Message result) {unimplemented(result);}
 
     public void setPreferredNetworkType(int networkType , Message result) {
         mNetworkType = networkType;
@@ -1015,6 +1001,11 @@ public final class SimulatedCommands extends BaseCommands
         resultSuccess(result, null);
     }
 
+    @Override
+    public void getCdmaSubscriptionSource(Message result) {
+        unimplemented(result);
+    }
+
     private boolean isSimLocked() {
         if (mSimLockedState != SimLockState.NONE) {
             return true;
@@ -1047,7 +1038,7 @@ public final class SimulatedCommands extends BaseCommands
     }
 
     /**
-     * parameters equivilient to 27.007 AT+CRSM command
+     * parameters equivalent to 27.007 AT+CRSM command
      * response.obj will be an AsyncResult
      * response.obj.userObj will be a SimIoResult on success
      */
@@ -1372,7 +1363,7 @@ public final class SimulatedCommands extends BaseCommands
     }
 
     public void
-    setCdmaSubscription(int cdmaSubscriptionType, Message response) {
+    setCdmaSubscriptionSource(int cdmaSubscriptionType, Message response) {
         Log.w(LOG_TAG, "CDMA not implemented in SimulatedCommands");
         unimplemented(response);
     }
@@ -1477,6 +1468,41 @@ public final class SimulatedCommands extends BaseCommands
     }
 
     public void getGsmBroadcastConfig(Message response) {
+        unimplemented(response);
+    }
+
+    @Override
+    public void supplyIccPinForApp(String pin, String aid, Message response) {
+        unimplemented(response);
+    }
+
+    @Override
+    public void supplyIccPukForApp(String puk, String newPin, String aid, Message response) {
+        unimplemented(response);
+    }
+
+    @Override
+    public void supplyIccPin2ForApp(String pin2, String aid, Message response) {
+        unimplemented(response);
+    }
+
+    @Override
+    public void supplyIccPuk2ForApp(String puk2, String newPin2, String aid, Message response) {
+        unimplemented(response);
+    }
+
+    @Override
+    public void changeIccPinForApp(String oldPin, String newPin, String aidPtr, Message response) {
+        unimplemented(response);
+    }
+
+    @Override
+    public void changeIccPin2ForApp(String oldPin2, String newPin2, String aidPtr,
+            Message response) {
+        unimplemented(response);
+    }
+
+    public void requestIsimAuthentication(String nonce, Message response) {
         unimplemented(response);
     }
 }

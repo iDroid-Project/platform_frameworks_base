@@ -27,10 +27,17 @@ import com.android.ide.common.rendering.api.Result;
 import com.android.ide.common.rendering.api.RenderResources.FrameworkResourceIdProvider;
 import com.android.layoutlib.bridge.Bridge;
 import com.android.layoutlib.bridge.android.BridgeContext;
+import com.android.resources.Density;
 import com.android.resources.ResourceType;
+import com.android.resources.ScreenSize;
 
+import android.content.res.Configuration;
 import android.os.HandlerThread_Delegate;
+import android.os.Looper;
 import android.util.DisplayMetrics;
+import android.view.ViewConfiguration_Accessor;
+import android.view.inputmethod.InputMethodManager;
+import android.view.inputmethod.InputMethodManager_Accessor;
 
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
@@ -94,23 +101,28 @@ public abstract class RenderAction<T extends RenderParams> extends FrameworkReso
         // setup the display Metrics.
         DisplayMetrics metrics = new DisplayMetrics();
         metrics.densityDpi = mParams.getDensity().getDpiValue();
-        metrics.density = metrics.densityDpi / (float) DisplayMetrics.DENSITY_DEFAULT;
-        metrics.scaledDensity = metrics.density;
-        metrics.widthPixels = mParams.getScreenWidth();
-        metrics.heightPixels = mParams.getScreenHeight();
-        metrics.xdpi = mParams.getXdpi();
-        metrics.ydpi = mParams.getYdpi();
+
+        metrics.density = metrics.noncompatDensity =
+                metrics.densityDpi / (float) DisplayMetrics.DENSITY_DEFAULT;
+
+        metrics.scaledDensity = metrics.noncompatScaledDensity = metrics.density;
+
+        metrics.widthPixels = metrics.noncompatWidthPixels = mParams.getScreenWidth();
+        metrics.heightPixels = metrics.noncompatHeightPixels = mParams.getScreenHeight();
+        metrics.xdpi = metrics.noncompatXdpi = mParams.getXdpi();
+        metrics.ydpi = metrics.noncompatYdpi = mParams.getYdpi();
 
         RenderResources resources = mParams.getResources();
 
         // build the context
         mContext = new BridgeContext(mParams.getProjectKey(), metrics, resources,
-                mParams.getProjectCallback(), mParams.getTargetSdkVersion());
+                mParams.getProjectCallback(), getConfiguration(), mParams.getTargetSdkVersion());
 
         setUp();
 
         return SUCCESS.createResult();
     }
+
 
     /**
      * Prepares the scene for action.
@@ -215,6 +227,9 @@ public abstract class RenderAction<T extends RenderParams> extends FrameworkReso
         mContext.initResources();
         sCurrentContext = mContext;
 
+        // create an InputMethodManager
+        InputMethodManager.getInstance(Looper.myLooper());
+
         LayoutLog currentLog = mParams.getLog();
         Bridge.setLog(currentLog);
         mContext.getRenderResources().setFrameworkResourceIdProvider(this);
@@ -232,6 +247,12 @@ public abstract class RenderAction<T extends RenderParams> extends FrameworkReso
 
         // quit HandlerThread created during this session.
         HandlerThread_Delegate.cleanUp(sCurrentContext);
+
+        // clear the stored ViewConfiguration since the map is per density and not per context.
+        ViewConfiguration_Accessor.clearConfigurations();
+
+        // remove the InputMethodManager
+        InputMethodManager_Accessor.resetInstance();
 
         sCurrentContext = null;
 
@@ -280,6 +301,50 @@ public abstract class RenderAction<T extends RenderParams> extends FrameworkReso
             throw new IllegalStateException("Thread acquired a scene but is rendering a different one");
         }
     }
+
+    private Configuration getConfiguration() {
+        Configuration config = new Configuration();
+
+        ScreenSize screenSize = mParams.getConfigScreenSize();
+        if (screenSize != null) {
+            switch (screenSize) {
+                case SMALL:
+                    config.screenLayout |= Configuration.SCREENLAYOUT_SIZE_SMALL;
+                    break;
+                case NORMAL:
+                    config.screenLayout |= Configuration.SCREENLAYOUT_SIZE_NORMAL;
+                    break;
+                case LARGE:
+                    config.screenLayout |= Configuration.SCREENLAYOUT_SIZE_LARGE;
+                    break;
+                case XLARGE:
+                    config.screenLayout |= Configuration.SCREENLAYOUT_SIZE_XLARGE;
+                    break;
+            }
+        }
+
+        Density density = mParams.getDensity();
+        if (density == null) {
+            density = Density.MEDIUM;
+        }
+
+        config.screenWidthDp = mParams.getScreenWidth() / density.getDpiValue();
+        config.screenHeightDp = mParams.getScreenHeight() / density.getDpiValue();
+        if (config.screenHeightDp < config.screenWidthDp) {
+            config.smallestScreenWidthDp = config.screenHeightDp;
+        } else {
+            config.smallestScreenWidthDp = config.screenWidthDp;
+        }
+
+        // never run in compat mode:
+        config.compatScreenWidthDp = config.screenWidthDp;
+        config.compatScreenHeightDp = config.screenHeightDp;
+
+        // TODO: fill in more config info.
+
+        return config;
+    }
+
 
     // --- FrameworkResourceIdProvider methods
 

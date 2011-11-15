@@ -20,6 +20,30 @@ ID       [a-zA-Z_][a-zA-Z0-9_]*
 
    int typeNextState;
 
+   void checkPointerType() {
+       VarType *baseType = currType;
+       int curPtrLevel = 0;
+       while (curPtrLevel < baseType->ptrLevel) {
+           currType = &apis[apiCount].params[apis[apiCount].paramCount];
+           currType->type = 4;
+           currType->ptrLevel = curPtrLevel;
+           if (currType->ptrLevel > 0) {
+              currType->isConst = 1;
+           }
+           sprintf(currType->typeName, "%s", "size_t");
+           switch(baseType->ptrLevel - curPtrLevel) {
+           case 1:
+              sprintf(currType->name, "%s_length", baseType->name);
+              break;
+           case 2:
+              sprintf(currType->name, "%s_length_length", baseType->name);
+              break;
+           }
+           apis[apiCount].paramCount++;
+           curPtrLevel ++;
+       }
+   }
+
    extern "C" int yylex();
 
 %%
@@ -31,6 +55,7 @@ ID       [a-zA-Z_][a-zA-Z0-9_]*
 <comment>"*"+"/"        BEGIN(INITIAL);
 
 <*>" "   //printf("found ' '\n");
+<*>"\t"   //printf("found ' '\n");
 <*>"\n"  ++num_lines; //printf("found lf \n");
 
 {ID} {
@@ -51,8 +76,12 @@ ID       [a-zA-Z_][a-zA-Z0-9_]*
     apis[apiCount].handcodeApi = 1;
     }
 
-<api_entry2>"handcodePlay" {
-    apis[apiCount].handcodePlay = 1;
+<api_entry2>"direct" {
+    apis[apiCount].direct = 1;
+    }
+
+<api_entry2>"nocontext" {
+    apis[apiCount].nocontext = 1;
     }
 
 <api_entry2>"ret" {
@@ -145,6 +174,7 @@ ID       [a-zA-Z_][a-zA-Z0-9_]*
 
 <api_entry_param>{ID} {
     memcpy(currType->name, yytext, yyleng);
+    checkPointerType();
     BEGIN(api_entry2);
     }
 

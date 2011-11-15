@@ -16,6 +16,8 @@
 
 package android.widget;
 
+import com.android.internal.R;
+
 import android.content.Context;
 import android.content.res.TypedArray;
 import android.graphics.Bitmap;
@@ -41,6 +43,8 @@ import android.view.Gravity;
 import android.view.RemotableViewMethod;
 import android.view.View;
 import android.view.ViewDebug;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityManager;
 import android.view.animation.AlphaAnimation;
 import android.view.animation.Animation;
 import android.view.animation.AnimationUtils;
@@ -48,8 +52,6 @@ import android.view.animation.Interpolator;
 import android.view.animation.LinearInterpolator;
 import android.view.animation.Transformation;
 import android.widget.RemoteViews.RemoteView;
-
-import com.android.internal.R;
 
 
 /**
@@ -64,15 +66,16 @@ import com.android.internal.R;
  *
  * <p>
  * A progress bar can also be made indeterminate. In indeterminate mode, the
- * progress bar shows a cyclic animation. This mode is used by applications
- * when the length of the task is unknown. 
+ * progress bar shows a cyclic animation without an indication of progress. This mode is used by
+ * applications when the length of the task is unknown. The indeterminate progress bar can be either
+ * a spinning wheel or a horizontal bar.
  * </p>
  *
  * <p>The following code example shows how a progress bar can be used from
  * a worker thread to update the user interface to notify the user of progress:
  * </p>
  * 
- * <pre class="prettyprint">
+ * <pre>
  * public class MyActivity extends Activity {
  *     private static final int PROGRESS = 0x1;
  *
@@ -91,7 +94,7 @@ import com.android.internal.R;
  *         // Start lengthy operation in a background thread
  *         new Thread(new Runnable() {
  *             public void run() {
- *                 while (mProgressStatus < 100) {
+ *                 while (mProgressStatus &lt; 100) {
  *                     mProgressStatus = doWork();
  *
  *                     // Update the progress bar
@@ -104,8 +107,61 @@ import com.android.internal.R;
  *             }
  *         }).start();
  *     }
- * }
- * </pre>
+ * }</pre>
+ *
+ * <p>To add a progress bar to a layout file, you can use the {@code &lt;ProgressBar&gt;} element.
+ * By default, the progress bar is a spinning wheel (an indeterminate indicator). To change to a
+ * horizontal progress bar, apply the {@link android.R.style#Widget_ProgressBar_Horizontal
+ * Widget.ProgressBar.Horizontal} style, like so:</p>
+ *
+ * <pre>
+ * &lt;ProgressBar
+ *     style="@android:style/Widget.ProgressBar.Horizontal"
+ *     ... /&gt;</pre>
+ *
+ * <p>If you will use the progress bar to show real progress, you must use the horizontal bar. You
+ * can then increment the  progress with {@link #incrementProgressBy incrementProgressBy()} or
+ * {@link #setProgress setProgress()}. By default, the progress bar is full when it reaches 100. If
+ * necessary, you can adjust the maximum value (the value for a full bar) using the {@link
+ * android.R.styleable#ProgressBar_max android:max} attribute. Other attributes available are listed
+ * below.</p>
+ *
+ * <p>Another common style to apply to the progress bar is {@link
+ * android.R.style#Widget_ProgressBar_Small Widget.ProgressBar.Small}, which shows a smaller
+ * version of the spinning wheel&mdash;useful when waiting for content to load.
+ * For example, you can insert this kind of progress bar into your default layout for
+ * a view that will be populated by some content fetched from the Internet&mdash;the spinning wheel
+ * appears immediately and when your application receives the content, it replaces the progress bar
+ * with the loaded content. For example:</p>
+ *
+ * <pre>
+ * &lt;LinearLayout
+ *     android:orientation="horizontal"
+ *     ... &gt;
+ *     &lt;ProgressBar
+ *         android:layout_width="wrap_content"
+ *         android:layout_height="wrap_content"
+ *         style="@android:style/Widget.ProgressBar.Small"
+ *         android:layout_marginRight="5dp" /&gt;
+ *     &lt;TextView
+ *         android:layout_width="wrap_content"
+ *         android:layout_height="wrap_content"
+ *         android:text="@string/loading" /&gt;
+ * &lt;/LinearLayout&gt;</pre>
+ *
+ * <p>Other progress bar styles provided by the system include:</p>
+ * <ul>
+ * <li>{@link android.R.style#Widget_ProgressBar_Horizontal Widget.ProgressBar.Horizontal}</li>
+ * <li>{@link android.R.style#Widget_ProgressBar_Small Widget.ProgressBar.Small}</li>
+ * <li>{@link android.R.style#Widget_ProgressBar_Large Widget.ProgressBar.Large}</li>
+ * <li>{@link android.R.style#Widget_ProgressBar_Inverse Widget.ProgressBar.Inverse}</li>
+ * <li>{@link android.R.style#Widget_ProgressBar_Small_Inverse
+ * Widget.ProgressBar.Small.Inverse}</li>
+ * <li>{@link android.R.style#Widget_ProgressBar_Large_Inverse
+ * Widget.ProgressBar.Large.Inverse}</li>
+ * </ul>
+ * <p>The "inverse" styles provide an inverse color scheme for the spinner, which may be necessary
+ * if your application uses a light colored theme (a white background).</p>
  *  
  * <p><strong>XML attributes</b></strong> 
  * <p> 
@@ -113,18 +169,27 @@ import com.android.internal.R;
  * {@link android.R.styleable#View View Attributes}
  * </p>
  * 
- * <p><strong>Styles</b></strong> 
- * <p> 
- * @attr ref android.R.styleable#Theme_progressBarStyle
- * @attr ref android.R.styleable#Theme_progressBarStyleSmall
- * @attr ref android.R.styleable#Theme_progressBarStyleLarge
- * @attr ref android.R.styleable#Theme_progressBarStyleHorizontal
- * </p>
+ * @attr ref android.R.styleable#ProgressBar_animationResolution
+ * @attr ref android.R.styleable#ProgressBar_indeterminate
+ * @attr ref android.R.styleable#ProgressBar_indeterminateBehavior
+ * @attr ref android.R.styleable#ProgressBar_indeterminateDrawable
+ * @attr ref android.R.styleable#ProgressBar_indeterminateDuration
+ * @attr ref android.R.styleable#ProgressBar_indeterminateOnly
+ * @attr ref android.R.styleable#ProgressBar_interpolator
+ * @attr ref android.R.styleable#ProgressBar_max
+ * @attr ref android.R.styleable#ProgressBar_maxHeight
+ * @attr ref android.R.styleable#ProgressBar_maxWidth
+ * @attr ref android.R.styleable#ProgressBar_minHeight
+ * @attr ref android.R.styleable#ProgressBar_minWidth
+ * @attr ref android.R.styleable#ProgressBar_progress
+ * @attr ref android.R.styleable#ProgressBar_progressDrawable
+ * @attr ref android.R.styleable#ProgressBar_secondaryProgress
  */
 @RemoteView
 public class ProgressBar extends View {
     private static final int MAX_LEVEL = 10000;
     private static final int ANIMATION_RESOLUTION = 200;
+    private static final int TIMEOUT_SEND_ACCESSIBILITY_EVENT = 200;
 
     int mMinWidth;
     int mMaxWidth;
@@ -154,6 +219,10 @@ public class ProgressBar extends View {
 
     private boolean mInDrawing;
 
+    private int mAnimationResolution;
+
+    private AccessibilityEventSender mAccessibilityEventSender;
+
     /**
      * Create a new progress bar with range 0...100 and initial progress of 0.
      * @param context the application environment
@@ -167,12 +236,19 @@ public class ProgressBar extends View {
     }
 
     public ProgressBar(Context context, AttributeSet attrs, int defStyle) {
+        this(context, attrs, defStyle, 0);
+    }
+
+    /**
+     * @hide
+     */
+    public ProgressBar(Context context, AttributeSet attrs, int defStyle, int styleRes) {
         super(context, attrs, defStyle);
         mUiThreadId = Thread.currentThread().getId();
         initProgressBar();
 
         TypedArray a =
-            context.obtainStyledAttributes(attrs, R.styleable.ProgressBar, defStyle, 0);
+            context.obtainStyledAttributes(attrs, R.styleable.ProgressBar, defStyle, styleRes);
         
         mNoInvalidate = true;
         
@@ -221,6 +297,9 @@ public class ProgressBar extends View {
 
         setIndeterminate(mOnlyIndeterminate || a.getBoolean(
                 R.styleable.ProgressBar_indeterminate, mIndeterminate));
+
+        mAnimationResolution = a.getInteger(R.styleable.ProgressBar_animationResolution,
+                ANIMATION_RESOLUTION);
 
         a.recycle();
     }
@@ -424,6 +503,14 @@ public class ProgressBar extends View {
      * @see #setIndeterminate(boolean)
      */
     public void setProgressDrawable(Drawable d) {
+        boolean needUpdate;
+        if (mProgressDrawable != null && d != mProgressDrawable) {
+            mProgressDrawable.setCallback(null);
+            needUpdate = true;
+        } else {
+            needUpdate = false;
+        }
+
         if (d != null) {
             d.setCallback(this);
 
@@ -439,6 +526,13 @@ public class ProgressBar extends View {
             mCurrentDrawable = d;
             postInvalidate();
         }
+
+        if (needUpdate) {
+            updateDrawableBounds(getWidth(), getHeight());
+            updateDrawableState();
+            doRefreshProgress(R.id.progress, mProgress, false, false);
+            doRefreshProgress(R.id.secondaryProgress, mSecondaryProgress, false, false);
+        }
     }
     
     /**
@@ -452,6 +546,13 @@ public class ProgressBar extends View {
     protected boolean verifyDrawable(Drawable who) {
         return who == mProgressDrawable || who == mIndeterminateDrawable
                 || super.verifyDrawable(who);
+    }
+
+    @Override
+    public void jumpDrawablesToCurrentState() {
+        super.jumpDrawablesToCurrentState();
+        if (mProgressDrawable != null) mProgressDrawable.jumpToCurrentState();
+        if (mIndeterminateDrawable != null) mIndeterminateDrawable.jumpToCurrentState();
     }
 
     @Override
@@ -474,7 +575,7 @@ public class ProgressBar extends View {
         }
         
         public void run() {
-            doRefreshProgress(mId, mProgress, mFromUser);
+            doRefreshProgress(mId, mProgress, mFromUser, true);
             // Put ourselves back in the cache when we are done
             mRefreshProgressRunnable = this;
         }
@@ -487,7 +588,8 @@ public class ProgressBar extends View {
         
     }
     
-    private synchronized void doRefreshProgress(int id, int progress, boolean fromUser) {
+    private synchronized void doRefreshProgress(int id, int progress, boolean fromUser,
+            boolean callBackToApp) {
         float scale = mMax > 0 ? (float) progress / (float) mMax : 0;
         final Drawable d = mCurrentDrawable;
         if (d != null) {
@@ -503,17 +605,20 @@ public class ProgressBar extends View {
             invalidate();
         }
         
-        if (id == R.id.progress) {
+        if (callBackToApp && id == R.id.progress) {
             onProgressRefresh(scale, fromUser);
         }
     }
-    
-    void onProgressRefresh(float scale, boolean fromUser) {        
+
+    void onProgressRefresh(float scale, boolean fromUser) {
+        if (AccessibilityManager.getInstance(mContext).isEnabled()) {
+            scheduleAccessibilityEventSender();
+        }
     }
 
     private synchronized void refreshProgress(int id, int progress, boolean fromUser) {
         if (mUiThreadId == Thread.currentThread().getId()) {
-            doRefreshProgress(id, progress, fromUser);
+            doRefreshProgress(id, progress, fromUser, true);
         } else {
             RefreshProgressRunnable r;
             if (mRefreshProgressRunnable != null) {
@@ -666,8 +771,8 @@ public class ProgressBar extends View {
 
             if (mProgress > max) {
                 mProgress = max;
-                refreshProgress(R.id.progress, mProgress, false);
             }
+            refreshProgress(R.id.progress, mProgress, false);
         }
     }
     
@@ -716,8 +821,8 @@ public class ProgressBar extends View {
             mAnimation.setDuration(mDuration);
             mAnimation.setInterpolator(mInterpolator);
             mAnimation.setStartTime(Animation.START_ON_FIRST_FRAME);
-            postInvalidate();
         }
+        postInvalidate();
     }
 
     /**
@@ -730,6 +835,7 @@ public class ProgressBar extends View {
             ((Animatable) mIndeterminateDrawable).stop();
             mShouldStartAnimationDrawable = false;
         }
+        postInvalidate();
     }
 
     /**
@@ -809,14 +915,51 @@ public class ProgressBar extends View {
         }
     }
 
+    /**
+     * @hide
+     */
+    @Override
+    public int getResolvedLayoutDirection(Drawable who) {
+        return (who == mProgressDrawable || who == mIndeterminateDrawable) ?
+            getResolvedLayoutDirection() : super.getResolvedLayoutDirection(who);
+    }
+
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        updateDrawableBounds(w, h);
+    }
+
+    private void updateDrawableBounds(int w, int h) {
         // onDraw will translate the canvas so we draw starting at 0,0
         int right = w - mPaddingRight - mPaddingLeft;
         int bottom = h - mPaddingBottom - mPaddingTop;
+        int top = 0;
+        int left = 0;
 
         if (mIndeterminateDrawable != null) {
-            mIndeterminateDrawable.setBounds(0, 0, right, bottom);
+            // Aspect ratio logic does not apply to AnimationDrawables
+            if (mOnlyIndeterminate && !(mIndeterminateDrawable instanceof AnimationDrawable)) {
+                // Maintain aspect ratio. Certain kinds of animated drawables
+                // get very confused otherwise.
+                final int intrinsicWidth = mIndeterminateDrawable.getIntrinsicWidth();
+                final int intrinsicHeight = mIndeterminateDrawable.getIntrinsicHeight();
+                final float intrinsicAspect = (float) intrinsicWidth / intrinsicHeight;
+                final float boundAspect = (float) w / h;
+                if (intrinsicAspect != boundAspect) {
+                    if (boundAspect > intrinsicAspect) {
+                        // New width is larger. Make it smaller to match height.
+                        final int width = (int) (h * intrinsicAspect);
+                        left = (w - width) / 2;
+                        right = left + width;
+                    } else {
+                        // New height is larger. Make it smaller to match width.
+                        final int height = (int) (w * (1 / intrinsicAspect));
+                        top = (h - height) / 2;
+                        bottom = top + height;
+                    }
+                }
+            }
+            mIndeterminateDrawable.setBounds(left, top, right, bottom);
         }
         
         if (mProgressDrawable != null) {
@@ -844,9 +987,9 @@ public class ProgressBar extends View {
                 } finally {
                     mInDrawing = false;
                 }
-                if (SystemClock.uptimeMillis() - mLastDrawTime >= ANIMATION_RESOLUTION) {
+                if (SystemClock.uptimeMillis() - mLastDrawTime >= mAnimationResolution) {
                     mLastDrawTime = SystemClock.uptimeMillis();
-                    postInvalidateDelayed(ANIMATION_RESOLUTION);
+                    postInvalidateDelayed(mAnimationResolution);
                 }
             }
             d.draw(canvas);
@@ -868,17 +1011,21 @@ public class ProgressBar extends View {
             dw = Math.max(mMinWidth, Math.min(mMaxWidth, d.getIntrinsicWidth()));
             dh = Math.max(mMinHeight, Math.min(mMaxHeight, d.getIntrinsicHeight()));
         }
+        updateDrawableState();
         dw += mPaddingLeft + mPaddingRight;
         dh += mPaddingTop + mPaddingBottom;
 
-        setMeasuredDimension(resolveSize(dw, widthMeasureSpec),
-                resolveSize(dh, heightMeasureSpec));
+        setMeasuredDimension(resolveSizeAndState(dw, widthMeasureSpec, 0),
+                resolveSizeAndState(dh, heightMeasureSpec, 0));
     }
     
     @Override
     protected void drawableStateChanged() {
         super.drawableStateChanged();
+        updateDrawableState();
+    }
         
+    private void updateDrawableState() {
         int[] state = getDrawableState();
         
         if (mProgressDrawable != null && mProgressDrawable.isStateful()) {
@@ -960,9 +1107,49 @@ public class ProgressBar extends View {
 
     @Override
     protected void onDetachedFromWindow() {
-        super.onDetachedFromWindow();
         if (mIndeterminate) {
             stopAnimation();
+        }
+        if(mRefreshProgressRunnable != null) {
+            removeCallbacks(mRefreshProgressRunnable);
+        }
+        if (mAccessibilityEventSender != null) {
+            removeCallbacks(mAccessibilityEventSender);
+        }
+        // This should come after stopAnimation(), otherwise an invalidate message remains in the
+        // queue, which can prevent the entire view hierarchy from being GC'ed during a rotation
+        super.onDetachedFromWindow();
+    }
+
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setItemCount(mMax);
+        event.setCurrentItemIndex(mProgress);
+    }
+
+    /**
+     * Schedule a command for sending an accessibility event.
+     * </br>
+     * Note: A command is used to ensure that accessibility events
+     *       are sent at most one in a given time frame to save
+     *       system resources while the progress changes quickly.
+     */
+    private void scheduleAccessibilityEventSender() {
+        if (mAccessibilityEventSender == null) {
+            mAccessibilityEventSender = new AccessibilityEventSender();
+        } else {
+            removeCallbacks(mAccessibilityEventSender);
+        }
+        postDelayed(mAccessibilityEventSender, TIMEOUT_SEND_ACCESSIBILITY_EVENT);
+    }
+
+    /**
+     * Command for sending an accessibility event.
+     */
+    private class AccessibilityEventSender implements Runnable {
+        public void run() {
+            sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_SELECTED);
         }
     }
 }

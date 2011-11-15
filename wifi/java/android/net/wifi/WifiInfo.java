@@ -19,7 +19,11 @@ package android.net.wifi;
 import android.os.Parcelable;
 import android.os.Parcel;
 import android.net.NetworkInfo.DetailedState;
+import android.net.NetworkUtils;
 
+import java.net.InetAddress;
+import java.net.Inet6Address;
+import java.net.UnknownHostException;
 import java.util.EnumMap;
 
 /**
@@ -37,8 +41,10 @@ public class WifiInfo implements Parcelable {
 
     static {
         stateMap.put(SupplicantState.DISCONNECTED, DetailedState.DISCONNECTED);
+        stateMap.put(SupplicantState.INTERFACE_DISABLED, DetailedState.DISCONNECTED);
         stateMap.put(SupplicantState.INACTIVE, DetailedState.IDLE);
         stateMap.put(SupplicantState.SCANNING, DetailedState.SCANNING);
+        stateMap.put(SupplicantState.AUTHENTICATING, DetailedState.CONNECTING);
         stateMap.put(SupplicantState.ASSOCIATING, DetailedState.CONNECTING);
         stateMap.put(SupplicantState.ASSOCIATED, DetailedState.CONNECTING);
         stateMap.put(SupplicantState.FOUR_WAY_HANDSHAKE, DetailedState.AUTHENTICATING);
@@ -61,9 +67,10 @@ public class WifiInfo implements Parcelable {
     public static final String LINK_SPEED_UNITS = "Mbps";
     private int mLinkSpeed;
 
-    private int mIpAddress;
+    private InetAddress mIpAddress;
 
     private String mMacAddress;
+    private boolean mExplicitConnect;
 
     WifiInfo() {
         mSSID = null;
@@ -72,8 +79,27 @@ public class WifiInfo implements Parcelable {
         mSupplicantState = SupplicantState.UNINITIALIZED;
         mRssi = -9999;
         mLinkSpeed = -1;
-        mIpAddress = 0;
         mHiddenSSID = false;
+        mExplicitConnect = false;
+    }
+
+    /**
+     * Copy constructor
+     * @hide
+     */
+    public WifiInfo(WifiInfo source) {
+        if (source != null) {
+            mSupplicantState = source.mSupplicantState;
+            mBSSID = source.mBSSID;
+            mSSID = source.mSSID;
+            mNetworkId = source.mNetworkId;
+            mHiddenSSID = source.mHiddenSSID;
+            mRssi = source.mRssi;
+            mLinkSpeed = source.mLinkSpeed;
+            mIpAddress = source.mIpAddress;
+            mMacAddress = source.mMacAddress;
+            mExplicitConnect = source.mExplicitConnect;
+        }
     }
 
     void setSSID(String SSID) {
@@ -149,6 +175,22 @@ public class WifiInfo implements Parcelable {
         mNetworkId = id;
     }
 
+
+    /**
+     * @hide
+     */
+    public boolean isExplicitConnect() {
+        return mExplicitConnect;
+    }
+
+    /**
+     * @hide
+     */
+    public void setExplicitConnect(boolean explicitConnect) {
+        this.mExplicitConnect = explicitConnect;
+    }
+
+
     /**
      * Each configured network has a unique small integer ID, used to identify
      * the network when performing operations on the supplicant. This method
@@ -172,12 +214,13 @@ public class WifiInfo implements Parcelable {
         mSupplicantState = state;
     }
 
-    void setIpAddress(int address) {
+    void setInetAddress(InetAddress address) {
         mIpAddress = address;
     }
 
     public int getIpAddress() {
-        return mIpAddress;
+        if (mIpAddress == null || mIpAddress instanceof Inet6Address) return 0;
+        return NetworkUtils.inetAddressToInt(mIpAddress);
     }
 
     /**
@@ -236,7 +279,8 @@ public class WifiInfo implements Parcelable {
             append(mSupplicantState == null ? none : mSupplicantState).
             append(", RSSI: ").append(mRssi).
             append(", Link speed: ").append(mLinkSpeed).
-            append(", Net ID: ").append(mNetworkId);
+            append(", Net ID: ").append(mNetworkId).
+            append(", Explicit connect: ").append(mExplicitConnect);
 
         return sb.toString();
     }
@@ -251,10 +295,16 @@ public class WifiInfo implements Parcelable {
         dest.writeInt(mNetworkId);
         dest.writeInt(mRssi);
         dest.writeInt(mLinkSpeed);
-        dest.writeInt(mIpAddress);
+        if (mIpAddress != null) {
+            dest.writeByte((byte)1);
+            dest.writeByteArray(mIpAddress.getAddress());
+        } else {
+            dest.writeByte((byte)0);
+        }
         dest.writeString(getSSID());
         dest.writeString(mBSSID);
         dest.writeString(mMacAddress);
+        dest.writeByte(mExplicitConnect ? (byte)1 : (byte)0);
         mSupplicantState.writeToParcel(dest, flags);
     }
 
@@ -266,10 +316,15 @@ public class WifiInfo implements Parcelable {
                 info.setNetworkId(in.readInt());
                 info.setRssi(in.readInt());
                 info.setLinkSpeed(in.readInt());
-                info.setIpAddress(in.readInt());
+                if (in.readByte() == 1) {
+                    try {
+                        info.setInetAddress(InetAddress.getByAddress(in.createByteArray()));
+                    } catch (UnknownHostException e) {}
+                }
                 info.setSSID(in.readString());
                 info.mBSSID = in.readString();
                 info.mMacAddress = in.readString();
+                info.mExplicitConnect = in.readByte() == 1 ? true : false;
                 info.mSupplicantState = SupplicantState.CREATOR.createFromParcel(in);
                 return info;
             }

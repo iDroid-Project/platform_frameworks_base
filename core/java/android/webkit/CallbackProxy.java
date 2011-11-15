@@ -16,6 +16,7 @@
 
 package android.webkit;
 
+import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
@@ -41,6 +42,8 @@ import com.android.internal.R;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * This class is a proxy class for handling WebCore -> UI thread messaging. All
@@ -74,47 +77,54 @@ class CallbackProxy extends Handler {
     // Used to call startActivity during url override.
     private final Context mContext;
 
-    // Message Ids
-    private static final int PAGE_STARTED                        = 100;
-    private static final int RECEIVED_ICON                       = 101;
-    private static final int RECEIVED_TITLE                      = 102;
-    private static final int OVERRIDE_URL                        = 103;
-    private static final int AUTH_REQUEST                        = 104;
-    private static final int SSL_ERROR                           = 105;
-    private static final int PROGRESS                            = 106;
-    private static final int UPDATE_VISITED                      = 107;
-    private static final int LOAD_RESOURCE                       = 108;
-    private static final int CREATE_WINDOW                       = 109;
-    private static final int CLOSE_WINDOW                        = 110;
-    private static final int SAVE_PASSWORD                       = 111;
-    private static final int JS_ALERT                            = 112;
-    private static final int JS_CONFIRM                          = 113;
-    private static final int JS_PROMPT                           = 114;
-    private static final int JS_UNLOAD                           = 115;
-    private static final int ASYNC_KEYEVENTS                     = 116;
-    private static final int DOWNLOAD_FILE                       = 118;
-    private static final int REPORT_ERROR                        = 119;
-    private static final int RESEND_POST_DATA                    = 120;
-    private static final int PAGE_FINISHED                       = 121;
-    private static final int REQUEST_FOCUS                       = 122;
-    private static final int SCALE_CHANGED                       = 123;
-    private static final int RECEIVED_CERTIFICATE                = 124;
-    private static final int SWITCH_OUT_HISTORY                  = 125;
-    private static final int EXCEEDED_DATABASE_QUOTA             = 126;
-    private static final int REACHED_APPCACHE_MAXSIZE            = 127;
-    private static final int JS_TIMEOUT                          = 128;
-    private static final int ADD_MESSAGE_TO_CONSOLE              = 129;
-    private static final int GEOLOCATION_PERMISSIONS_SHOW_PROMPT = 130;
-    private static final int GEOLOCATION_PERMISSIONS_HIDE_PROMPT = 131;
-    private static final int RECEIVED_TOUCH_ICON_URL             = 132;
-    private static final int GET_VISITED_HISTORY                 = 133;
-    private static final int OPEN_FILE_CHOOSER                   = 134;
-    private static final int ADD_HISTORY_ITEM                    = 135;
-    private static final int HISTORY_INDEX_CHANGED               = 136;
-    private static final int AUTH_CREDENTIALS                    = 137;
+    // Message IDs
+    private static final int PAGE_STARTED                         = 100;
+    private static final int RECEIVED_ICON                        = 101;
+    private static final int RECEIVED_TITLE                       = 102;
+    private static final int OVERRIDE_URL                         = 103;
+    private static final int AUTH_REQUEST                         = 104;
+    private static final int SSL_ERROR                            = 105;
+    private static final int PROGRESS                             = 106;
+    private static final int UPDATE_VISITED                       = 107;
+    private static final int LOAD_RESOURCE                        = 108;
+    private static final int CREATE_WINDOW                        = 109;
+    private static final int CLOSE_WINDOW                         = 110;
+    private static final int SAVE_PASSWORD                        = 111;
+    private static final int JS_ALERT                             = 112;
+    private static final int JS_CONFIRM                           = 113;
+    private static final int JS_PROMPT                            = 114;
+    private static final int JS_UNLOAD                            = 115;
+    private static final int ASYNC_KEYEVENTS                      = 116;
+    private static final int DOWNLOAD_FILE                        = 118;
+    private static final int REPORT_ERROR                         = 119;
+    private static final int RESEND_POST_DATA                     = 120;
+    private static final int PAGE_FINISHED                        = 121;
+    private static final int REQUEST_FOCUS                        = 122;
+    private static final int SCALE_CHANGED                        = 123;
+    private static final int RECEIVED_CERTIFICATE                 = 124;
+    private static final int SWITCH_OUT_HISTORY                   = 125;
+    private static final int EXCEEDED_DATABASE_QUOTA              = 126;
+    private static final int REACHED_APPCACHE_MAXSIZE             = 127;
+    private static final int JS_TIMEOUT                           = 128;
+    private static final int ADD_MESSAGE_TO_CONSOLE               = 129;
+    private static final int GEOLOCATION_PERMISSIONS_SHOW_PROMPT  = 130;
+    private static final int GEOLOCATION_PERMISSIONS_HIDE_PROMPT  = 131;
+    private static final int RECEIVED_TOUCH_ICON_URL              = 132;
+    private static final int GET_VISITED_HISTORY                  = 133;
+    private static final int OPEN_FILE_CHOOSER                    = 134;
+    private static final int ADD_HISTORY_ITEM                     = 135;
+    private static final int HISTORY_INDEX_CHANGED                = 136;
+    private static final int AUTH_CREDENTIALS                     = 137;
+    private static final int SET_INSTALLABLE_WEBAPP               = 138;
+    private static final int NOTIFY_SEARCHBOX_LISTENERS           = 139;
+    private static final int AUTO_LOGIN                           = 140;
+    private static final int CLIENT_CERT_REQUEST                  = 141;
+    private static final int SEARCHBOX_IS_SUPPORTED_CALLBACK      = 142;
+    private static final int SEARCHBOX_DISPATCH_COMPLETE_CALLBACK = 143;
+    private static final int PROCEEDED_AFTER_SSL_ERROR            = 144;
 
     // Message triggered by the client to resume execution
-    private static final int NOTIFY                              = 200;
+    private static final int NOTIFY                               = 200;
 
     // Result transportation object for returning results across thread
     // boundaries.
@@ -156,8 +166,6 @@ class CallbackProxy extends Handler {
     /**
      * Get the WebViewClient.
      * @return the current WebViewClient instance.
-     *
-     *@hide pending API council approval.
      */
     public WebViewClient getWebViewClient() {
        return mWebViewClient;
@@ -253,17 +261,10 @@ class CallbackProxy extends Handler {
         // 32-bit reads and writes.
         switch (msg.what) {
             case PAGE_STARTED:
-                // every time we start a new page, we want to reset the
-                // WebView certificate:
-                // if the new site is secure, we will reload it and get a
-                // new certificate set;
-                // if the new site is not secure, the certificate must be
-                // null, and that will be the case
-                mWebView.setCertificate(null);
+                String startedUrl = msg.getData().getString("url");
+                mWebView.onPageStarted(startedUrl);
                 if (mWebViewClient != null) {
-                    mWebViewClient.onPageStarted(mWebView,
-                            msg.getData().getString("url"),
-                            (Bitmap) msg.obj);
+                    mWebViewClient.onPageStarted(mWebView, startedUrl, (Bitmap) msg.obj);
                 }
                 break;
 
@@ -274,7 +275,7 @@ class CallbackProxy extends Handler {
                     mWebViewClient.onPageFinished(mWebView, finishedUrl);
                 }
                 break;
-                
+
             case RECEIVED_ICON:
                 if (mWebChromeClient != null) {
                     mWebChromeClient.onReceivedIcon(mWebView, (Bitmap) msg.obj);
@@ -341,11 +342,28 @@ class CallbackProxy extends Handler {
 
             case SSL_ERROR:
                 if (mWebViewClient != null) {
-                    HashMap<String, Object> map = 
+                    HashMap<String, Object> map =
                         (HashMap<String, Object>) msg.obj;
                     mWebViewClient.onReceivedSslError(mWebView,
                             (SslErrorHandler) map.get("handler"),
                             (SslError) map.get("error"));
+                }
+                break;
+
+            case PROCEEDED_AFTER_SSL_ERROR:
+                if (mWebViewClient != null) {
+                    mWebViewClient.onProceededAfterSslError(mWebView,
+                            (SslError) msg.obj);
+                }
+                break;
+
+            case CLIENT_CERT_REQUEST:
+                if (mWebViewClient != null) {
+                    HashMap<String, Object> map =
+                        (HashMap<String, Object>) msg.obj;
+                    mWebViewClient.onReceivedClientCertRequest(mWebView,
+                            (ClientCertRequestHandler) map.get("handler"),
+                            (String) map.get("host_and_port"));
                 }
                 break;
 
@@ -500,18 +518,29 @@ class CallbackProxy extends Handler {
                     String url = msg.getData().getString("url");
                     if (!mWebChromeClient.onJsAlert(mWebView, url, message,
                             res)) {
+                        if (!canShowAlertDialog()) {
+                            res.cancel();
+                            res.setReady();
+                            break;
+                        }
                         new AlertDialog.Builder(mContext)
                                 .setTitle(getJsDialogTitle(url))
                                 .setMessage(message)
                                 .setPositiveButton(R.string.ok,
-                                        new AlertDialog.OnClickListener() {
+                                        new DialogInterface.OnClickListener() {
                                             public void onClick(
                                                     DialogInterface dialog,
                                                     int which) {
                                                 res.confirm();
                                             }
                                         })
-                                .setCancelable(false)
+                                .setOnCancelListener(
+                                        new DialogInterface.OnCancelListener() {
+                                            public void onCancel(
+                                                    DialogInterface dialog) {
+                                                res.cancel();
+                                            }
+                                        })
                                 .show();
                     }
                     res.setReady();
@@ -525,17 +554,22 @@ class CallbackProxy extends Handler {
                     String url = msg.getData().getString("url");
                     if (!mWebChromeClient.onJsConfirm(mWebView, url, message,
                             res)) {
+                        if (!canShowAlertDialog()) {
+                            res.cancel();
+                            res.setReady();
+                            break;
+                        }
                         new AlertDialog.Builder(mContext)
                                 .setTitle(getJsDialogTitle(url))
                                 .setMessage(message)
-                                .setPositiveButton(R.string.ok, 
+                                .setPositiveButton(R.string.ok,
                                         new DialogInterface.OnClickListener() {
                                             public void onClick(
                                                     DialogInterface dialog,
                                                     int which) {
                                                 res.confirm();
                                             }})
-                                .setNegativeButton(R.string.cancel, 
+                                .setNegativeButton(R.string.cancel,
                                         new DialogInterface.OnClickListener() {
                                             public void onClick(
                                                     DialogInterface dialog,
@@ -565,6 +599,11 @@ class CallbackProxy extends Handler {
                     String url = msg.getData().getString("url");
                     if (!mWebChromeClient.onJsPrompt(mWebView, url, message,
                                 defaultVal, res)) {
+                        if (!canShowAlertDialog()) {
+                            res.cancel();
+                            res.setReady();
+                            break;
+                        }
                         final LayoutInflater factory = LayoutInflater
                                 .from(mContext);
                         final View view = factory.inflate(R.layout.js_prompt,
@@ -616,6 +655,11 @@ class CallbackProxy extends Handler {
                     String url = msg.getData().getString("url");
                     if (!mWebChromeClient.onJsBeforeUnload(mWebView, url,
                             message, res)) {
+                        if (!canShowAlertDialog()) {
+                            res.cancel();
+                            res.setReady();
+                            break;
+                        }
                         final String m = mContext.getString(
                                 R.string.js_dialog_before_unload, message);
                         new AlertDialog.Builder(mContext)
@@ -676,6 +720,9 @@ class CallbackProxy extends Handler {
                 break;
 
             case ADD_MESSAGE_TO_CONSOLE:
+                if (mWebChromeClient == null) {
+                    break;
+                }
                 String message = msg.getData().getString("message");
                 String sourceID = msg.getData().getString("sourceID");
                 int lineNumber = msg.getData().getInt("lineNumber");
@@ -725,7 +772,8 @@ class CallbackProxy extends Handler {
 
             case OPEN_FILE_CHOOSER:
                 if (mWebChromeClient != null) {
-                    mWebChromeClient.openFileChooser((UploadFile) msg.obj);
+                    UploadFileMessageData data = (UploadFileMessageData)msg.obj;
+                    mWebChromeClient.openFileChooser(data.getUploadFile(), data.getAcceptType());
                 }
                 break;
 
@@ -742,7 +790,7 @@ class CallbackProxy extends Handler {
                             (WebHistoryItem) msg.obj, msg.arg1);
                 }
                 break;
-            case AUTH_CREDENTIALS:
+            case AUTH_CREDENTIALS: {
                 String host = msg.getData().getString("host");
                 String realm = msg.getData().getString("realm");
                 username = msg.getData().getString("username");
@@ -750,6 +798,43 @@ class CallbackProxy extends Handler {
                 mWebView.setHttpAuthUsernamePassword(
                         host, realm, username, password);
                 break;
+            }
+            case SET_INSTALLABLE_WEBAPP:
+                if (mWebChromeClient != null) {
+                    mWebChromeClient.setInstallableWebApp();
+                }
+                break;
+            case NOTIFY_SEARCHBOX_LISTENERS: {
+                SearchBoxImpl searchBox = (SearchBoxImpl) mWebView.getSearchBox();
+
+                @SuppressWarnings("unchecked")
+                List<String> suggestions = (List<String>) msg.obj;
+                searchBox.handleSuggestions(msg.getData().getString("query"), suggestions);
+                break;
+            }
+            case AUTO_LOGIN: {
+                if (mWebViewClient != null) {
+                    String realm = msg.getData().getString("realm");
+                    String account = msg.getData().getString("account");
+                    String args = msg.getData().getString("args");
+                    mWebViewClient.onReceivedLoginRequest(mWebView, realm,
+                            account, args);
+                }
+                break;
+            }
+            case SEARCHBOX_IS_SUPPORTED_CALLBACK: {
+                SearchBoxImpl searchBox = (SearchBoxImpl) mWebView.getSearchBox();
+                Boolean supported = (Boolean) msg.obj;
+                searchBox.handleIsSupportedCallback(supported);
+                break;
+            }
+            case SEARCHBOX_DISPATCH_COMPLETE_CALLBACK: {
+                SearchBoxImpl searchBox = (SearchBoxImpl) mWebView.getSearchBox();
+                Boolean success = (Boolean) msg.obj;
+                searchBox.handleDispatchCompleteCallback(msg.getData().getString("function"),
+                        msg.getData().getInt("id"), success);
+                break;
+            }
         }
     }
 
@@ -828,11 +913,9 @@ class CallbackProxy extends Handler {
     */
 
     public void onPageStarted(String url, Bitmap favicon) {
-        // Do an unsynchronized quick check to avoid posting if no callback has
-        // been set.
-        if (mWebViewClient == null) {
-            return;
-        }
+        // We need to send the message even if no WebViewClient is set, because we need to call
+        // WebView.onPageStarted().
+
         // Performance probe
         if (PERF_PROBE) {
             mWebCoreThreadTime = SystemClock.currentThreadTimeMillis();
@@ -852,7 +935,7 @@ class CallbackProxy extends Handler {
         if (PERF_PROBE) {
             // un-comment this if PERF_PROBE is true
 //            Looper.myQueue().setWaitCallback(null);
-            Log.d("WebCore", "WebCore thread used " + 
+            Log.d("WebCore", "WebCore thread used " +
                     (SystemClock.currentThreadTimeMillis() - mWebCoreThreadTime)
                     + " ms and idled " + mWebCoreIdleTime + " ms");
             Network.getInstance(mContext).stopTiming();
@@ -882,7 +965,7 @@ class CallbackProxy extends Handler {
         sendMessage(msg);
     }
 
-    public void onFormResubmission(Message dontResend, 
+    public void onFormResubmission(Message dontResend,
             Message resend) {
         // Do an unsynchronized quick check to avoid posting if no callback has
         // been set.
@@ -934,10 +1017,6 @@ class CallbackProxy extends Handler {
         sendMessage(msg);
     }
 
-    /**
-     * @hide - hide this because it contains a parameter of type SslError.
-     * SslError is located in a hidden package.
-     */
     public void onReceivedSslError(SslErrorHandler handler, SslError error) {
         // Do an unsynchronized quick check to avoid posting if no callback has
         // been set.
@@ -946,24 +1025,38 @@ class CallbackProxy extends Handler {
             return;
         }
         Message msg = obtainMessage(SSL_ERROR);
-        //, handler);
         HashMap<String, Object> map = new HashMap();
         map.put("handler", handler);
         map.put("error", error);
         msg.obj = map;
         sendMessage(msg);
     }
-    /**
-     * @hide - hide this because it contains a parameter of type SslCertificate,
-     * which is located in a hidden package.
-     */
 
-    public void onReceivedCertificate(SslCertificate certificate) {
-        // Do an unsynchronized quick check to avoid posting if no callback has
-        // been set.
+    public void onProceededAfterSslError(SslError error) {
         if (mWebViewClient == null) {
             return;
         }
+        Message msg = obtainMessage(PROCEEDED_AFTER_SSL_ERROR);
+        msg.obj = error;
+        sendMessage(msg);
+    }
+
+    public void onReceivedClientCertRequest(ClientCertRequestHandler handler, String host_and_port) {
+        // Do an unsynchronized quick check to avoid posting if no callback has
+        // been set.
+        if (mWebViewClient == null) {
+            handler.cancel();
+            return;
+        }
+        Message msg = obtainMessage(CLIENT_CERT_REQUEST);
+        HashMap<String, Object> map = new HashMap();
+        map.put("handler", handler);
+        map.put("host_and_port", host_and_port);
+        msg.obj = map;
+        sendMessage(msg);
+    }
+
+    public void onReceivedCertificate(SslCertificate certificate) {
         // here, certificate can be null (if the site is not secure)
         sendMessage(obtainMessage(RECEIVED_CERTIFICATE, certificate));
     }
@@ -977,13 +1070,17 @@ class CallbackProxy extends Handler {
         sendMessage(obtainMessage(UPDATE_VISITED, isReload ? 1 : 0, 0, url));
     }
 
-    public void onLoadResource(String url) {
-        // Do an unsynchronized quick check to avoid posting if no callback has
-        // been set.
+    WebResourceResponse shouldInterceptRequest(String url) {
         if (mWebViewClient == null) {
-            return;
+            return null;
         }
-        sendMessage(obtainMessage(LOAD_RESOURCE, url));
+        // Note: This method does _not_ send a message.
+        WebResourceResponse r =
+                mWebViewClient.shouldInterceptRequest(mWebView, url);
+        if (r == null) {
+            sendMessage(obtainMessage(LOAD_RESOURCE, url));
+        }
+        return r;
     }
 
     public void onUnhandledKeyEvent(KeyEvent event) {
@@ -1005,6 +1102,20 @@ class CallbackProxy extends Handler {
         Bundle bundle = msg.getData();
         bundle.putFloat("old", oldScale);
         bundle.putFloat("new", newScale);
+        sendMessage(msg);
+    }
+
+    void onReceivedLoginRequest(String realm, String account, String args) {
+        // Do an unsynchronized quick check to avoid posting if no callback has
+        // been set.
+        if (mWebViewClient == null) {
+            return;
+        }
+        Message msg = obtainMessage(AUTO_LOGIN);
+        Bundle bundle = msg.getData();
+        bundle.putString("realm", realm);
+        bundle.putString("account", account);
+        bundle.putString("args", args);
         sendMessage(msg);
     }
 
@@ -1087,10 +1198,15 @@ class CallbackProxy extends Handler {
     public void onProgressChanged(int newProgress) {
         // Synchronize so that mLatestProgress is up-to-date.
         synchronized (this) {
-            if (mWebChromeClient == null || mLatestProgress == newProgress) {
+            // update mLatestProgress even mWebChromeClient is null as
+            // WebView.getProgress() needs it
+            if (mLatestProgress == newProgress) {
                 return;
             }
             mLatestProgress = newProgress;
+            if (mWebChromeClient == null) {
+                return;
+            }
             if (!mProgressUpdatePending) {
                 sendEmptyMessage(PROGRESS);
                 mProgressUpdatePending = true;
@@ -1172,9 +1288,7 @@ class CallbackProxy extends Handler {
         // for null.
         WebHistoryItem i = mBackForwardList.getCurrentItem();
         if (i != null) {
-            if (precomposed || i.getTouchIconUrl() == null) {
-                i.setTouchIconUrl(url);
-            }
+            i.setTouchIconUrl(url, precomposed);
         }
         // Do an unsynchronized quick check to avoid posting if no callback has
         // been set.
@@ -1432,6 +1546,24 @@ class CallbackProxy extends Handler {
         sendMessage(msg);
     }
 
+    private static class UploadFileMessageData {
+        private UploadFile mCallback;
+        private String mAcceptType;
+
+        public UploadFileMessageData(UploadFile uploadFile, String acceptType) {
+            mCallback = uploadFile;
+            mAcceptType = acceptType;
+        }
+
+        public UploadFile getUploadFile() {
+            return mCallback;
+        }
+
+        public String getAcceptType() {
+            return mAcceptType;
+        }
+    }
+
     private class UploadFile implements ValueCallback<Uri> {
         private Uri mValue;
         public void onReceiveValue(Uri value) {
@@ -1448,13 +1580,14 @@ class CallbackProxy extends Handler {
     /**
      * Called by WebViewCore to open a file chooser.
      */
-    /* package */ Uri openFileChooser() {
+    /* package */ Uri openFileChooser(String acceptType) {
         if (mWebChromeClient == null) {
             return null;
         }
         Message myMessage = obtainMessage(OPEN_FILE_CHOOSER);
         UploadFile uploadFile = new UploadFile();
-        myMessage.obj = uploadFile;
+        UploadFileMessageData data = new UploadFileMessageData(uploadFile, acceptType);
+        myMessage.obj = data;
         synchronized (this) {
             sendMessage(myMessage);
             try {
@@ -1481,6 +1614,46 @@ class CallbackProxy extends Handler {
             return;
         }
         Message msg = obtainMessage(HISTORY_INDEX_CHANGED, index, 0, item);
+        sendMessage(msg);
+    }
+
+    void setInstallableWebApp() {
+        if (mWebChromeClient == null) {
+            return;
+        }
+        sendMessage(obtainMessage(SET_INSTALLABLE_WEBAPP));
+    }
+
+    boolean canShowAlertDialog() {
+        // We can only display the alert dialog if mContext is
+        // an Activity context.
+        // FIXME: Should we display dialogs if mContext does
+        // not have the window focus (e.g. if the user is viewing
+        // another Activity when the alert should be displayed?
+        // See bug 3166409
+        return mContext instanceof Activity;
+    }
+
+    void onSearchboxSuggestionsReceived(String query, List<String> suggestions) {
+        Message msg = obtainMessage(NOTIFY_SEARCHBOX_LISTENERS);
+        msg.obj = suggestions;
+        msg.getData().putString("query", query);
+
+        sendMessage(msg);
+    }
+
+    void onIsSupportedCallback(boolean isSupported) {
+        Message msg = obtainMessage(SEARCHBOX_IS_SUPPORTED_CALLBACK);
+        msg.obj = new Boolean(isSupported);
+        sendMessage(msg);
+    }
+
+    void onSearchboxDispatchCompleteCallback(String function, int id, boolean success) {
+        Message msg = obtainMessage(SEARCHBOX_DISPATCH_COMPLETE_CALLBACK);
+        msg.obj = Boolean.valueOf(success);
+        msg.getData().putString("function", function);
+        msg.getData().putInt("id", id);
+
         sendMessage(msg);
     }
 }

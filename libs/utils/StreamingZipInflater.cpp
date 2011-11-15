@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#define LOG_NDEBUG 1
+//#define LOG_NDEBUG 0
 #define LOG_TAG "szipinf"
 #include <utils/Log.h>
 
@@ -31,7 +31,7 @@ using namespace android;
 /*
  * Streaming access to compressed asset data in an open fd
  */
-StreamingZipInflater::StreamingZipInflater(int fd, off_t compDataStart,
+StreamingZipInflater::StreamingZipInflater(int fd, off64_t compDataStart,
         size_t uncompSize, size_t compSize) {
     mFd = fd;
     mDataMap = NULL;
@@ -77,7 +77,7 @@ StreamingZipInflater::~StreamingZipInflater() {
 }
 
 void StreamingZipInflater::initInflateState() {
-    LOGD("Initializing inflate state");
+    LOGV("Initializing inflate state");
 
     memset(&mInflateState, 0, sizeof(mInflateState));
     mInflateState.zalloc = Z_NULL;
@@ -152,13 +152,13 @@ ssize_t StreamingZipInflater::read(void* outBuf, size_t count) {
             mInflateState.avail_out = mOutBufSize;
 
             /*
-            LOGD("Inflating to outbuf: avail_in=%u avail_out=%u next_in=%p next_out=%p",
+            LOGV("Inflating to outbuf: avail_in=%u avail_out=%u next_in=%p next_out=%p",
                     mInflateState.avail_in, mInflateState.avail_out,
                     mInflateState.next_in, mInflateState.next_out);
             */
             int result = Z_OK;
             if (mStreamNeedsInit) {
-                LOGD("Initializing zlib to inflate");
+                LOGV("Initializing zlib to inflate");
                 result = inflateInit2(&mInflateState, -MAX_WBITS);
                 mStreamNeedsInit = false;
             }
@@ -192,7 +192,7 @@ int StreamingZipInflater::readNextChunk() {
         size_t toRead = min_of(mInBufSize, mInTotalSize - mInNextChunkOffset);
         if (toRead > 0) {
             ssize_t didRead = ::read(mFd, mInBuf, toRead);
-            //LOGD("Reading input chunk, size %08x didread %08x", toRead, didRead);
+            //LOGV("Reading input chunk, size %08x didread %08x", toRead, didRead);
             if (didRead < 0) {
                 // TODO: error
                 LOGE("Error reading asset data");
@@ -210,7 +210,7 @@ int StreamingZipInflater::readNextChunk() {
 // seeking backwards requires uncompressing fom the beginning, so is very
 // expensive.  seeking forwards only requires uncompressing from the current
 // position to the destination.
-off_t StreamingZipInflater::seekAbsolute(off_t absoluteInputPosition) {
+off64_t StreamingZipInflater::seekAbsolute(off64_t absoluteInputPosition) {
     if (absoluteInputPosition < mOutCurPosition) {
         // rewind and reprocess the data from the beginning
         if (!mStreamNeedsInit) {

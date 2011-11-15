@@ -126,7 +126,7 @@ void ogles_lock_textures(ogles_context_t* c)
     for (int i=0 ; i<GGL_TEXTURE_UNIT_COUNT ; i++) {
         if (c->rasterizer.state.texture[i].enable) {
             texture_unit_t& u(c->textures.tmu[i]);
-            android_native_buffer_t* native_buffer = u.texture->buffer;
+            ANativeWindowBuffer* native_buffer = u.texture->buffer;
             if (native_buffer) {
                 c->rasterizer.procs.activeTexture(c, i);
                 hw_module_t const* pModule;
@@ -154,7 +154,7 @@ void ogles_unlock_textures(ogles_context_t* c)
     for (int i=0 ; i<GGL_TEXTURE_UNIT_COUNT ; i++) {
         if (c->rasterizer.state.texture[i].enable) {
             texture_unit_t& u(c->textures.tmu[i]);
-            android_native_buffer_t* native_buffer = u.texture->buffer;
+            ANativeWindowBuffer* native_buffer = u.texture->buffer;
             if (native_buffer) {
                 c->rasterizer.procs.activeTexture(c, i);
                 hw_module_t const* pModule;
@@ -633,7 +633,7 @@ void generateMipmap(ogles_context_t* c, GLint level)
 static void texParameterx(
         GLenum target, GLenum pname, GLfixed param, ogles_context_t* c)
 {
-    if (target != GL_TEXTURE_2D) {
+    if (target != GL_TEXTURE_2D && target != GL_TEXTURE_EXTERNAL_OES) {
         ogles_error(c, GL_INVALID_ENUM);
         return;
     }
@@ -866,7 +866,7 @@ void glActiveTexture(GLenum texture)
 void glBindTexture(GLenum target, GLuint texture)
 {
     ogles_context_t* c = ogles_context_t::get();
-    if (target != GL_TEXTURE_2D) {
+    if (target != GL_TEXTURE_2D && target != GL_TEXTURE_EXTERNAL_OES) {
         ogles_error(c, GL_INVALID_ENUM);
         return;
     }
@@ -1012,7 +1012,7 @@ void glTexParameteriv(
         GLenum target, GLenum pname, const GLint* params)
 {
     ogles_context_t* c = ogles_context_t::get();
-    if (target != GGL_TEXTURE_2D) {
+    if (target != GL_TEXTURE_2D && target != GL_TEXTURE_EXTERNAL_OES) {
         ogles_error(c, GL_INVALID_ENUM);
         return;
     }
@@ -1605,7 +1605,7 @@ void glDrawTexxOES(GLfixed x, GLfixed y, GLfixed z, GLfixed w, GLfixed h) {
 void glEGLImageTargetTexture2DOES(GLenum target, GLeglImageOES image)
 {
     ogles_context_t* c = ogles_context_t::get();
-    if (target != GL_TEXTURE_2D) {
+    if (target != GL_TEXTURE_2D && target != GL_TEXTURE_EXTERNAL_OES) {
         ogles_error(c, GL_INVALID_ENUM);
         return;
     }
@@ -1615,12 +1615,12 @@ void glEGLImageTargetTexture2DOES(GLenum target, GLeglImageOES image)
         return;
     }
 
-    android_native_buffer_t* native_buffer = (android_native_buffer_t*)image;
+    ANativeWindowBuffer* native_buffer = (ANativeWindowBuffer*)image;
     if (native_buffer->common.magic != ANDROID_NATIVE_BUFFER_MAGIC) {
         ogles_error(c, GL_INVALID_VALUE);
         return;
     }
-    if (native_buffer->common.version != sizeof(android_native_buffer_t)) {
+    if (native_buffer->common.version != sizeof(ANativeWindowBuffer)) {
         ogles_error(c, GL_INVALID_VALUE);
         return;
     }
@@ -1643,12 +1643,12 @@ void glEGLImageTargetRenderbufferStorageOES(GLenum target, GLeglImageOES image)
         return;
     }
 
-    android_native_buffer_t* native_buffer = (android_native_buffer_t*)image;
+    ANativeWindowBuffer* native_buffer = (ANativeWindowBuffer*)image;
     if (native_buffer->common.magic != ANDROID_NATIVE_BUFFER_MAGIC) {
         ogles_error(c, GL_INVALID_VALUE);
         return;
     }
-    if (native_buffer->common.version != sizeof(android_native_buffer_t)) {
+    if (native_buffer->common.version != sizeof(ANativeWindowBuffer)) {
         ogles_error(c, GL_INVALID_VALUE);
         return;
     }

@@ -2,15 +2,23 @@ LOCAL_PATH := $(call my-dir)
 include $(CLEAR_VARS)
 
 LOCAL_SRC_FILES := \
-        VPXDecoder.cpp
-
-LOCAL_MODULE := libstagefright_vpxdec
+        SoftVPX.cpp
 
 LOCAL_C_INCLUDES := \
-        $(TOP)/frameworks/base/media/libstagefright/include \
-        $(TOP)/frameworks/base/include/media/stagefright/openmax \
         $(TOP)/external/libvpx \
         $(TOP)/external/libvpx/vpx_codec \
-        $(TOP)/external/libvpx/vpx_ports
+        $(TOP)/external/libvpx/vpx_ports \
+        frameworks/base/media/libstagefright/include \
+        frameworks/base/include/media/stagefright/openmax \
 
-include $(BUILD_STATIC_LIBRARY)
+LOCAL_STATIC_LIBRARIES := \
+        libvpx
+
+LOCAL_SHARED_LIBRARIES := \
+        libstagefright libstagefright_omx libstagefright_foundation libutils
+
+LOCAL_MODULE := libstagefright_soft_vpxdec
+LOCAL_MODULE_TAGS := optional
+
+include $(BUILD_SHARED_LIBRARY)
+

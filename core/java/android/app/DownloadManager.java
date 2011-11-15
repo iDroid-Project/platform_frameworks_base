@@ -23,20 +23,20 @@ import android.content.Context;
 import android.database.Cursor;
 import android.database.CursorWrapper;
 import android.net.ConnectivityManager;
+import android.net.NetworkPolicyManager;
 import android.net.Uri;
 import android.os.Environment;
 import android.os.ParcelFileDescriptor;
-import android.provider.BaseColumns;
 import android.provider.Downloads;
+import android.provider.Settings;
+import android.provider.Settings.SettingNotFoundException;
+import android.text.TextUtils;
 import android.util.Pair;
 
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 
 /**
  * The download manager is a system service that handles long-running HTTP downloads. Clients may
@@ -53,30 +53,29 @@ import java.util.Set;
  * download in a notification or from the downloads UI.
  */
 public class DownloadManager {
-    private static final String TAG = "DownloadManager";
 
     /**
      * An identifier for a particular download, unique across the system.  Clients use this ID to
      * make subsequent calls related to the download.
      */
-    public final static String COLUMN_ID = BaseColumns._ID;
+    public final static String COLUMN_ID = Downloads.Impl._ID;
 
     /**
      * The client-supplied title for this download.  This will be displayed in system notifications.
      * Defaults to the empty string.
      */
-    public final static String COLUMN_TITLE = "title";
+    public final static String COLUMN_TITLE = Downloads.Impl.COLUMN_TITLE;
 
     /**
      * The client-supplied description of this download.  This will be displayed in system
      * notifications.  Defaults to the empty string.
      */
-    public final static String COLUMN_DESCRIPTION = "description";
+    public final static String COLUMN_DESCRIPTION = Downloads.Impl.COLUMN_DESCRIPTION;
 
     /**
      * URI to be downloaded.
      */
-    public final static String COLUMN_URI = "uri";
+    public final static String COLUMN_URI = Downloads.Impl.COLUMN_URI;
 
     /**
      * Internet Media Type of the downloaded file.  If no value is provided upon creation, this will
@@ -101,9 +100,14 @@ public class DownloadManager {
     public final static String COLUMN_LOCAL_URI = "local_uri";
 
     /**
+     * The pathname of the file where the download is stored.
+     */
+    public final static String COLUMN_LOCAL_FILENAME = "local_filename";
+
+    /**
      * Current status of the download, as one of the STATUS_* constants.
      */
-    public final static String COLUMN_STATUS = "status";
+    public final static String COLUMN_STATUS = Downloads.Impl.COLUMN_STATUS;
 
     /**
      * Provides more detail on the status of the download.  Its meaning depends on the value of
@@ -140,7 +144,7 @@ public class DownloadManager {
      * used to delete the entries from MediaProvider database when it is deleted from the
      * downloaded list.
      */
-    public static final String COLUMN_MEDIAPROVIDER_URI = "mediaprovider_uri";
+    public static final String COLUMN_MEDIAPROVIDER_URI = Downloads.Impl.COLUMN_MEDIAPROVIDER_URI;
 
     /**
      * Value of {@link #COLUMN_STATUS} when the download is waiting to start.
@@ -166,7 +170,6 @@ public class DownloadManager {
      * Value of {@link #COLUMN_STATUS} when the download has failed (and will not be retried).
      */
     public final static int STATUS_FAILED = 1 << 4;
-
 
     /**
      * Value of COLUMN_ERROR_CODE when the download has completed with an error that doesn't fit
@@ -223,6 +226,14 @@ public class DownloadManager {
     public final static int ERROR_FILE_ALREADY_EXISTS = 1009;
 
     /**
+     * Value of {@link #COLUMN_REASON} when the download has failed because of
+     * {@link NetworkPolicyManager} controls on the requesting application.
+     *
+     * @hide
+     */
+    public final static int ERROR_BLOCKED = 1010;
+
+    /**
      * Value of {@link #COLUMN_REASON} when the download is paused because some network error
      * occurred and the download manager is waiting before retrying the request.
      */
@@ -263,47 +274,51 @@ public class DownloadManager {
     public final static String ACTION_VIEW_DOWNLOADS = "android.intent.action.VIEW_DOWNLOADS";
 
     /**
+     * Intent extra included with {@link #ACTION_VIEW_DOWNLOADS} to start DownloadApp in
+     * sort-by-size mode.
+     */
+    public final static String INTENT_EXTRAS_SORT_BY_SIZE =
+            "android.app.DownloadManager.extra_sortBySize";
+
+    /**
      * Intent extra included with {@link #ACTION_DOWNLOAD_COMPLETE} intents, indicating the ID (as a
      * long) of the download that just completed.
      */
     public static final String EXTRA_DOWNLOAD_ID = "extra_download_id";
 
-    // this array must contain all public columns
-    private static final String[] COLUMNS = new String[] {
-        COLUMN_ID,
-        COLUMN_MEDIAPROVIDER_URI,
-        COLUMN_TITLE,
-        COLUMN_DESCRIPTION,
-        COLUMN_URI,
-        COLUMN_MEDIA_TYPE,
-        COLUMN_TOTAL_SIZE_BYTES,
-        COLUMN_LOCAL_URI,
-        COLUMN_STATUS,
-        COLUMN_REASON,
-        COLUMN_BYTES_DOWNLOADED_SO_FAR,
-        COLUMN_LAST_MODIFIED_TIMESTAMP
-    };
+    /**
+     * When clicks on multiple notifications are received, the following
+     * provides an array of download ids corresponding to the download notification that was
+     * clicked. It can be retrieved by the receiver of this
+     * Intent using {@link android.content.Intent#getLongArrayExtra(String)}.
+     */
+    public static final String EXTRA_NOTIFICATION_CLICK_DOWNLOAD_IDS = "extra_click_download_ids";
 
-    // columns to request from DownloadProvider
-    private static final String[] UNDERLYING_COLUMNS = new String[] {
+    /**
+     * columns to request from DownloadProvider.
+     * @hide
+     */
+    public static final String[] UNDERLYING_COLUMNS = new String[] {
         Downloads.Impl._ID,
+        Downloads.Impl._DATA + " AS " + COLUMN_LOCAL_FILENAME,
         Downloads.Impl.COLUMN_MEDIAPROVIDER_URI,
-        Downloads.COLUMN_TITLE,
-        Downloads.COLUMN_DESCRIPTION,
-        Downloads.COLUMN_URI,
-        Downloads.COLUMN_MIME_TYPE,
-        Downloads.COLUMN_TOTAL_BYTES,
-        Downloads.COLUMN_STATUS,
-        Downloads.COLUMN_CURRENT_BYTES,
-        Downloads.COLUMN_LAST_MODIFICATION,
-        Downloads.COLUMN_DESTINATION,
+        Downloads.Impl.COLUMN_DESTINATION,
+        Downloads.Impl.COLUMN_TITLE,
+        Downloads.Impl.COLUMN_DESCRIPTION,
+        Downloads.Impl.COLUMN_URI,
+        Downloads.Impl.COLUMN_STATUS,
         Downloads.Impl.COLUMN_FILE_NAME_HINT,
-        Downloads.Impl._DATA,
+        Downloads.Impl.COLUMN_MIME_TYPE + " AS " + COLUMN_MEDIA_TYPE,
+        Downloads.Impl.COLUMN_TOTAL_BYTES + " AS " + COLUMN_TOTAL_SIZE_BYTES,
+        Downloads.Impl.COLUMN_LAST_MODIFICATION + " AS " + COLUMN_LAST_MODIFIED_TIMESTAMP,
+        Downloads.Impl.COLUMN_CURRENT_BYTES + " AS " + COLUMN_BYTES_DOWNLOADED_SO_FAR,
+        /* add the following 'computed' columns to the cursor.
+         * they are not 'returned' by the database, but their inclusion
+         * eliminates need to have lot of methods in CursorTranslator
+         */
+        "'placeholder' AS " + COLUMN_LOCAL_URI,
+        "'placeholder' AS " + COLUMN_REASON
     };
-
-    private static final Set<String> LONG_COLUMNS = new HashSet<String>(
-            Arrays.asList(COLUMN_ID, COLUMN_TOTAL_SIZE_BYTES, COLUMN_STATUS, COLUMN_REASON,
-                          COLUMN_BYTES_DOWNLOADED_SO_FAR, COLUMN_LAST_MODIFIED_TIMESTAMP));
 
     /**
      * This class contains all the information necessary to request a new download. The URI is the
@@ -331,11 +346,54 @@ public class DownloadManager {
         private List<Pair<String, String>> mRequestHeaders = new ArrayList<Pair<String, String>>();
         private CharSequence mTitle;
         private CharSequence mDescription;
-        private boolean mShowNotification = true;
         private String mMimeType;
         private boolean mRoamingAllowed = true;
         private int mAllowedNetworkTypes = ~0; // default to all network types allowed
         private boolean mIsVisibleInDownloadsUi = true;
+        private boolean mScannable = false;
+        private boolean mUseSystemCache = false;
+        /** if a file is designated as a MediaScanner scannable file, the following value is
+         * stored in the database column {@link Downloads.Impl#COLUMN_MEDIA_SCANNED}.
+         */
+        private static final int SCANNABLE_VALUE_YES = 0;
+        // value of 1 is stored in the above column by DownloadProvider after it is scanned by
+        // MediaScanner
+        /** if a file is designated as a file that should not be scanned by MediaScanner,
+         * the following value is stored in the database column
+         * {@link Downloads.Impl#COLUMN_MEDIA_SCANNED}.
+         */
+        private static final int SCANNABLE_VALUE_NO = 2;
+
+        /**
+         * This download is visible but only shows in the notifications
+         * while it's in progress.
+         */
+        public static final int VISIBILITY_VISIBLE = 0;
+
+        /**
+         * This download is visible and shows in the notifications while
+         * in progress and after completion.
+         */
+        public static final int VISIBILITY_VISIBLE_NOTIFY_COMPLETED = 1;
+
+        /**
+         * This download doesn't show in the UI or in the notifications.
+         */
+        public static final int VISIBILITY_HIDDEN = 2;
+
+        /**
+         * This download shows in the notifications after completion ONLY.
+         * It is usuable only with
+         * {@link DownloadManager#addCompletedDownload(String, String,
+         * boolean, String, String, long, boolean)}.
+         */
+        public static final int VISIBILITY_VISIBLE_NOTIFY_ONLY_COMPLETION = 3;
+
+        /** can take any of the following values: {@link #VISIBILITY_HIDDEN}
+         * {@link #VISIBILITY_VISIBLE_NOTIFY_COMPLETED}, {@link #VISIBILITY_VISIBLE},
+         * {@link #VISIBILITY_VISIBLE_NOTIFY_ONLY_COMPLETION}
+         */
+        private int mNotificationVisibility = VISIBILITY_VISIBLE;
 
         /**
          * @param uri the HTTP URI to download.
@@ -345,17 +403,24 @@ public class DownloadManager {
                 throw new NullPointerException();
             }
             String scheme = uri.getScheme();
-            if (scheme == null || !scheme.equals("http")) {
-                throw new IllegalArgumentException("Can only download HTTP URIs: " + uri);
+            if (scheme == null || (!scheme.equals("http") && !scheme.equals("https"))) {
+                throw new IllegalArgumentException("Can only download HTTP/HTTPS URIs: " + uri);
             }
             mUri = uri;
+        }
+
+        Request(String uriString) {
+            mUri = Uri.parse(uriString);
         }
 
         /**
          * Set the local destination for the downloaded file. Must be a file URI to a path on
          * external storage, and the calling application must have the WRITE_EXTERNAL_STORAGE
          * permission.
-         *
+         * <p>
+         * The downloaded file is not scanned by MediaScanner.
+         * But it can be made scannable by calling {@link #allowScanningByMediaScanner()}.
+         * <p>
          * By default, downloads are saved to a generated filename in the shared download cache and
          * may be deleted by the system at any time to reclaim space.
          *
@@ -367,8 +432,29 @@ public class DownloadManager {
         }
 
         /**
+         * Set the local destination for the downloaded file to the system cache dir (/cache).
+         * This is only available to System apps with the permission
+         * {@link android.Manifest.permission#ACCESS_CACHE_FILESYSTEM}.
+         * <p>
+         * The downloaded file is not scanned by MediaScanner.
+         * But it can be made scannable by calling {@link #allowScanningByMediaScanner()}.
+         * <p>
+         * Files downloaded to /cache may be deleted by the system at any time to reclaim space.
+         *
+         * @return this object
+         * @hide
+         */
+        public Request setDestinationToSystemCache() {
+            mUseSystemCache = true;
+            return this;
+        }
+
+        /**
          * Set the local destination for the downloaded file to a path within the application's
          * external files directory (as returned by {@link Context#getExternalFilesDir(String)}.
+         * <p>
+         * The downloaded file is not scanned by MediaScanner.
+         * But it can be made scannable by calling {@link #allowScanningByMediaScanner()}.
          *
          * @param context the {@link Context} to use in determining the external files directory
          * @param dirType the directory type to pass to {@link Context#getExternalFilesDir(String)}
@@ -385,6 +471,9 @@ public class DownloadManager {
          * Set the local destination for the downloaded file to a path within the public external
          * storage directory (as returned by
          * {@link Environment#getExternalStoragePublicDirectory(String)}.
+         *<p>
+         * The downloaded file is not scanned by MediaScanner.
+         * But it can be made scannable by calling {@link #allowScanningByMediaScanner()}.
          *
          * @param dirType the directory type to pass to
          *        {@link Environment#getExternalStoragePublicDirectory(String)}
@@ -392,7 +481,19 @@ public class DownloadManager {
          * @return this object
          */
         public Request setDestinationInExternalPublicDir(String dirType, String subPath) {
-            setDestinationFromBase(Environment.getExternalStoragePublicDirectory(dirType), subPath);
+            File file = Environment.getExternalStoragePublicDirectory(dirType);
+            if (file.exists()) {
+                if (!file.isDirectory()) {
+                    throw new IllegalStateException(file.getAbsolutePath() +
+                            " already exists and is not a directory");
+                }
+            } else {
+                if (!file.mkdir()) {
+                    throw new IllegalStateException("Unable to create directory: "+
+                            file.getAbsolutePath());
+                }
+            }
+            setDestinationFromBase(file, subPath);
             return this;
         }
 
@@ -401,6 +502,14 @@ public class DownloadManager {
                 throw new NullPointerException("subPath cannot be null");
             }
             mDestinationUri = Uri.withAppendedPath(Uri.fromFile(base), subPath);
+        }
+
+        /**
+         * If the file to be downloaded is to be scanned by MediaScanner, this method
+         * should be called before {@link DownloadManager#enqueue(Request)} is called.
+         */
+        public void allowScanningByMediaScanner() {
+            mScannable = true;
         }
 
         /**
@@ -469,9 +578,33 @@ public class DownloadManager {
          *
          * @param show whether the download manager should show a notification for this download.
          * @return this object
+         * @deprecated use {@link #setNotificationVisibility(int)}
          */
+        @Deprecated
         public Request setShowRunningNotification(boolean show) {
-            mShowNotification = show;
+            return (show) ? setNotificationVisibility(VISIBILITY_VISIBLE) :
+                    setNotificationVisibility(VISIBILITY_HIDDEN);
+        }
+
+        /**
+         * Control whether a system notification is posted by the download manager while this
+         * download is running or when it is completed.
+         * If enabled, the download manager posts notifications about downloads
+         * through the system {@link android.app.NotificationManager}.
+         * By default, a notification is shown only when the download is in progress.
+         *<p>
+         * It can take the following values: {@link #VISIBILITY_HIDDEN},
+         * {@link #VISIBILITY_VISIBLE},
+         * {@link #VISIBILITY_VISIBLE_NOTIFY_COMPLETED}.
+         *<p>
+         * If set to {@link #VISIBILITY_HIDDEN}, this requires the permission
+         * android.permission.DOWNLOAD_WITHOUT_NOTIFICATION.
+         *
+         * @param visibility the visibility setting value
+         * @return this object
+         */
+        public Request setNotificationVisibility(int visibility) {
+            mNotificationVisibility = visibility;
             return this;
         }
 
@@ -514,30 +647,32 @@ public class DownloadManager {
         ContentValues toContentValues(String packageName) {
             ContentValues values = new ContentValues();
             assert mUri != null;
-            values.put(Downloads.COLUMN_URI, mUri.toString());
+            values.put(Downloads.Impl.COLUMN_URI, mUri.toString());
             values.put(Downloads.Impl.COLUMN_IS_PUBLIC_API, true);
-            values.put(Downloads.COLUMN_NOTIFICATION_PACKAGE, packageName);
+            values.put(Downloads.Impl.COLUMN_NOTIFICATION_PACKAGE, packageName);
 
             if (mDestinationUri != null) {
-                values.put(Downloads.COLUMN_DESTINATION, Downloads.Impl.DESTINATION_FILE_URI);
-                values.put(Downloads.COLUMN_FILE_NAME_HINT, mDestinationUri.toString());
+                values.put(Downloads.Impl.COLUMN_DESTINATION, Downloads.Impl.DESTINATION_FILE_URI);
+                values.put(Downloads.Impl.COLUMN_FILE_NAME_HINT, mDestinationUri.toString());
             } else {
-                values.put(Downloads.COLUMN_DESTINATION,
-                           Downloads.DESTINATION_CACHE_PARTITION_PURGEABLE);
+                values.put(Downloads.Impl.COLUMN_DESTINATION,
+                           (this.mUseSystemCache) ?
+                                   Downloads.Impl.DESTINATION_SYSTEMCACHE_PARTITION :
+                                   Downloads.Impl.DESTINATION_CACHE_PARTITION_PURGEABLE);
             }
+            // is the file supposed to be media-scannable?
+            values.put(Downloads.Impl.COLUMN_MEDIA_SCANNED, (mScannable) ? SCANNABLE_VALUE_YES :
+                    SCANNABLE_VALUE_NO);
 
             if (!mRequestHeaders.isEmpty()) {
                 encodeHttpHeaders(values);
             }
 
-            putIfNonNull(values, Downloads.COLUMN_TITLE, mTitle);
-            putIfNonNull(values, Downloads.COLUMN_DESCRIPTION, mDescription);
-            putIfNonNull(values, Downloads.COLUMN_MIME_TYPE, mMimeType);
+            putIfNonNull(values, Downloads.Impl.COLUMN_TITLE, mTitle);
+            putIfNonNull(values, Downloads.Impl.COLUMN_DESCRIPTION, mDescription);
+            putIfNonNull(values, Downloads.Impl.COLUMN_MIME_TYPE, mMimeType);
 
-            values.put(Downloads.COLUMN_VISIBILITY,
-                    mShowNotification ? Downloads.VISIBILITY_VISIBLE
-                            : Downloads.VISIBILITY_HIDDEN);
-
+            values.put(Downloads.Impl.COLUMN_VISIBILITY, mNotificationVisibility);
             values.put(Downloads.Impl.COLUMN_ALLOWED_NETWORK_TYPES, mAllowedNetworkTypes);
             values.put(Downloads.Impl.COLUMN_ALLOW_ROAMING, mRoamingAllowed);
             values.put(Downloads.Impl.COLUMN_IS_VISIBLE_IN_DOWNLOADS_UI, mIsVisibleInDownloadsUi);
@@ -579,7 +714,7 @@ public class DownloadManager {
 
         private long[] mIds = null;
         private Integer mStatusFlags = null;
-        private String mOrderByColumn = Downloads.COLUMN_LAST_MODIFICATION;
+        private String mOrderByColumn = Downloads.Impl.COLUMN_LAST_MODIFICATION;
         private int mOrderDirection = ORDER_DESCENDING;
         private boolean mOnlyIncludeVisibleInDownloadsUi = false;
 
@@ -631,9 +766,9 @@ public class DownloadManager {
             }
 
             if (column.equals(COLUMN_LAST_MODIFIED_TIMESTAMP)) {
-                mOrderByColumn = Downloads.COLUMN_LAST_MODIFICATION;
+                mOrderByColumn = Downloads.Impl.COLUMN_LAST_MODIFICATION;
             } else if (column.equals(COLUMN_TOTAL_SIZE_BYTES)) {
-                mOrderByColumn = Downloads.COLUMN_TOTAL_BYTES;
+                mOrderByColumn = Downloads.Impl.COLUMN_TOTAL_BYTES;
             } else {
                 throw new IllegalArgumentException("Cannot order by " + column);
             }
@@ -659,10 +794,10 @@ public class DownloadManager {
             if (mStatusFlags != null) {
                 List<String> parts = new ArrayList<String>();
                 if ((mStatusFlags & STATUS_PENDING) != 0) {
-                    parts.add(statusClause("=", Downloads.STATUS_PENDING));
+                    parts.add(statusClause("=", Downloads.Impl.STATUS_PENDING));
                 }
                 if ((mStatusFlags & STATUS_RUNNING) != 0) {
-                    parts.add(statusClause("=", Downloads.STATUS_RUNNING));
+                    parts.add(statusClause("=", Downloads.Impl.STATUS_RUNNING));
                 }
                 if ((mStatusFlags & STATUS_PAUSED) != 0) {
                     parts.add(statusClause("=", Downloads.Impl.STATUS_PAUSED_BY_APP));
@@ -671,7 +806,7 @@ public class DownloadManager {
                     parts.add(statusClause("=", Downloads.Impl.STATUS_QUEUED_FOR_WIFI));
                 }
                 if ((mStatusFlags & STATUS_SUCCESSFUL) != 0) {
-                    parts.add(statusClause("=", Downloads.STATUS_SUCCESS));
+                    parts.add(statusClause("=", Downloads.Impl.STATUS_SUCCESS));
                 }
                 if ((mStatusFlags & STATUS_FAILED) != 0) {
                     parts.add("(" + statusClause(">=", 400)
@@ -708,7 +843,7 @@ public class DownloadManager {
         }
 
         private String statusClause(String operator, int value) {
-            return Downloads.COLUMN_STATUS + operator + "'" + value + "'";
+            return Downloads.Impl.COLUMN_STATUS + operator + "'" + value + "'";
         }
     }
 
@@ -747,7 +882,7 @@ public class DownloadManager {
      */
     public long enqueue(Request request) {
         ContentValues values = request.toContentValues(mPackageName);
-        Uri downloadUri = mResolver.insert(Downloads.CONTENT_URI, values);
+        Uri downloadUri = mResolver.insert(Downloads.Impl.CONTENT_URI, values);
         long id = Long.parseLong(downloadUri.getLastPathSegment());
         return id;
     }
@@ -768,24 +903,26 @@ public class DownloadManager {
         }
         ContentValues values = new ContentValues();
         values.put(Downloads.Impl.COLUMN_DELETED, 1);
+        // if only one id is passed in, then include it in the uri itself.
+        // this will eliminate a full database scan in the download service.
+        if (ids.length == 1) {
+            return mResolver.update(ContentUris.withAppendedId(mBaseUri, ids[0]), values,
+                    null, null);
+        } 
         return mResolver.update(mBaseUri, values, getWhereClauseForIds(ids),
                 getWhereArgsForIds(ids));
     }
 
     /**
      * Cancel downloads and remove them from the download manager.  Each download will be stopped if
-     * it was running, and it will no longer be accessible through the download manager.  If a file
-     * was already downloaded to external storage, it will not be deleted.
+     * it was running, and it will no longer be accessible through the download manager.
+     * If there is a downloaded file, partial or complete, it is deleted.
      *
      * @param ids the IDs of the downloads to remove
      * @return the number of downloads actually removed
      */
     public int remove(long... ids) {
-        if (ids == null || ids.length == 0) {
-            // called with nothing to remove!
-            throw new IllegalArgumentException("input param 'ids' can't be null");
-        }
-        return mResolver.delete(mBaseUri, getWhereClauseForIds(ids), getWhereArgsForIds(ids));
+        return markRowDeleted(ids);
     }
 
     /**
@@ -810,6 +947,91 @@ public class DownloadManager {
      */
     public ParcelFileDescriptor openDownloadedFile(long id) throws FileNotFoundException {
         return mResolver.openFileDescriptor(getDownloadUri(id), "r");
+    }
+
+    /**
+     * Returns {@link Uri} for the given downloaded file id, if the file is
+     * downloaded successfully. otherwise, null is returned.
+     *<p>
+     * If the specified downloaded file is in external storage (for example, /sdcard dir),
+     * then it is assumed to be safe for anyone to read and the returned {@link Uri} corresponds
+     * to the filepath on sdcard.
+     *
+     * @param id the id of the downloaded file.
+     * @return the {@link Uri} for the given downloaded file id, if download was successful. null
+     * otherwise.
+     */
+    public Uri getUriForDownloadedFile(long id) {
+        // to check if the file is in cache, get its destination from the database
+        Query query = new Query().setFilterById(id);
+        Cursor cursor = null;
+        try {
+            cursor = query(query);
+            if (cursor == null) {
+                return null;
+            }
+            if (cursor.moveToFirst()) {
+                int status = cursor.getInt(cursor.getColumnIndexOrThrow(COLUMN_STATUS));
+                if (DownloadManager.STATUS_SUCCESSFUL == status) {
+                    int indx = cursor.getColumnIndexOrThrow(
+                            Downloads.Impl.COLUMN_DESTINATION);
+                    int destination = cursor.getInt(indx);
+                    // TODO: if we ever add API to DownloadManager to let the caller specify
+                    // non-external storage for a downloaded file, then the following code
+                    // should also check for that destination.
+                    if (destination == Downloads.Impl.DESTINATION_CACHE_PARTITION ||
+                            destination == Downloads.Impl.DESTINATION_SYSTEMCACHE_PARTITION ||
+                            destination == Downloads.Impl.DESTINATION_CACHE_PARTITION_NOROAMING ||
+                            destination == Downloads.Impl.DESTINATION_CACHE_PARTITION_PURGEABLE) {
+                        // return private uri
+                        return ContentUris.withAppendedId(Downloads.Impl.CONTENT_URI, id);
+                    } else {
+                        // return public uri
+                        String path = cursor.getString(
+                                cursor.getColumnIndexOrThrow(COLUMN_LOCAL_FILENAME));
+                        return Uri.fromFile(new File(path));
+                    }
+                }
+            }
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
+        }
+        // downloaded file not found or its status is not 'successfully completed'
+        return null;
+    }
+
+    /**
+     * Returns {@link Uri} for the given downloaded file id, if the file is
+     * downloaded successfully. otherwise, null is returned.
+     *<p>
+     * If the specified downloaded file is in external storage (for example, /sdcard dir),
+     * then it is assumed to be safe for anyone to read and the returned {@link Uri} corresponds
+     * to the filepath on sdcard.
+     *
+     * @param id the id of the downloaded file.
+     * @return the {@link Uri} for the given downloaded file id, if download was successful. null
+     * otherwise.
+     */
+    public String getMimeTypeForDownloadedFile(long id) {
+        Query query = new Query().setFilterById(id);
+        Cursor cursor = null;
+        try {
+            cursor = query(query);
+            if (cursor == null) {
+                return null;
+            }
+            while (cursor.moveToFirst()) {
+                return cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_MEDIA_TYPE));
+            }
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
+        }
+        // downloaded file not found or its status is not 'successfully completed'
+        return null;
     }
 
     /**
@@ -838,6 +1060,106 @@ public class DownloadManager {
         values.putNull(Downloads.Impl._DATA);
         values.put(Downloads.Impl.COLUMN_STATUS, Downloads.Impl.STATUS_PENDING);
         mResolver.update(mBaseUri, values, getWhereClauseForIds(ids), getWhereArgsForIds(ids));
+    }
+
+    /**
+     * Returns maximum size, in bytes, of downloads that may go over a mobile connection; or null if
+     * there's no limit
+     *
+     * @param context the {@link Context} to use for accessing the {@link ContentResolver}
+     * @return maximum size, in bytes, of downloads that may go over a mobile connection; or null if
+     * there's no limit
+     */
+    public static Long getMaxBytesOverMobile(Context context) {
+        try {
+            return Settings.Secure.getLong(context.getContentResolver(),
+                    Settings.Secure.DOWNLOAD_MAX_BYTES_OVER_MOBILE);
+        } catch (SettingNotFoundException exc) {
+            return null;
+        }
+    }
+
+    /**
+     * Returns recommended maximum size, in bytes, of downloads that may go over a mobile
+     * connection; or null if there's no recommended limit.  The user will have the option to bypass
+     * this limit.
+     *
+     * @param context the {@link Context} to use for accessing the {@link ContentResolver}
+     * @return recommended maximum size, in bytes, of downloads that may go over a mobile
+     * connection; or null if there's no recommended limit.
+     */
+    public static Long getRecommendedMaxBytesOverMobile(Context context) {
+        try {
+            return Settings.Secure.getLong(context.getContentResolver(),
+                    Settings.Secure.DOWNLOAD_RECOMMENDED_MAX_BYTES_OVER_MOBILE);
+        } catch (SettingNotFoundException exc) {
+            return null;
+        }
+    }
+
+    /**
+     * Adds a file to the downloads database system, so it could appear in Downloads App
+     * (and thus become eligible for management by the Downloads App).
+     * <p>
+     * It is helpful to make the file scannable by MediaScanner by setting the param
+     * isMediaScannerScannable to true. It makes the file visible in media managing
+     * applications such as Gallery App, which could be a useful purpose of using this API.
+     *
+     * @param title the title that would appear for this file in Downloads App.
+     * @param description the description that would appear for this file in Downloads App.
+     * @param isMediaScannerScannable true if the file is to be scanned by MediaScanner. Files
+     * scanned by MediaScanner appear in the applications used to view media (for example,
+     * Gallery app).
+     * @param mimeType mimetype of the file.
+     * @param path absolute pathname to the file. The file should be world-readable, so that it can
+     * be managed by the Downloads App and any other app that is used to read it (for example,
+     * Gallery app to display the file, if the file contents represent a video/image).
+     * @param length length of the downloaded file
+     * @param showNotification true if a notification is to be sent, false otherwise
+     * @return  an ID for the download entry added to the downloads app, unique across the system
+     * This ID is used to make future calls related to this download.
+     */
+    public long addCompletedDownload(String title, String description,
+            boolean isMediaScannerScannable, String mimeType, String path, long length,
+            boolean showNotification) {
+        // make sure the input args are non-null/non-zero
+        validateArgumentIsNonEmpty("title", title);
+        validateArgumentIsNonEmpty("description", description);
+        validateArgumentIsNonEmpty("path", path);
+        validateArgumentIsNonEmpty("mimeType", mimeType);
+        if (length <= 0) {
+            throw new IllegalArgumentException(" invalid value for param: totalBytes");
+        }
+
+        // if there is already an entry with the given path name in downloads.db, return its id
+        Request request = new Request(NON_DOWNLOADMANAGER_DOWNLOAD)
+                .setTitle(title)
+                .setDescription(description)
+                .setMimeType(mimeType);
+        ContentValues values = request.toContentValues(null);
+        values.put(Downloads.Impl.COLUMN_DESTINATION,
+                Downloads.Impl.DESTINATION_NON_DOWNLOADMANAGER_DOWNLOAD);
+        values.put(Downloads.Impl._DATA, path);
+        values.put(Downloads.Impl.COLUMN_STATUS, Downloads.Impl.STATUS_SUCCESS);
+        values.put(Downloads.Impl.COLUMN_TOTAL_BYTES, length);
+        values.put(Downloads.Impl.COLUMN_MEDIA_SCANNED,
+                (isMediaScannerScannable) ? Request.SCANNABLE_VALUE_YES :
+                        Request.SCANNABLE_VALUE_NO);
+        values.put(Downloads.Impl.COLUMN_VISIBILITY, (showNotification) ?
+                Request.VISIBILITY_VISIBLE_NOTIFY_ONLY_COMPLETION : Request.VISIBILITY_HIDDEN);
+        Uri downloadUri = mResolver.insert(Downloads.Impl.CONTENT_URI, values);
+        if (downloadUri == null) {
+            return -1;
+        }
+        return Long.parseLong(downloadUri.getLastPathSegment());
+    }
+    private static final String NON_DOWNLOADMANAGER_DOWNLOAD =
+            "non-dwnldmngr-download-dont-retry2download";
+
+    private static void validateArgumentIsNonEmpty(String paramName, String val) {
+        if (TextUtils.isEmpty(val)) {
+            throw new IllegalArgumentException(paramName + " can't be null");
+        }
     }
 
     /**
@@ -890,114 +1212,33 @@ public class DownloadManager {
         }
 
         @Override
-        public int getColumnIndex(String columnName) {
-            return Arrays.asList(COLUMNS).indexOf(columnName);
-        }
-
-        @Override
-        public int getColumnIndexOrThrow(String columnName) throws IllegalArgumentException {
-            int index = getColumnIndex(columnName);
-            if (index == -1) {
-                throw new IllegalArgumentException("No such column: " + columnName);
-            }
-            return index;
-        }
-
-        @Override
-        public String getColumnName(int columnIndex) {
-            int numColumns = COLUMNS.length;
-            if (columnIndex < 0 || columnIndex >= numColumns) {
-                throw new IllegalArgumentException("Invalid column index " + columnIndex + ", "
-                                                   + numColumns + " columns exist");
-            }
-            return COLUMNS[columnIndex];
-        }
-
-        @Override
-        public String[] getColumnNames() {
-            String[] returnColumns = new String[COLUMNS.length];
-            System.arraycopy(COLUMNS, 0, returnColumns, 0, COLUMNS.length);
-            return returnColumns;
-        }
-
-        @Override
-        public int getColumnCount() {
-            return COLUMNS.length;
-        }
-
-        @Override
-        public byte[] getBlob(int columnIndex) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public double getDouble(int columnIndex) {
-            return getLong(columnIndex);
-        }
-
-        private boolean isLongColumn(String column) {
-            return LONG_COLUMNS.contains(column);
-        }
-
-        @Override
-        public float getFloat(int columnIndex) {
-            return (float) getDouble(columnIndex);
-        }
-
-        @Override
         public int getInt(int columnIndex) {
             return (int) getLong(columnIndex);
         }
 
         @Override
         public long getLong(int columnIndex) {
-            return translateLong(getColumnName(columnIndex));
-        }
-
-        @Override
-        public short getShort(int columnIndex) {
-            return (short) getLong(columnIndex);
+            if (getColumnName(columnIndex).equals(COLUMN_REASON)) {
+                return getReason(super.getInt(getColumnIndex(Downloads.Impl.COLUMN_STATUS)));
+            } else if (getColumnName(columnIndex).equals(COLUMN_STATUS)) {
+                return translateStatus(super.getInt(getColumnIndex(Downloads.Impl.COLUMN_STATUS)));
+            } else {
+                return super.getLong(columnIndex);
+            }
         }
 
         @Override
         public String getString(int columnIndex) {
-            return translateString(getColumnName(columnIndex));
-        }
-
-        private String translateString(String column) {
-            if (isLongColumn(column)) {
-                return Long.toString(translateLong(column));
-            }
-            if (column.equals(COLUMN_TITLE)) {
-                return getUnderlyingString(Downloads.COLUMN_TITLE);
-            }
-            if (column.equals(COLUMN_DESCRIPTION)) {
-                return getUnderlyingString(Downloads.COLUMN_DESCRIPTION);
-            }
-            if (column.equals(COLUMN_URI)) {
-                return getUnderlyingString(Downloads.COLUMN_URI);
-            }
-            if (column.equals(COLUMN_MEDIA_TYPE)) {
-                return getUnderlyingString(Downloads.COLUMN_MIME_TYPE);
-            }
-            if (column.equals(COLUMN_MEDIAPROVIDER_URI)) {
-                return getUnderlyingString(Downloads.Impl.COLUMN_MEDIAPROVIDER_URI);
-            }
-
-            assert column.equals(COLUMN_LOCAL_URI);
-            return getLocalUri();
+            return (getColumnName(columnIndex).equals(COLUMN_LOCAL_URI)) ? getLocalUri() :
+                    super.getString(columnIndex);
         }
 
         private String getLocalUri() {
-            long destinationType = getUnderlyingLong(Downloads.Impl.COLUMN_DESTINATION);
-            if (destinationType == Downloads.Impl.DESTINATION_FILE_URI) {
-                // return client-provided file URI for external download
-                return getUnderlyingString(Downloads.Impl.COLUMN_FILE_NAME_HINT);
-            }
-
-            if (destinationType == Downloads.Impl.DESTINATION_EXTERNAL) {
-                // return stored destination for legacy external download
-                String localPath = getUnderlyingString(Downloads.Impl._DATA);
+            long destinationType = getLong(getColumnIndex(Downloads.Impl.COLUMN_DESTINATION));
+            if (destinationType == Downloads.Impl.DESTINATION_FILE_URI ||
+                    destinationType == Downloads.Impl.DESTINATION_EXTERNAL ||
+                    destinationType == Downloads.Impl.DESTINATION_NON_DOWNLOADMANAGER_DOWNLOAD) {
+                String localPath = getString(getColumnIndex(COLUMN_LOCAL_FILENAME));
                 if (localPath == null) {
                     return null;
                 }
@@ -1005,33 +1246,8 @@ public class DownloadManager {
             }
 
             // return content URI for cache download
-            long downloadId = getUnderlyingLong(Downloads.Impl._ID);
+            long downloadId = getLong(getColumnIndex(Downloads.Impl._ID));
             return ContentUris.withAppendedId(mBaseUri, downloadId).toString();
-        }
-
-        private long translateLong(String column) {
-            if (!isLongColumn(column)) {
-                // mimic behavior of underlying cursor -- most likely, throw NumberFormatException
-                return Long.valueOf(translateString(column));
-            }
-
-            if (column.equals(COLUMN_ID)) {
-                return getUnderlyingLong(Downloads.Impl._ID);
-            }
-            if (column.equals(COLUMN_TOTAL_SIZE_BYTES)) {
-                return getUnderlyingLong(Downloads.COLUMN_TOTAL_BYTES);
-            }
-            if (column.equals(COLUMN_STATUS)) {
-                return translateStatus((int) getUnderlyingLong(Downloads.COLUMN_STATUS));
-            }
-            if (column.equals(COLUMN_REASON)) {
-                return getReason((int) getUnderlyingLong(Downloads.COLUMN_STATUS));
-            }
-            if (column.equals(COLUMN_BYTES_DOWNLOADED_SO_FAR)) {
-                return getUnderlyingLong(Downloads.COLUMN_CURRENT_BYTES);
-            }
-            assert column.equals(COLUMN_LAST_MODIFIED_TIMESTAMP);
-            return getUnderlyingLong(Downloads.COLUMN_LAST_MODIFICATION);
         }
 
         private long getReason(int status) {
@@ -1071,23 +1287,23 @@ public class DownloadManager {
             }
 
             switch (status) {
-                case Downloads.STATUS_FILE_ERROR:
+                case Downloads.Impl.STATUS_FILE_ERROR:
                     return ERROR_FILE_ERROR;
 
-                case Downloads.STATUS_UNHANDLED_HTTP_CODE:
-                case Downloads.STATUS_UNHANDLED_REDIRECT:
+                case Downloads.Impl.STATUS_UNHANDLED_HTTP_CODE:
+                case Downloads.Impl.STATUS_UNHANDLED_REDIRECT:
                     return ERROR_UNHANDLED_HTTP_CODE;
 
-                case Downloads.STATUS_HTTP_DATA_ERROR:
+                case Downloads.Impl.STATUS_HTTP_DATA_ERROR:
                     return ERROR_HTTP_DATA_ERROR;
 
-                case Downloads.STATUS_TOO_MANY_REDIRECTS:
+                case Downloads.Impl.STATUS_TOO_MANY_REDIRECTS:
                     return ERROR_TOO_MANY_REDIRECTS;
 
-                case Downloads.STATUS_INSUFFICIENT_SPACE_ERROR:
+                case Downloads.Impl.STATUS_INSUFFICIENT_SPACE_ERROR:
                     return ERROR_INSUFFICIENT_SPACE;
 
-                case Downloads.STATUS_DEVICE_NOT_FOUND_ERROR:
+                case Downloads.Impl.STATUS_DEVICE_NOT_FOUND_ERROR:
                     return ERROR_DEVICE_NOT_FOUND;
 
                 case Downloads.Impl.STATUS_CANNOT_RESUME:
@@ -1096,25 +1312,20 @@ public class DownloadManager {
                 case Downloads.Impl.STATUS_FILE_ALREADY_EXISTS_ERROR:
                     return ERROR_FILE_ALREADY_EXISTS;
 
+                case Downloads.Impl.STATUS_BLOCKED:
+                    return ERROR_BLOCKED;
+
                 default:
                     return ERROR_UNKNOWN;
             }
         }
 
-        private long getUnderlyingLong(String column) {
-            return super.getLong(super.getColumnIndex(column));
-        }
-
-        private String getUnderlyingString(String column) {
-            return super.getString(super.getColumnIndex(column));
-        }
-
         private int translateStatus(int status) {
             switch (status) {
-                case Downloads.STATUS_PENDING:
+                case Downloads.Impl.STATUS_PENDING:
                     return STATUS_PENDING;
 
-                case Downloads.STATUS_RUNNING:
+                case Downloads.Impl.STATUS_RUNNING:
                     return STATUS_RUNNING;
 
                 case Downloads.Impl.STATUS_PAUSED_BY_APP:
@@ -1123,11 +1334,11 @@ public class DownloadManager {
                 case Downloads.Impl.STATUS_QUEUED_FOR_WIFI:
                     return STATUS_PAUSED;
 
-                case Downloads.STATUS_SUCCESS:
+                case Downloads.Impl.STATUS_SUCCESS:
                     return STATUS_SUCCESSFUL;
 
                 default:
-                    assert Downloads.isStatusError(status);
+                    assert Downloads.Impl.isStatusError(status);
                     return STATUS_FAILED;
             }
         }

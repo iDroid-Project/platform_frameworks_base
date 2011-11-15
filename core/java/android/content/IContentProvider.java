@@ -18,9 +18,6 @@ package android.content;
 
 import android.content.res.AssetFileDescriptor;
 import android.database.Cursor;
-import android.database.CursorWindow;
-import android.database.IBulkCursor;
-import android.database.IContentObserver;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.IBinder;
@@ -36,13 +33,6 @@ import java.util.ArrayList;
  * @hide
  */
 public interface IContentProvider extends IInterface {
-    /**
-     * @hide - hide this because return type IBulkCursor and parameter
-     * IContentObserver are system private classes.
-     */
-    public IBulkCursor bulkQuery(Uri url, String[] projection,
-            String selection, String[] selectionArgs, String sortOrder, IContentObserver observer,
-            CursorWindow window) throws RemoteException;
     public Cursor query(Uri url, String[] projection, String selection,
             String[] selectionArgs, String sortOrder) throws RemoteException;
     public String getType(Uri url) throws RemoteException;
@@ -59,17 +49,12 @@ public interface IContentProvider extends IInterface {
             throws RemoteException, FileNotFoundException;
     public ContentProviderResult[] applyBatch(ArrayList<ContentProviderOperation> operations)
             throws RemoteException, OperationApplicationException;
-    /**
-     * @hide -- until interface has proven itself
-     *
-     * Call an provider-defined method.  This can be used to implement
-     * interfaces that are cheaper than using a Cursor.
-     *
-     * @param method Method name to call.  Opaque to framework.
-     * @param request Nullable String argument passed to method.
-     * @param args Nullable Bundle argument passed to method.
-     */
-    public Bundle call(String method, String request, Bundle args) throws RemoteException;
+    public Bundle call(String method, String arg, Bundle extras) throws RemoteException;
+
+    // Data interchange.
+    public String[] getStreamTypes(Uri url, String mimeTypeFilter) throws RemoteException;
+    public AssetFileDescriptor openTypedAssetFile(Uri url, String mimeType, Bundle opts)
+            throws RemoteException, FileNotFoundException;
 
     /* IPC constants */
     static final String descriptor = "android.content.IContentProvider";
@@ -84,4 +69,6 @@ public interface IContentProvider extends IInterface {
     static final int OPEN_ASSET_FILE_TRANSACTION = IBinder.FIRST_CALL_TRANSACTION + 14;
     static final int APPLY_BATCH_TRANSACTION = IBinder.FIRST_CALL_TRANSACTION + 19;
     static final int CALL_TRANSACTION = IBinder.FIRST_CALL_TRANSACTION + 20;
+    static final int GET_STREAM_TYPES_TRANSACTION = IBinder.FIRST_CALL_TRANSACTION + 21;
+    static final int OPEN_TYPED_ASSET_FILE_TRANSACTION = IBinder.FIRST_CALL_TRANSACTION + 22;
 }

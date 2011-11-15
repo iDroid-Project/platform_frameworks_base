@@ -20,26 +20,32 @@
 
 #include <media/mediarecorder.h>
 
+#include <system/audio.h>
+
 namespace android {
 
-class ISurface;
+class ICameraRecordingProxy;
+class Surface;
+class ISurfaceTexture;
 
 struct MediaRecorderBase {
     MediaRecorderBase() {}
     virtual ~MediaRecorderBase() {}
 
     virtual status_t init() = 0;
-    virtual status_t setAudioSource(audio_source as) = 0;
+    virtual status_t setAudioSource(audio_source_t as) = 0;
     virtual status_t setVideoSource(video_source vs) = 0;
     virtual status_t setOutputFormat(output_format of) = 0;
     virtual status_t setAudioEncoder(audio_encoder ae) = 0;
     virtual status_t setVideoEncoder(video_encoder ve) = 0;
     virtual status_t setVideoSize(int width, int height) = 0;
     virtual status_t setVideoFrameRate(int frames_per_second) = 0;
-    virtual status_t setCamera(const sp<ICamera>& camera) = 0;
-    virtual status_t setPreviewSurface(const sp<ISurface>& surface) = 0;
+    virtual status_t setCamera(const sp<ICamera>& camera,
+                               const sp<ICameraRecordingProxy>& proxy) = 0;
+    virtual status_t setPreviewSurface(const sp<Surface>& surface) = 0;
     virtual status_t setOutputFile(const char *path) = 0;
     virtual status_t setOutputFile(int fd, int64_t offset, int64_t length) = 0;
+    virtual status_t setOutputFileAuxiliary(int fd) {return INVALID_OPERATION;}
     virtual status_t setParameters(const String8& params) = 0;
     virtual status_t setListener(const sp<IMediaRecorderClient>& listener) = 0;
     virtual status_t prepare() = 0;
@@ -49,6 +55,7 @@ struct MediaRecorderBase {
     virtual status_t reset() = 0;
     virtual status_t getMaxAmplitude(int *max) = 0;
     virtual status_t dump(int fd, const Vector<String16>& args) const = 0;
+    virtual sp<ISurfaceTexture> querySurfaceMediaSource() const = 0;
 
 private:
     MediaRecorderBase(const MediaRecorderBase &);

@@ -21,79 +21,74 @@
 
 #include "RenderScriptEnv.h"
 
-#include <utils/KeyedVector.h>
-
-struct ACCscript;
+#ifndef ANDROID_RS_SERIALIZE
+#include "bcinfo/BitcodeTranslator.h"
+#endif
 
 // ---------------------------------------------------------------------------
 namespace android {
 namespace renderscript {
 
 
-
-class ScriptC : public Script
-{
+class ScriptC : public Script {
 public:
-    typedef int (*RunScript_t)(uint32_t launchIndex);
+    typedef int (*RunScript_t)();
     typedef void (*VoidFunc_t)();
 
     ScriptC(Context *);
     virtual ~ScriptC();
 
-    struct Program_t {
-        int mVersionMajor;
-        int mVersionMinor;
 
-        RunScript_t mScript;
-        VoidFunc_t mInit;
+    const Allocation *ptrToAllocation(const void *) const;
 
-        void ** mSlotPointers[MAX_SCRIPT_BANKS];
-    };
 
-    Program_t mProgram;
+    virtual void Invoke(Context *rsc, uint32_t slot, const void *data, size_t len);
 
-    ACCscript*    mAccScript;
+    virtual uint32_t run(Context *);
 
-    virtual void setupScript();
-    virtual uint32_t run(Context *, uint32_t launchID);
+    virtual void runForEach(Context *rsc,
+                            const Allocation * ain,
+                            Allocation * aout,
+                            const void * usr,
+                            size_t usrBytes,
+                            const RsScriptCall *sc = NULL);
+
+    virtual void serialize(OStream *stream) const {    }
+    virtual RsA3DClassID getClassId() const { return RS_A3D_CLASS_ID_SCRIPT_C; }
+    static Type *createFromStream(Context *rsc, IStream *stream) { return NULL; }
+
+    bool runCompiler(Context *rsc, const char *resName, const char *cacheDir,
+                     const uint8_t *bitcode, size_t bitcodeLen);
+
+//protected:
+    void setupScript(Context *);
+    void setupGLState(Context *);
+    Script * setTLS(Script *);
+  private:
+#ifndef ANDROID_RS_SERIALIZE
+    bcinfo::BitcodeTranslator *BT;
+#endif
 };
 
-class ScriptCState
-{
+class ScriptCState {
 public:
     ScriptCState();
     ~ScriptCState();
 
-    ScriptC *mScript;
-
-    ObjectBaseRef<const Type> mConstantBufferTypes[MAX_SCRIPT_BANKS];
-    String8 mSlotNames[MAX_SCRIPT_BANKS];
-    bool mSlotWritable[MAX_SCRIPT_BANKS];
-    String8 mInvokableNames[MAX_SCRIPT_BANKS];
-
-    void clear();
-    void runCompiler(Context *rsc, ScriptC *s);
-    void appendVarDefines(const Context *rsc, String8 *str);
-    void appendTypes(const Context *rsc, String8 *str);
+    char * mScriptText;
+    size_t mScriptLen;
 
     struct SymbolTable_t {
         const char * mName;
         void * mPtr;
-        const char * mRet;
-        const char * mParam;
+        bool threadable;
     };
-    static SymbolTable_t gSyms[];
     static const SymbolTable_t * lookupSymbol(const char *);
-    static void appendDecls(String8 *str);
-
-    KeyedVector<String8,int> mInt32Defines;
-    KeyedVector<String8,float> mFloatDefines;
+    static const SymbolTable_t * lookupSymbolCL(const char *);
+    static const SymbolTable_t * lookupSymbolGL(const char *);
 };
 
 
 }
 }
 #endif
-
-
-

@@ -74,7 +74,7 @@ android:drawable="@color/green"}).</p>
 alias resource ID in XML.</p>
 
 <p class="note"><strong>Note:</strong> Bitmap files may be automatically optimized with lossless
-image compression by the <a href="{@docRoot}guide/developing/tools/aapt.html">aapt</a> tool. For
+image compression by the <code>aapt</code> tool during the build process. For
 example, a true-color PNG that does not require more than 256 colors may be converted to an 8-bit
 PNG with a color palette. This will result in an image of equal quality but which requires less
 memory. So be aware that the image binaries placed in this directory can change during the build. If
@@ -641,10 +641,12 @@ In XML: <code>@[<em>package</em>:]drawable/<em>filename</em></code>
         android:drawable="@[package:]drawable/<em>drawable_resource</em>"
         android:state_pressed=["true" | "false"]
         android:state_focused=["true" | "false"]
+        android:state_hovered=["true" | "false"]
         android:state_selected=["true" | "false"]
         android:state_checkable=["true" | "false"]
         android:state_checked=["true" | "false"]
         android:state_enabled=["true" | "false"]
+        android:state_activated=["true" | "false"]
         android:state_window_focused=["true" | "false"] />
 &lt;/selector>
 </pre>
@@ -689,12 +691,20 @@ child of a <code>&lt;selector&gt;</code> element.
           <dd><em>Boolean</em>. "true" if this item should be used when the object is pressed (such as when a button
 is touched/clicked); "false" if this item should be used in the default, non-pressed state.</dd>
         <dt><code>android:state_focused</code></dt>
-          <dd><em>Boolean</em>. "true" if this item should be used when the object is focused (such as when a button
-is highlighted using the trackball/d-pad); "false" if this item should be used in the default,
+          <dd><em>Boolean</em>. "true" if this item should be used when the object has input focus
+(such as when the user selects a text input); "false" if this item should be used in the default,
 non-focused state.</dd>
+        <dt><code>android:state_hovered</code></dt>
+          <dd><em>Boolean</em>. "true" if this item should be used when the object is being hovered
+by a cursor; "false" if this item should be used in the default, non-hovered state. Often, this
+drawable may be the same drawable used for the "focused" state.
+          <p>Introduced in API level 14.</p></dd>
         <dt><code>android:state_selected</code></dt>
-          <dd><em>Boolean</em>. "true" if this item should be used when the object is selected (such as when a
-tab is opened); "false" if this item should be used when the object is not selected.</dd>
+          <dd><em>Boolean</em>. "true" if this item should be used when the object is the current
+user selection when navigating with a directional control (such as when navigating through a list
+with a d-pad); "false" if this item should be used when the object is not selected.
+<p>The selected state is used when focus (<code>android:state_focused</code>) is not sufficient
+(such as when list view has focus and an item within it is selected with a d-pad).</p></dd>
         <dt><code>android:state_checkable</code></dt>
           <dd><em>Boolean</em>. "true" if this item should be used when the object is checkable; "false" if this
 item should be used when the object is not checkable. (Only useful if the object can
@@ -703,8 +713,14 @@ transition between a checkable and non-checkable widget.)</dd>
           <dd><em>Boolean</em>. "true" if this item should be used when the object is checked; "false" if it
 should be used when the object is un-checked.</dd>
         <dt><code>android:state_enabled</code></dt>
-          <dd><em>Boolean</em>. "true" if this item should be used when the object is enabled (capable of
-receiving touch/click events); "false" if it should be used when the object is disabled.</dd>
+          <dd><em>Boolean</em>. "true" if this item should be used when the object is enabled
+(capable of receiving touch/click events); "false" if it should be used when the object is
+disabled.</dd>
+        <dt><code>android:state_activated</code></dt>
+          <dd><em>Boolean</em>. "true" if this item should be used when the object is activated as
+the persistent selection (such as to "highlight" the previously selected list item in a persistent
+navigation view); "false" if it should be used when the object is not activated.
+<p>Introduced in API level 11.</p></dd>
         <dt><code>android:state_window_focused</code></dt>
           <dd><em>Boolean</em>. "true" if this item should be used when the application window has focus (the
 application is in the foreground), "false" if this item should be used when the application
@@ -729,6 +745,8 @@ default value should always be last (as demonstrated in the following example).<
           android:drawable="@drawable/button_pressed" /> &lt;!-- pressed --&gt;
     &lt;item android:state_focused="true"
           android:drawable="@drawable/button_focused" /> &lt;!-- focused --&gt;
+    &lt;item android:state_hovered="true"
+          android:drawable="@drawable/button_focused" /> &lt;!-- hovered --&gt;
     &lt;item android:drawable="@drawable/button_normal" /> &lt;!-- default --&gt;
 &lt;/selector>
 </pre>
@@ -1418,7 +1436,7 @@ bound. The value's format is XX%. For instance: 100%, 12.5%, etc.</dd>
 The filename is used as the resource ID.</dd>
 
 <dt>compiled resource datatype:</dt>
-<dd>Resource pointer to a {@link android.graphics.drawable.ShapeDrawable}.</dd>
+<dd>Resource pointer to a {@link android.graphics.drawable.GradientDrawable}.</dd>
 
 <dt>resource reference:</dt>
 
@@ -1458,9 +1476,7 @@ In XML: <code>@[<em>package</em>:]drawable/<em>filename</em></code>
         android:bottom="<em>integer</em>" /&gt;
     &lt;<a href="#size-element">size</a>
         android:width="<em>integer</em>"
-        android:color="<em>color</em>"
-        android:dashWidth="<em>integer</em>"
-        android:dashGap="<em>integer</em>" /&gt;
+        android:height="<em>integer</em>" /&gt;
     &lt;<a href="#solid-element">solid</a>
         android:color="<em>color</em>" /&gt;
     &lt;<a href="#stroke-element">stroke</a>
@@ -1561,11 +1577,9 @@ want, providing zero ("0dp") where you don't want rounded corners.</p>
         <dd><em>Integer</em>. The angle for the gradient, in degrees. 0 is left to right, 90 is
 bottom to top. It must be a multiple of 45. Default is 0.</dd>
         <dt><code>android:centerX</code></dt>
-        <dd><em>Float</em>. The relative X-position for the center of the gradient (0 - 1.0).
-Does not apply when {@code android:type="linear"}.</dd>
+        <dd><em>Float</em>. The relative X-position for the center of the gradient (0 - 1.0).</dd>
         <dt><code>android:centerY</code></dt>
-        <dd><em>Float</em>. The relative Y-position for the center of the gradient (0 - 1.0).
-Does not apply when {@code android:type="linear"}.</dd>
+        <dd><em>Float</em>. The relative Y-position for the center of the gradient (0 - 1.0).</dd>
         <dt><code>android:centerColor</code></dt>
         <dd><em>Color</em>. Optional color that comes between the start and end colors, as a
 hexadecimal value or <a href="more-resources.html#Color">color resource</a>.</dd>

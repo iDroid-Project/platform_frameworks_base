@@ -16,10 +16,13 @@
 
 package android.webkit;
 
+import android.net.http.ErrorStrings;
 import android.net.http.EventHandler;
 import android.net.http.RequestHandle;
+import android.os.Build;
 import android.util.Log;
 import android.webkit.CacheManager.CacheResult;
+import android.webkit.JniUtil;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -35,6 +38,8 @@ class FrameLoader {
     private int mCacheMode;
     private String mReferrer;
     private String mContentType;
+    private final String mUaprofHeader;
+    private final WebResourceResponse mInterceptResponse;
 
     private static final int URI_PROTOCOL = 0x100;
 
@@ -51,12 +56,17 @@ class FrameLoader {
     private static final String LOGTAG = "webkit";
     
     FrameLoader(LoadListener listener, WebSettings settings,
-            String method) {
+            String method, WebResourceResponse interceptResponse) {
+        assert !JniUtil.useChromiumHttpStack();
+
         mListener = listener;
         mHeaders = null;
         mMethod = method;
         mCacheMode = WebSettings.LOAD_NORMAL;
         mSettings = settings;
+        mInterceptResponse = interceptResponse;
+        mUaprofHeader = mListener.getContext().getResources().getString(
+                com.android.internal.R.string.config_useragentprofile_url, Build.MODEL);
     }
 
     public void setReferrer(String ref) {
@@ -95,7 +105,17 @@ class FrameLoader {
     public boolean executeLoad() {
         String url = mListener.url();
 
-        if (URLUtil.isNetworkUrl(url)){
+        // Process intercepted requests first as they could be any url.
+        if (mInterceptResponse != null) {
+            if (mListener.isSynchronous()) {
+                mInterceptResponse.loader(mListener).load();
+            } else {
+                WebViewWorker.getHandler().obtainMessage(
+                        WebViewWorker.MSG_ADD_STREAMLOADER,
+                        mInterceptResponse.loader(mListener)).sendToTarget();
+            }
+            return true;
+        } else if (URLUtil.isNetworkUrl(url)){
             if (mSettings.getBlockNetworkLoads()) {
                 mListener.error(EventHandler.ERROR_BAD_URL,
                         mListener.getContext().getString(
@@ -131,9 +151,10 @@ class FrameLoader {
 
     }
 
-    /* package */
-    static boolean handleLocalFile(String url, LoadListener loadListener,
+    private static boolean handleLocalFile(String url, LoadListener loadListener,
             WebSettings settings) {
+        assert !JniUtil.useChromiumHttpStack();
+
         // Attempt to decode the percent-encoded url before passing to the
         // local loaders.
         try {
@@ -244,8 +265,7 @@ class FrameLoader {
             error = EventHandler.ERROR_BAD_URL;
         }
         if (!ret) {
-            mListener.error(error, mListener.getContext().getText(
-                    EventHandler.errorStringResources[Math.abs(error)]).toString());
+            mListener.error(error, ErrorStrings.getString(error, mListener.getContext()));
             return false;
         }
         return true;
@@ -300,9 +320,8 @@ class FrameLoader {
                     // it has gone.
                     // Generate a file not found error
                     int err = EventHandler.FILE_NOT_FOUND_ERROR;
-                    mListener.error(err, mListener.getContext().getText(
-                            EventHandler.errorStringResources[Math.abs(err)])
-                            .toString());
+                    mListener.error(err,
+                            ErrorStrings.getString(err, mListener.getContext()));
                 }
                 return true;
             }
@@ -357,6 +376,11 @@ class FrameLoader {
         }
         
         mHeaders.put("User-Agent", mSettings.getUserAgentString());
+
+        // Set the x-wap-profile header
+        if (mUaprofHeader != null && mUaprofHeader.length() > 0) {
+            mHeaders.put("x-wap-profile", mUaprofHeader);
+        }
     }
 
     /**

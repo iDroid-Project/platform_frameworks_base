@@ -1,4 +1,6 @@
 page.title=Activity Testing
+parent.title=Tutorials
+parent.link=../../browser.html?tag=tutorial
 @jd:body
  <div id="qv-wrapper">
   <div id="qv">
@@ -239,7 +241,8 @@ page.title=Activity Testing
 <p>
   In this tutorial, you will use the Android emulator to run applications. The emulator needs
   an Android Virtual Device (AVD) with an API level equal to or higher than the one you set for the projects in the previous step.
-  To find out how to check this and create the right AVD if necessary, see <a href="{@docRoot}guide/developing/eclipse-adt.html#AVD">Creating an AVD</a>.
+  To find out how to check this and create the right AVD if necessary, 
+  see <a href="{@docRoot}guide/developing/devices/managing-avds.html">Creating an AVD</a>.
 </p>
 <p>
     As a test of the AVD and emulator, run the SpinnerActivity application in Eclipse with ADT. When it starts,
@@ -786,8 +789,8 @@ import android.widget.SpinnerAdapter;
 <p>
   <strong>Note:</strong> If you would like to learn more about the difference between losing
   focus/pausing and killing an application,
-  refer to the <a href="{@docRoot}guide/topics/fundamentals.html#actlife">Activity Lifecycle</a>
-  section.
+  read about the <a href="{@docRoot}guide/topics/fundamentals/activities.html#Lifecycle">activity
+lifecycle</a>.
 </p>
 <p>
   The first test verifies that the spinner selection is maintained after the entire application is shut down and then restarted. The test uses instrumentation to
@@ -1237,7 +1240,7 @@ import android.widget.SpinnerAdapter;
    also use this tool to run the test application from the command line.
   </li>
   <li>
-    <a href="{@docRoot}guide/developing/tools/othertools.html#android">android</a> - Manages projects and test projects. This tool also manages AVDs and Android platforms.
+    <a href="{@docRoot}guide/developing/tools/android.html">android</a> - Manages projects and test projects. This tool also manages AVDs and Android platforms.
   </li>
 </ul>
   <p>

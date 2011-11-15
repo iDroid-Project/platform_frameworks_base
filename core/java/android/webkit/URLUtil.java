@@ -47,7 +47,7 @@ public final class URLUtil {
         String retVal = inUrl;
         WebAddress webAddress;
 
-        Log.v(LOGTAG, "guessURL before queueRequest: " + inUrl);
+        if (DebugFlags.URL_UTIL) Log.v(LOGTAG, "guessURL before queueRequest: " + inUrl);
 
         if (inUrl.length() == 0) return inUrl;
         if (inUrl.startsWith("about:")) return inUrl;
@@ -74,9 +74,9 @@ public final class URLUtil {
         }
 
         // Check host
-        if (webAddress.mHost.indexOf('.') == -1) {
+        if (webAddress.getHost().indexOf('.') == -1) {
             // no dot: user probably entered a bare domain.  try .com
-            webAddress.mHost = "www." + webAddress.mHost + ".com";
+            webAddress.setHost("www." + webAddress.getHost() + ".com");
         }
         return webAddress.toString();
     }

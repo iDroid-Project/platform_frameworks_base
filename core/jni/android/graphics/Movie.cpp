@@ -23,11 +23,8 @@ jobject create_jmovie(JNIEnv* env, SkMovie* moov) {
     if (NULL == moov) {
         return NULL;
     }
-    jobject obj = env->AllocObject(gMovie_class);
-    if (obj) {
-        env->CallVoidMethod(obj, gMovie_constructorMethodID, (jint)moov);
-    }
-    return obj;
+    return env->NewObject(gMovie_class, gMovie_constructorMethodID,
+            static_cast<jint>(reinterpret_cast<uintptr_t>(moov)));
 }
 
 static SkMovie* J2Movie(JNIEnv* env, jobject movie) {
@@ -83,7 +80,7 @@ static void movie_draw(JNIEnv* env, jobject movie, jobject canvas,
 }
 
 static jobject movie_decodeStream(JNIEnv* env, jobject clazz, jobject istream) {
-                              
+
     NPE_CHECK_RETURN_ZERO(env, istream);
 
     // what is the lifetime of the array? Can the skstream hold onto it?
@@ -101,18 +98,22 @@ static jobject movie_decodeStream(JNIEnv* env, jobject clazz, jobject istream) {
 static jobject movie_decodeByteArray(JNIEnv* env, jobject clazz,
                                      jbyteArray byteArray,
                                      int offset, int length) {
-                              
+
     NPE_CHECK_RETURN_ZERO(env, byteArray);
 
     int totalLength = env->GetArrayLength(byteArray);
     if ((offset | length) < 0 || offset + length > totalLength) {
-        doThrow(env, "java/lang/ArrayIndexOutOfBoundsException");
+        doThrowAIOOBE(env);
         return 0;
     }
 
     AutoJavaByteArray   ar(env, byteArray);
     SkMovie* moov = SkMovie::DecodeMemory(ar.ptr() + offset, length);
     return create_jmovie(env, moov);
+}
+
+static void movie_destructor(JNIEnv* env, jobject, SkMovie* movie) {
+    delete movie;
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////
@@ -129,6 +130,7 @@ static JNINativeMethod gMethods[] = {
                             (void*)movie_draw  },
     { "decodeStream", "(Ljava/io/InputStream;)Landroid/graphics/Movie;",
                             (void*)movie_decodeStream },
+    { "nativeDestructor","(I)V", (void*)movie_destructor },
     { "decodeByteArray", "([BII)Landroid/graphics/Movie;",
                             (void*)movie_decodeByteArray },
 };
@@ -137,13 +139,12 @@ static JNINativeMethod gMethods[] = {
 
 #define RETURN_ERR_IF_NULL(value)   do { if (!(value)) { assert(0); return -1; } } while (false)
 
-int register_android_graphics_Movie(JNIEnv* env);
 int register_android_graphics_Movie(JNIEnv* env)
 {
     gMovie_class = env->FindClass(kClassPathName);
     RETURN_ERR_IF_NULL(gMovie_class);
     gMovie_class = (jclass)env->NewGlobalRef(gMovie_class);
-    
+
     gMovie_constructorMethodID = env->GetMethodID(gMovie_class, "<init>", "(I)V");
     RETURN_ERR_IF_NULL(gMovie_constructorMethodID);
 

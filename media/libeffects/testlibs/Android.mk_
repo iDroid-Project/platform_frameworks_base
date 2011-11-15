@@ -23,9 +23,10 @@ LOCAL_SHARED_LIBRARIES += libdl
 endif
 
 LOCAL_C_INCLUDES := \
+	system/media/audio_effects/include \
 	$(call include-path-for, graphics corecg)
 
-LOCAL_PRELINK_MODULE := false
+LOCAL_MODULE_TAGS := optional
 
 include $(BUILD_SHARED_LIBRARY)
 
@@ -58,9 +59,10 @@ LOCAL_SHARED_LIBRARIES += libdl
 endif
 
 LOCAL_C_INCLUDES := \
-	$(call include-path-for, graphics corecg)
+	$(call include-path-for, graphics corecg) \
+	system/media/audio_effects/include
 
-LOCAL_PRELINK_MODULE := false
+LOCAL_MODULE_TAGS := optional
 
 include $(BUILD_SHARED_LIBRARY)
 

@@ -25,9 +25,16 @@ import android.graphics.ColorFilter;
 import android.graphics.Paint;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
-import android.graphics.drawable.Drawable;
+import android.graphics.drawable.ColorDrawable;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Message;
+import android.os.ResultReceiver;
+import android.text.BoringLayout.Metrics;
+import android.text.DynamicLayout;
 import android.text.Editable;
 import android.text.InputFilter;
+import android.text.InputType;
 import android.text.Layout;
 import android.text.Selection;
 import android.text.Spannable;
@@ -36,6 +43,7 @@ import android.text.TextUtils;
 import android.text.method.MovementMethod;
 import android.text.method.Touch;
 import android.util.Log;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
@@ -44,21 +52,27 @@ import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
-import android.view.inputmethod.InputMethodManager;
 import android.view.inputmethod.InputConnection;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.AbsoluteLayout.LayoutParams;
+import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.AutoCompleteTextView;
 import android.widget.TextView;
 
+import java.net.MalformedURLException;
+import java.net.URL;
 import java.util.ArrayList;
+
+import junit.framework.Assert;
 
 /**
  * WebTextView is a specialized version of EditText used by WebView
  * to overlay html textfields (and textareas) to use our standard
  * text editing.
  */
-/* package */ class WebTextView extends AutoCompleteTextView {
+/* package */ class WebTextView extends AutoCompleteTextView
+        implements AdapterView.OnItemClickListener {
 
     static final String LOGTAG = "webtextview";
 
@@ -75,7 +89,6 @@ import java.util.ArrayList;
     // Keep track of the text before the change so we know whether we actually
     // need to send down the DOM events.
     private String          mPreChange;
-    private Drawable        mBackground;
     // Variables for keeping track of the touch down, to send to the WebView
     // when a drag starts
     private float           mDragStartX;
@@ -110,16 +123,96 @@ import java.util.ArrayList;
     // FIXME: This can be replaced with TextView.NO_FILTERS if that
     // is made public/protected.
     private static final InputFilter[] NO_FILTERS = new InputFilter[0];
+    // For keeping track of the fact that the delete key was pressed, so
+    // we can simply pass a delete key instead of calling deleteSelection.
+    private boolean mGotDelete;
+    private int mDelSelStart;
+    private int mDelSelEnd;
+
+    // Keep in sync with native constant in
+    // external/webkit/WebKit/android/WebCoreSupport/autofill/WebAutoFill.cpp
+    /* package */ static final int FORM_NOT_AUTOFILLABLE = -1;
+
+    private boolean mAutoFillable; // Is this textview part of an autofillable form?
+    private int mQueryId;
+    private boolean mAutoFillProfileIsSet;
+    // Used to determine whether onFocusChanged was called as a result of
+    // calling remove().
+    private boolean mInsideRemove;
+    private class MyResultReceiver extends ResultReceiver {
+        @Override
+        protected void onReceiveResult(int resultCode, Bundle resultData) {
+            if (resultCode == InputMethodManager.RESULT_SHOWN
+                    && mWebView != null) {
+                mWebView.revealSelection();
+            }
+        }
+
+        /**
+         * @param handler
+         */
+        public MyResultReceiver(Handler handler) {
+            super(handler);
+        }
+    }
+    private MyResultReceiver mReceiver;
+
+    // Types used with setType.  Keep in sync with CachedInput.h
+    private static final int NORMAL_TEXT_FIELD = 0;
+    private static final int TEXT_AREA = 1;
+    private static final int PASSWORD = 2;
+    private static final int SEARCH = 3;
+    private static final int EMAIL = 4;
+    private static final int NUMBER = 5;
+    private static final int TELEPHONE = 6;
+    private static final int URL = 7;
+
+    private static final int AUTOFILL_FORM = 100;
+    private Handler mHandler;
 
     /**
      * Create a new WebTextView.
      * @param   context The Context for this WebTextView.
      * @param   webView The WebView that created this.
      */
-    /* package */ WebTextView(Context context, WebView webView) {
+    /* package */ WebTextView(Context context, WebView webView, int autoFillQueryId) {
         super(context, null, com.android.internal.R.attr.webTextViewStyle);
         mWebView = webView;
         mMaxLength = -1;
+        setAutoFillable(autoFillQueryId);
+        // Turn on subpixel text, and turn off kerning, so it better matches
+        // the text in webkit.
+        TextPaint paint = getPaint();
+        int flags = paint.getFlags() & ~Paint.DEV_KERN_TEXT_FLAG
+                | Paint.SUBPIXEL_TEXT_FLAG | Paint.DITHER_FLAG;
+        paint.setFlags(flags);
+
+        // Set the text color to black, regardless of the theme.  This ensures
+        // that other applications that use embedded WebViews will properly
+        // display the text in password textfields.
+        setTextColor(DebugFlags.DRAW_WEBTEXTVIEW ? Color.RED : Color.BLACK);
+        setBackgroundDrawable(DebugFlags.DRAW_WEBTEXTVIEW ? null : new ColorDrawable(Color.WHITE));
+
+        // This helps to align the text better with the text in the web page.
+        setIncludeFontPadding(false);
+
+        mHandler = new Handler() {
+            @Override
+            public void handleMessage(Message msg) {
+                switch (msg.what) {
+                case AUTOFILL_FORM:
+                    mWebView.autoFillForm(mQueryId);
+                    break;
+                }
+            }
+        };
+        mReceiver = new MyResultReceiver(mHandler);
+    }
+
+    public void setAutoFillable(int queryId) {
+        mAutoFillable = mWebView.getSettings().getAutoFillEnabled()
+                && (queryId != FORM_NOT_AUTOFILLABLE);
+        mQueryId = queryId;
     }
 
     @Override
@@ -137,11 +230,6 @@ import java.util.ArrayList;
             case KeyEvent.KEYCODE_DPAD_RIGHT:
             case KeyEvent.KEYCODE_DPAD_UP:
             case KeyEvent.KEYCODE_DPAD_DOWN:
-                if (!mWebView.nativeCursorMatchesFocus()) {
-                    return down ? mWebView.onKeyDown(keyCode, event) : mWebView
-                            .onKeyUp(keyCode, event);
-
-                }
                 isArrowKey = true;
                 break;
         }
@@ -153,16 +241,26 @@ import java.util.ArrayList;
             return true;
         }
         Spannable text = (Spannable) getText();
-        int oldLength = text.length();
+        int oldStart = Selection.getSelectionStart(text);
+        int oldEnd = Selection.getSelectionEnd(text);
         // Normally the delete key's dom events are sent via onTextChanged.
-        // However, if the length is zero, the text did not change, so we
-        // go ahead and pass the key down immediately.
-        if (KeyEvent.KEYCODE_DEL == keyCode && 0 == oldLength) {
-            sendDomEvent(event);
-            return true;
+        // However, if the cursor is at the beginning of the field, which
+        // includes the case where it has zero length, then the text is not
+        // changed, so send the events immediately.
+        if (KeyEvent.KEYCODE_DEL == keyCode) {
+            if (oldStart == 0 && oldEnd == 0) {
+                sendDomEvent(event);
+                return true;
+            }
+            if (down) {
+                mGotDelete = true;
+                mDelSelStart = oldStart;
+                mDelSelEnd = oldEnd;
+            }
         }
 
-        if ((mSingle && KeyEvent.KEYCODE_ENTER == keyCode)) {
+        if (mSingle && (KeyEvent.KEYCODE_ENTER == keyCode
+                    || KeyEvent.KEYCODE_NUMPAD_ENTER == keyCode)) {
             if (isPopupShowing()) {
                 return super.dispatchKeyEvent(event);
             }
@@ -181,10 +279,6 @@ import java.util.ArrayList;
             if (isPopupShowing()) {
                 return super.dispatchKeyEvent(event);
             }
-            if (!mWebView.nativeCursorMatchesFocus()) {
-                return down ? mWebView.onKeyDown(keyCode, event) : mWebView
-                        .onKeyUp(keyCode, event);
-            }
             // Center key should be passed to a potential onClick
             if (!down) {
                 mWebView.centerKeyPressOnTextField();
@@ -197,9 +291,8 @@ import java.util.ArrayList;
         if (getLayout() == null) {
             measure(mWidthSpec, mHeightSpec);
         }
-        int oldStart = Selection.getSelectionStart(text);
-        int oldEnd = Selection.getSelectionEnd(text);
 
+        int oldLength = text.length();
         boolean maxedOut = mMaxLength != -1 && oldLength == mMaxLength;
         // If we are at max length, and there is a selection rather than a
         // cursor, we need to store the text to compare later, since the key
@@ -221,7 +314,8 @@ import java.util.ArrayList;
             // so do not pass down to javascript, and instead
             // return true.  If it is an arrow key or a delete key, we can go
             // ahead and pass it down.
-            if (KeyEvent.KEYCODE_ENTER == keyCode) {
+            if (KeyEvent.KEYCODE_ENTER == keyCode
+                        || KeyEvent.KEYCODE_NUMPAD_ENTER == keyCode) {
                 // For multi-line text boxes, newlines will
                 // trigger onTextChanged for key down (which will send both
                 // key up and key down) but not key up.
@@ -278,6 +372,20 @@ import java.util.ArrayList;
         return false;
     }
 
+    void ensureLayout() {
+        if (getLayout() == null) {
+            // Ensure we have a Layout
+            measure(mWidthSpec, mHeightSpec);
+            LayoutParams params = (LayoutParams) getLayoutParams();
+            if (params != null) {
+                layout(params.x, params.y, params.x + params.width,
+                        params.y + params.height);
+            }
+        }
+    }
+
+    /* package */ ResultReceiver getResultReceiver() { return mReceiver; }
+
     /**
      *  Determine whether this WebTextView currently represents the node
      *  represented by ptr.
@@ -290,18 +398,69 @@ import java.util.ArrayList;
     }
 
     /**
-     * Ensure that the underlying textfield is lined up with the WebTextView.
+     * Ensure that the underlying text field/area is lined up with the WebTextView.
      */
     private void lineUpScroll() {
         Layout layout = getLayout();
         if (mWebView != null && layout != null) {
-            float maxScrollX = Touch.getMaxScrollX(this, layout, mScrollY);
-            if (DebugFlags.WEB_TEXT_VIEW) {
-                Log.v(LOGTAG, "onTouchEvent x=" + mScrollX + " y="
-                        + mScrollY + " maxX=" + maxScrollX);
+            if (mSingle) {
+                // textfields only need to be lined up horizontally.
+                float maxScrollX = layout.getLineRight(0) - getWidth();
+                if (DebugFlags.WEB_TEXT_VIEW) {
+                    Log.v(LOGTAG, "onTouchEvent x=" + mScrollX + " y="
+                            + mScrollY + " maxX=" + maxScrollX);
+                }
+                mWebView.scrollFocusedTextInputX(maxScrollX > 0 ?
+                        mScrollX / maxScrollX : 0);
+            } else {
+                // textareas only need to be lined up vertically.
+                mWebView.scrollFocusedTextInputY(mScrollY);
             }
-            mWebView.scrollFocusedTextInput(maxScrollX > 0 ?
-                    mScrollX / maxScrollX : 0, mScrollY);
+        }
+    }
+
+    @Override
+    protected void makeNewLayout(int w, int hintWidth, Metrics boring,
+            Metrics hintBoring, int ellipsisWidth, boolean bringIntoView) {
+        // Necessary to get a Layout to work with, and to do the other work that
+        // makeNewLayout does.
+        super.makeNewLayout(w, hintWidth, boring, hintBoring, ellipsisWidth,
+                bringIntoView);
+        lineUpScroll();
+    }
+
+    /**
+     * Custom layout which figures out its line spacing.  If -1 is passed in for
+     * the height, it will use the ascent and descent from the paint to
+     * determine the line spacing.  Otherwise it will use the spacing provided.
+     */
+    private static class WebTextViewLayout extends DynamicLayout {
+        private float mLineHeight;
+        private float mDifference;
+        public WebTextViewLayout(CharSequence base, CharSequence display,
+                TextPaint paint,
+                int width, Alignment align,
+                float spacingMult, float spacingAdd,
+                boolean includepad,
+                TextUtils.TruncateAt ellipsize, int ellipsizedWidth,
+                float lineHeight) {
+            super(base, display, paint, width, align, spacingMult, spacingAdd,
+                    includepad, ellipsize, ellipsizedWidth);
+            float paintLineHeight = paint.descent() - paint.ascent();
+            if (lineHeight == -1f) {
+                mLineHeight = paintLineHeight;
+                mDifference = 0f;
+            } else {
+                mLineHeight = lineHeight;
+                // Through trial and error, I found this calculation to improve
+                // the accuracy of line placement.
+                mDifference = (lineHeight - paintLineHeight) / 2;
+            }
+        }
+
+        @Override
+        public int getLineTop(int line) {
+            return Math.round(mLineHeight * line - mDifference);
         }
     }
 
@@ -318,34 +477,10 @@ import java.util.ArrayList;
     }
 
     @Override
-    protected void onDraw(Canvas canvas) {
-        // onDraw should only be called for password fields.  If WebTextView is
-        // still drawing, but is no longer corresponding to a password field,
-        // remove it.
-        if (mWebView == null || !mWebView.nativeFocusCandidateIsPassword()
-                || !isSameTextField(mWebView.nativeFocusCandidatePointer())) {
-            // Although calling remove() would seem to make more sense here,
-            // changing it to not be a password field will make it not draw.
-            // Other code will make sure that it is removed completely, but this
-            // way the user will not see it.
-            setInPassword(false);
-        } else {
-            super.onDraw(canvas);
-        }
-    }
-
-    public void onDrawSubstitute() {
-      updateCursorControllerPositions();
-    }
-
-    @Override
     public void onEditorAction(int actionCode) {
         switch (actionCode) {
         case EditorInfo.IME_ACTION_NEXT:
             if (mWebView.nativeMoveCursorToNextTextInput()) {
-                // Since the cursor will no longer be in the same place as the
-                // focus, set the focus controller back to inactive
-                mWebView.setFocusControllerInactive();
                 // Preemptively rebuild the WebTextView, so that the action will
                 // be set properly.
                 mWebView.rebuildWebTextView();
@@ -376,7 +511,33 @@ import java.util.ArrayList;
             Rect previouslyFocusedRect) {
         mFromFocusChange = true;
         super.onFocusChanged(focused, direction, previouslyFocusedRect);
+        if (focused) {
+            mWebView.setActive(true);
+        } else if (!mInsideRemove) {
+            mWebView.setActive(false);
+        }
         mFromFocusChange = false;
+    }
+
+    // AdapterView.OnItemClickListener implementation
+
+    @Override
+    public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+        if (id == 0 && position == 0) {
+            // Blank out the text box while we wait for WebCore to fill the form.
+            replaceText("");
+            WebSettings settings = mWebView.getSettings();
+            if (mAutoFillProfileIsSet) {
+                // Call a webview method to tell WebCore to autofill the form.
+                mWebView.autoFillForm(mQueryId);
+            } else {
+                // There is no autofill profile setup yet and the user has
+                // elected to try and set one up. Call through to the
+                // embedder to action that.
+                mWebView.getWebChromeClient().setupAutoFill(
+                        mHandler.obtainMessage(AUTOFILL_FORM));
+            }
+        }
     }
 
     @Override
@@ -387,19 +548,8 @@ import java.util.ArrayList;
 
     @Override
     protected void onSelectionChanged(int selStart, int selEnd) {
-        if (mInSetTextAndKeepSelection) return;
-        // This code is copied from TextView.onDraw().  That code does not get
-        // executed, however, because the WebTextView does not draw, allowing
-        // webkit's drawing to show through.
-        InputMethodManager imm = InputMethodManager.peekInstance();
-        if (imm != null && imm.isActive(this)) {
-            Spannable sp = (Spannable) getText();
-            int candStart = EditableInputConnection.getComposingSpanStart(sp);
-            int candEnd = EditableInputConnection.getComposingSpanEnd(sp);
-            imm.updateSelection(this, selStart, selEnd, candStart, candEnd);
-        }
         if (!mFromWebKit && !mFromFocusChange && !mFromSetInputType
-                && mWebView != null) {
+                && mWebView != null && !mInSetTextAndKeepSelection) {
             if (DebugFlags.WEB_TEXT_VIEW) {
                 Log.v(LOGTAG, "onSelectionChanged selStart=" + selStart
                         + " selEnd=" + selEnd);
@@ -425,35 +575,63 @@ import java.util.ArrayList;
         mPreChange = postChange;
         if (0 == count) {
             if (before > 0) {
+                // For this and all changes to the text, update our cache
+                updateCachedTextfield();
+                if (mGotDelete) {
+                    mGotDelete = false;
+                    int oldEnd = start + before;
+                    if (mDelSelEnd == oldEnd
+                            && (mDelSelStart == start
+                            || (mDelSelStart == oldEnd && before == 1))) {
+                        // If the selection is set up properly before the
+                        // delete, send the DOM events.
+                        sendDomEvent(new KeyEvent(KeyEvent.ACTION_DOWN,
+                                KeyEvent.KEYCODE_DEL));
+                        sendDomEvent(new KeyEvent(KeyEvent.ACTION_UP,
+                                KeyEvent.KEYCODE_DEL));
+                        return;
+                    }
+                }
                 // This was simply a delete or a cut, so just delete the
                 // selection.
                 mWebView.deleteSelection(start, start + before);
-                // For this and all changes to the text, update our cache
-                updateCachedTextfield();
             }
+            mGotDelete = false;
             // before should never be negative, so whether it was a cut
             // (handled above), or before is 0, in which case nothing has
             // changed, we should return.
             return;
         }
+        // Ensure that this flag gets cleared, since with autocorrect on, a
+        // delete key press may have a more complex result than deleting one
+        // character or the existing selection, so it will not get cleared
+        // above.
+        mGotDelete = false;
+        // Prefer sending javascript events, so when adding one character,
+        // don't replace the unchanged text.
+        if (count > 1 && before == count - 1) {
+            String replaceButOne =  s.subSequence(start,
+                    start + before).toString();
+            String replacedString = getText().subSequence(start,
+                    start + before).toString();
+            if (replaceButOne.equals(replacedString)) {
+                // we're just adding one character
+                start += before;
+                before = 0;
+                count = 1;
+            }
+        }
         // Find the last character being replaced.  If it can be represented by
-        // events, we will pass them to native (after replacing the beginning
-        // of the changed text), so we can see javascript events.
-        // Otherwise, replace the text being changed (including the last
-        // character) in the textfield.
-        TextUtils.getChars(s, start + count - 1, start + count, mCharacter, 0);
-        KeyCharacterMap kmap =
-                KeyCharacterMap.load(KeyCharacterMap.BUILT_IN_KEYBOARD);
-        KeyEvent[] events = kmap.getEvents(mCharacter);
-        boolean cannotUseKeyEvents = null == events;
-        int charactersFromKeyEvents = cannotUseKeyEvents ? 0 : 1;
-        if (count > 1 || cannotUseKeyEvents) {
-            String replace = s.subSequence(start,
-                    start + count - charactersFromKeyEvents).toString();
-            mWebView.replaceTextfieldText(start, start + before, replace,
-                    start + count - charactersFromKeyEvents,
-                    start + count - charactersFromKeyEvents);
-        } else {
+        // events, we will pass them to native so we can see javascript events.
+        // Otherwise, replace the text being changed in the textfield.
+        KeyEvent[] events = null;
+        if (count == 1) {
+            TextUtils.getChars(s, start + count - 1, start + count, mCharacter, 0);
+            KeyCharacterMap kmap = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD);
+            events = kmap.getEvents(mCharacter);
+        }
+        boolean useKeyEvents = (events != null);
+        if (useKeyEvents) {
             // This corrects the selection which may have been affected by the
             // trackball or auto-correct.
             if (DebugFlags.WEB_TEXT_VIEW) {
@@ -463,8 +641,6 @@ import java.util.ArrayList;
             if (!mInSetTextAndKeepSelection) {
                 mWebView.setSelection(start, start + before);
             }
-        }
-        if (!cannotUseKeyEvents) {
             int length = events.length;
             for (int i = 0; i < length; i++) {
                 // We never send modifier keys to native code so don't send them
@@ -473,6 +649,12 @@ import java.util.ArrayList;
                     sendDomEvent(events[i]);
                 }
             }
+        } else {
+            String replace = s.subSequence(start,
+                    start + count).toString();
+            mWebView.replaceTextfieldText(start, start + before, replace,
+                    start + count,
+                    start + count);
         }
         updateCachedTextfield();
     }
@@ -571,12 +753,7 @@ import java.util.ArrayList;
         if (event.getAction() != MotionEvent.ACTION_MOVE) {
             return false;
         }
-        // If the Cursor is not on the text input, webview should handle the
-        // trackball
-        if (!mWebView.nativeCursorMatchesFocus()) {
-            return mWebView.onTrackballEvent(event);
-        }
-        Spannable text = (Spannable) getText();
+        Spannable text = getText();
         MovementMethod move = getMovementMethod();
         if (move != null && getLayout() != null &&
             move.onTrackballEvent(this, text, event)) {
@@ -598,16 +775,24 @@ import java.util.ArrayList;
      */
     /* package */ void remove() {
         // hide the soft keyboard when the edit text is out of focus
-        InputMethodManager.getInstance(mContext).hideSoftInputFromWindow(
-                getWindowToken(), 0);
+        InputMethodManager imm = InputMethodManager.getInstance(mContext);
+        if (imm.isActive(this)) {
+            imm.hideSoftInputFromWindow(getWindowToken(), 0);
+        }
+        mInsideRemove = true;
+        boolean isFocused = hasFocus();
         mWebView.removeView(this);
-        mWebView.requestFocus();
+        if (isFocused) {
+            mWebView.requestFocus();
+        }
+        mInsideRemove = false;
+        mHandler.removeCallbacksAndMessages(null);
     }
 
-    /* package */ void bringIntoView() {
-        if (getLayout() != null) {
-            bringPointIntoView(Selection.getSelectionEnd(getText()));
-        }
+    @Override
+    public boolean requestRectangleOnScreen(Rect rectangle, boolean immediate) {
+        // Do nothing, since webkit will put the textfield on screen.
+        return true;
     }
 
     /**
@@ -625,8 +810,16 @@ import java.util.ArrayList;
     public void setAdapterCustom(AutoCompleteAdapter adapter) {
         if (adapter != null) {
             setInputType(getInputType()
-                    | EditorInfo.TYPE_TEXT_FLAG_AUTO_COMPLETE);
+                    | InputType.TYPE_TEXT_FLAG_AUTO_COMPLETE);
             adapter.setTextView(this);
+            if (mAutoFillable) {
+                setOnItemClickListener(this);
+            } else {
+                setOnItemClickListener(null);
+            }
+            showDropDown();
+        } else {
+            dismissDropDown();
         }
         super.setAdapter(adapter);
     }
@@ -640,17 +833,18 @@ import java.util.ArrayList;
 
         public AutoCompleteAdapter(Context context, ArrayList<String> entries) {
             super(context, com.android.internal.R.layout
-                    .search_dropdown_item_1line, entries);
+                    .web_text_view_dropdown, entries);
         }
 
         /**
          * {@inheritDoc}
          */
+        @Override
         public View getView(int position, View convertView, ViewGroup parent) {
             TextView tv =
                     (TextView) super.getView(position, convertView, parent);
             if (tv != null && mTextView != null) {
-                tv.setTextSize(mTextView.getTextSize());
+                tv.setTextSize(TypedValue.COMPLEX_UNIT_PX, mTextView.getTextSize());
             }
             return tv;
         }
@@ -687,73 +881,7 @@ import java.util.ArrayList;
         } else {
             Selection.setSelection(text, selection, selection);
         }
-    }
-
-    /**
-     * Determine whether to use the system-wide password disguising method,
-     * or to use none.
-     * @param   inPassword  True if the textfield is a password field.
-     */
-    /* package */ void setInPassword(boolean inPassword) {
-        if (inPassword) {
-            setInputType(EditorInfo.TYPE_CLASS_TEXT | EditorInfo.
-                    TYPE_TEXT_VARIATION_PASSWORD);
-            createBackground();
-        }
-        // For password fields, draw the WebTextView.  For others, just show
-        // webkit's drawing.
-        setWillNotDraw(!inPassword);
-        setBackgroundDrawable(inPassword ? mBackground : null);
-    }
-
-    /**
-     * Private class used for the background of a password textfield.
-     */
-    private static class OutlineDrawable extends Drawable {
-        public void draw(Canvas canvas) {
-            Rect bounds = getBounds();
-            Paint paint = new Paint();
-            paint.setAntiAlias(true);
-            // Draw the background.
-            paint.setColor(Color.WHITE);
-            canvas.drawRect(bounds, paint);
-            // Draw the outline.
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setColor(Color.BLACK);
-            canvas.drawRect(bounds, paint);
-        }
-        // Always want it to be opaque.
-        public int getOpacity() {
-            return PixelFormat.OPAQUE;
-        }
-        // These are needed because they are abstract in Drawable.
-        public void setAlpha(int alpha) { }
-        public void setColorFilter(ColorFilter cf) { }
-    }
-
-    /**
-     * Create a background for the WebTextView and set up the paint for drawing
-     * the text.  This way, we can see the password transformation of the
-     * system, which (optionally) shows the actual text before changing to dots.
-     * The background is necessary to hide the webkit-drawn text beneath.
-     */
-    private void createBackground() {
-        if (mBackground != null) {
-            return;
-        }
-        mBackground = new OutlineDrawable();
-
-        setGravity(Gravity.CENTER_VERTICAL);
-        // Turn on subpixel text, and turn off kerning, so it better matches
-        // the text in webkit.
-        TextPaint paint = getPaint();
-        int flags = paint.getFlags() | Paint.SUBPIXEL_TEXT_FLAG |
-                Paint.ANTI_ALIAS_FLAG & ~Paint.DEV_KERN_TEXT_FLAG;
-        paint.setFlags(flags);
-        // Set the text color to black, regardless of the theme.  This ensures
-        // that other applications that use embedded WebViews will properly
-        // display the text in password textfields.
-        setTextColor(Color.BLACK);
+        if (mWebView != null) mWebView.incrementTextGeneration();
     }
 
     @Override
@@ -780,7 +908,10 @@ import java.util.ArrayList;
      *          WebTextView represents.
      */
     /* package */ void setNodePointer(int ptr) {
-        mNodePointer = ptr;
+        if (ptr != mNodePointer) {
+            mNodePointer = ptr;
+            setAdapterCustom(null);
+        }
     }
 
     /**
@@ -804,7 +935,8 @@ import java.util.ArrayList;
             lp.height = height;
         }
         if (getParent() == null) {
-            mWebView.addView(this, lp);
+            // Insert the view so that it's drawn first (at index 0)
+            mWebView.addView(this, 0, lp);
         } else {
             setLayoutParams(lp);
         }
@@ -827,13 +959,30 @@ import java.util.ArrayList;
     }
 
     /**
+     * Update the text size according to the size of the focus candidate's text
+     * size in mWebView.  Should only be called from mWebView.
+     */
+    /* package */ void updateTextSize() {
+        Assert.assertNotNull("updateTextSize should only be called from "
+                + "mWebView, so mWebView should never be null!", mWebView);
+        // Note that this is approximately WebView.contentToViewDimension,
+        // without being rounded.
+        float size = mWebView.nativeFocusCandidateTextSize()
+                * mWebView.getScale();
+        setTextSize(TypedValue.COMPLEX_UNIT_PX, size);
+    }
+
+    /**
      * Set the text to the new string, but use the old selection, making sure
      * to keep it within the new string.
      * @param   text    The new text to place in the textfield.
      */
     /* package */ void setTextAndKeepSelection(String text) {
-        mPreChange = text.toString();
-        Editable edit = (Editable) getText();
+        Editable edit = getText();
+        mPreChange = text;
+        if (edit.toString().equals(text)) {
+            return;
+        }
         int selStart = Selection.getSelectionStart(edit);
         int selEnd = Selection.getSelectionEnd(edit);
         mInSetTextAndKeepSelection = true;
@@ -843,13 +992,19 @@ import java.util.ArrayList;
         if (selEnd > newLength) selEnd = newLength;
         Selection.setSelection(edit, selStart, selEnd);
         mInSetTextAndKeepSelection = false;
+        InputMethodManager imm = InputMethodManager.peekInstance();
+        if (imm != null && imm.isActive(this)) {
+            // Since the text has changed, do not allow the IME to replace the
+            // existing text as though it were a completion.
+            imm.restartInput(this);
+        }
         updateCachedTextfield();
     }
 
     /**
      * Called by WebView.rebuildWebTextView().  Based on the type of the <input>
      * element, set up the WebTextView, its InputType, and IME Options properly.
-     * @param type int corresponding to enum "type" defined in WebView.cpp.
+     * @param type int corresponding to enum "Type" defined in CachedInput.h.
      *              Does not correspond to HTMLInputElement::InputType so this
      *              is unaffected if that changes, and also because that has no
      *              type corresponding to textarea (which is its own tag).
@@ -857,49 +1012,56 @@ import java.util.ArrayList;
     /* package */ void setType(int type) {
         if (mWebView == null) return;
         boolean single = true;
-        boolean inPassword = false;
         int maxLength = -1;
-        int inputType = EditorInfo.TYPE_CLASS_TEXT;
-        if (mWebView.nativeFocusCandidateHasNextTextfield()) {
-            inputType |= EditorInfo.TYPE_TEXT_VARIATION_WEB_EDIT_TEXT;
-        }
+        int inputType = InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_VARIATION_WEB_EDIT_TEXT;
         int imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI
                 | EditorInfo.IME_FLAG_NO_FULLSCREEN;
+        if (!mWebView.nativeFocusCandidateIsSpellcheck()) {
+            inputType |= InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;
+        }
+        if (TEXT_AREA != type
+                && mWebView.nativeFocusCandidateHasNextTextfield()) {
+            imeOptions |= EditorInfo.IME_FLAG_NAVIGATE_NEXT;
+        }
         switch (type) {
-            case 0: // NORMAL_TEXT_FIELD
+            case NORMAL_TEXT_FIELD:
                 imeOptions |= EditorInfo.IME_ACTION_GO;
                 break;
-            case 1: // TEXT_AREA
+            case TEXT_AREA:
                 single = false;
-                inputType = EditorInfo.TYPE_TEXT_FLAG_MULTI_LINE
-                        | EditorInfo.TYPE_TEXT_FLAG_CAP_SENTENCES
-                        | EditorInfo.TYPE_CLASS_TEXT
-                        | EditorInfo.TYPE_TEXT_FLAG_AUTO_CORRECT;
+                inputType |= InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                        | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+                        | InputType.TYPE_TEXT_FLAG_AUTO_CORRECT;
                 imeOptions |= EditorInfo.IME_ACTION_NONE;
                 break;
-            case 2: // PASSWORD
-                inPassword = true;
+            case PASSWORD:
+                inputType |= EditorInfo.TYPE_TEXT_VARIATION_WEB_PASSWORD;
                 imeOptions |= EditorInfo.IME_ACTION_GO;
                 break;
-            case 3: // SEARCH
+            case SEARCH:
                 imeOptions |= EditorInfo.IME_ACTION_SEARCH;
                 break;
-            case 4: // EMAIL
-                // TYPE_TEXT_VARIATION_WEB_EDIT_TEXT prevents EMAIL_ADDRESS
-                // from working, so exclude it for now.
+            case EMAIL:
+                // inputType needs to be overwritten because of the different text variation.
+                inputType = InputType.TYPE_CLASS_TEXT
+                        | InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS;
                 imeOptions |= EditorInfo.IME_ACTION_GO;
                 break;
-            case 5: // NUMBER
-                inputType |= EditorInfo.TYPE_CLASS_NUMBER;
+            case NUMBER:
+                // inputType needs to be overwritten because of the different class.
+                inputType = InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_NORMAL
+                        | InputType.TYPE_NUMBER_FLAG_SIGNED | InputType.TYPE_NUMBER_FLAG_DECIMAL;
                 // Number and telephone do not have both a Tab key and an
                 // action, so set the action to NEXT
                 imeOptions |= EditorInfo.IME_ACTION_NEXT;
                 break;
-            case 6: // TELEPHONE
-                inputType |= EditorInfo.TYPE_CLASS_PHONE;
+            case TELEPHONE:
+                // inputType needs to be overwritten because of the different class.
+                inputType = InputType.TYPE_CLASS_PHONE;
                 imeOptions |= EditorInfo.IME_ACTION_NEXT;
                 break;
-            case 7: // URL
+            case URL:
                 // TYPE_TEXT_VARIATION_URI prevents Tab key from showing, so
                 // exclude it for now.
                 imeOptions |= EditorInfo.IME_ACTION_GO;
@@ -909,14 +1071,18 @@ import java.util.ArrayList;
                 break;
         }
         setHint(null);
+        setThreshold(1);
+        boolean autoComplete = false;
         if (single) {
             mWebView.requestLabel(mWebView.nativeFocusCandidateFramePointer(),
                     mNodePointer);
             maxLength = mWebView.nativeFocusCandidateMaxLength();
-            if (type != 2 /* PASSWORD */) {
+            autoComplete = mWebView.nativeFocusCandidateIsAutoComplete();
+            if (type != PASSWORD && (mAutoFillable || autoComplete)) {
                 String name = mWebView.nativeFocusCandidateName();
                 if (name != null && name.length() > 0) {
-                    mWebView.requestFormData(name, mNodePointer);
+                    mWebView.requestFormData(name, mNodePointer, mAutoFillable,
+                            autoComplete);
                 }
             }
         }
@@ -924,10 +1090,12 @@ import java.util.ArrayList;
         setMaxLength(maxLength);
         setHorizontallyScrolling(single);
         setInputType(inputType);
+        clearComposingText();
         setImeOptions(imeOptions);
-        setInPassword(inPassword);
-        AutoCompleteAdapter adapter = null;
-        setAdapterCustom(adapter);
+        setVisibility(VISIBLE);
+        if (!autoComplete) {
+            setAdapterCustom(null);
+        }
     }
 
     /**
@@ -937,13 +1105,26 @@ import java.util.ArrayList;
         mWebView.updateCachedTextfield(getText().toString());
     }
 
-    @Override
-    public boolean requestRectangleOnScreen(Rect rectangle) {
-        // don't scroll while in zoom animation. When it is done, we will adjust
-        // the WebTextView if it is in editing mode.
-        if (!mWebView.inAnimateZoom()) {
-            return super.requestRectangleOnScreen(rectangle);
-        }
-        return false;
+    /* package */ void setAutoFillProfileIsSet(boolean autoFillProfileIsSet) {
+        mAutoFillProfileIsSet = autoFillProfileIsSet;
     }
+
+    static String urlForAutoCompleteData(String urlString) {
+        // Remove any fragment or query string.
+        URL url = null;
+        try {
+            url = new URL(urlString);
+        } catch (MalformedURLException e) {
+            Log.e(LOGTAG, "Unable to parse URL "+url);
+        }
+
+        return url != null ? url.getProtocol() + "://" + url.getHost() + url.getPath() : null;
+    }
+
+    public void setGravityForRtl(boolean rtl) {
+        int gravity = rtl ? Gravity.RIGHT : Gravity.LEFT;
+        gravity |= mSingle ? Gravity.CENTER_VERTICAL : Gravity.TOP;
+        setGravity(gravity);
+    }
+
 }

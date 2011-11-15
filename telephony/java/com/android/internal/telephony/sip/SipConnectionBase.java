@@ -19,6 +19,7 @@ package com.android.internal.telephony.sip;
 import com.android.internal.telephony.Call;
 import com.android.internal.telephony.Connection;
 import com.android.internal.telephony.Phone;
+import com.android.internal.telephony.UUSInfo;
 
 import android.net.sip.SipAudioCall;
 import android.os.SystemClock;
@@ -170,5 +171,11 @@ abstract class SipConnectionBase extends Connection {
     public int getNumberPresentation() {
         // TODO: add PRESENTATION_URL
         return Connection.PRESENTATION_ALLOWED;
+    }
+
+    @Override
+    public UUSInfo getUUSInfo() {
+        // FIXME: what's this for SIP?
+        return null;
     }
 }

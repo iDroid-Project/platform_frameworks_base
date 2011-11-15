@@ -16,7 +16,6 @@
 
 package android.os;
 
-import android.util.Config;
 import android.util.Log;
 
 import java.io.FileDescriptor;
@@ -256,6 +255,25 @@ public class Binder implements IBinder {
     }
     
     /**
+     * Like {@link #dump(FileDescriptor, String[])}, but ensures the target
+     * executes asynchronously.
+     */
+    public void dumpAsync(final FileDescriptor fd, final String[] args) {
+        final FileOutputStream fout = new FileOutputStream(fd);
+        final PrintWriter pw = new PrintWriter(fout);
+        Thread thr = new Thread("Binder.dumpAsync") {
+            public void run() {
+                try {
+                    dump(fd, pw, args);
+                } finally {
+                    pw.flush();
+                }
+            }
+        };
+        thr.start();
+    }
+
+    /**
      * Print the object's state into the given stream.
      * 
      * @param fd The raw file descriptor that the dump is being sent to.
@@ -272,7 +290,7 @@ public class Binder implements IBinder {
      */
     public final boolean transact(int code, Parcel data, Parcel reply,
             int flags) throws RemoteException {
-        if (Config.LOGV) Log.v("Binder", "Transact: " + code + " to " + this);
+        if (false) Log.v("Binder", "Transact: " + code + " to " + this);
         if (data != null) {
             data.setDataPosition(0);
         }
@@ -324,6 +342,10 @@ public class Binder implements IBinder {
         } catch (RuntimeException e) {
             reply.writeException(e);
             res = true;
+        } catch (OutOfMemoryError e) {
+            RuntimeException re = new RuntimeException("Out of memory", e);
+            reply.writeException(re);
+            res = true;
         }
         reply.recycle();
         data.recycle();
@@ -360,6 +382,20 @@ final class BinderProxy implements IBinder {
         }
     }
     
+    public void dumpAsync(FileDescriptor fd, String[] args) throws RemoteException {
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        data.writeFileDescriptor(fd);
+        data.writeStringArray(args);
+        try {
+            transact(DUMP_TRANSACTION, data, reply, FLAG_ONEWAY);
+            reply.readException();
+        } finally {
+            data.recycle();
+            reply.recycle();
+        }
+    }
+
     BinderProxy() {
         mSelf = new WeakReference(this);
     }
@@ -376,7 +412,7 @@ final class BinderProxy implements IBinder {
     private native final void destroy();
     
     private static final void sendDeathNotice(DeathRecipient recipient) {
-        if (Config.LOGV) Log.v("JavaBinder", "sendDeathNotice to " + recipient);
+        if (false) Log.v("JavaBinder", "sendDeathNotice to " + recipient);
         try {
             recipient.binderDied();
         }
@@ -388,4 +424,5 @@ final class BinderProxy implements IBinder {
     
     final private WeakReference mSelf;
     private int mObject;
+    private int mOrgue;
 }

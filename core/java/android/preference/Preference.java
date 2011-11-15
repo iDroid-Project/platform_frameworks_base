@@ -16,25 +16,30 @@
 
 package android.preference;
 
-import java.util.ArrayList;
-import java.util.List;
+import com.android.internal.util.CharSequences;
 
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.res.TypedArray;
+import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.text.TextUtils;
 import android.util.AttributeSet;
-import com.android.internal.util.CharSequences;
 import android.view.AbsSavedState;
+import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ImageView;
 import android.widget.ListView;
 import android.widget.TextView;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
 
 /**
  * Represents the basic Preference UI building
@@ -50,10 +55,12 @@ import android.widget.TextView;
  * {@link SharedPreferences}. It is up to the subclass to decide how to store
  * the value.
  * 
+ * @attr ref android.R.styleable#Preference_icon
  * @attr ref android.R.styleable#Preference_key
  * @attr ref android.R.styleable#Preference_title
  * @attr ref android.R.styleable#Preference_summary
  * @attr ref android.R.styleable#Preference_order
+ * @attr ref android.R.styleable#Preference_fragment
  * @attr ref android.R.styleable#Preference_layout
  * @attr ref android.R.styleable#Preference_widgetLayout
  * @attr ref android.R.styleable#Preference_enabled
@@ -83,9 +90,17 @@ public class Preference implements Comparable<Preference>, OnDependencyChangeLis
 
     private int mOrder = DEFAULT_ORDER;
     private CharSequence mTitle;
+    private int mTitleRes;
     private CharSequence mSummary;
+    /**
+     * mIconResId is overridden by mIcon, if mIcon is specified.
+     */
+    private int mIconResId;
+    private Drawable mIcon;
     private String mKey;
     private Intent mIntent;
+    private String mFragment;
+    private Bundle mExtras;
     private boolean mEnabled = true;
     private boolean mSelectable = true;
     private boolean mRequiresKey;
@@ -192,11 +207,16 @@ public class Preference implements Comparable<Preference>, OnDependencyChangeLis
         for (int i = a.getIndexCount(); i >= 0; i--) {
             int attr = a.getIndex(i); 
             switch (attr) {
+                case com.android.internal.R.styleable.Preference_icon:
+                    mIconResId = a.getResourceId(attr, 0);
+                    break;
+
                 case com.android.internal.R.styleable.Preference_key:
                     mKey = a.getString(attr);
                     break;
                     
                 case com.android.internal.R.styleable.Preference_title:
+                    mTitleRes = a.getResourceId(attr, 0);
                     mTitle = a.getString(attr);
                     break;
                     
@@ -206,6 +226,10 @@ public class Preference implements Comparable<Preference>, OnDependencyChangeLis
                     
                 case com.android.internal.R.styleable.Preference_order:
                     mOrder = a.getInt(attr, mOrder);
+                    break;
+
+                case com.android.internal.R.styleable.Preference_fragment:
+                    mFragment = a.getString(attr);
                     break;
 
                 case com.android.internal.R.styleable.Preference_layout:
@@ -264,7 +288,7 @@ public class Preference implements Comparable<Preference>, OnDependencyChangeLis
      * @see #Preference(Context, AttributeSet, int)
      */
     public Preference(Context context, AttributeSet attrs) {
-        this(context, attrs, 0);
+        this(context, attrs, com.android.internal.R.attr.preferenceStyle);
     }
 
     /**
@@ -310,6 +334,44 @@ public class Preference implements Comparable<Preference>, OnDependencyChangeLis
      */
     public Intent getIntent() {
         return mIntent;
+    }
+
+    /**
+     * Sets the class name of a fragment to be shown when this Preference is clicked.
+     *
+     * @param fragment The class name of the fragment associated with this Preference.
+     */
+    public void setFragment(String fragment) {
+        mFragment = fragment;
+    }
+
+    /**
+     * Return the fragment class name associated with this Preference.
+     *
+     * @return The fragment class name last set via {@link #setFragment} or XML.
+     */
+    public String getFragment() {
+        return mFragment;
+    }
+
+    /**
+     * Return the extras Bundle object associated with this preference, creating
+     * a new Bundle if there currently isn't one.  You can use this to get and
+     * set individual extra key/value pairs.
+     */
+    public Bundle getExtras() {
+        if (mExtras == null) {
+            mExtras = new Bundle();
+        }
+        return mExtras;
+    }
+
+    /**
+     * Return the extras Bundle object associated with this preference,
+     * returning null if there is not currently one.
+     */
+    public Bundle peekExtras() {
+        return mExtras;
     }
 
     /**
@@ -411,11 +473,15 @@ public class Preference implements Comparable<Preference>, OnDependencyChangeLis
         
         final View layout = layoutInflater.inflate(mLayoutResId, parent, false); 
         
-        if (mWidgetLayoutResId != 0) {
-            final ViewGroup widgetFrame = (ViewGroup)layout.findViewById(com.android.internal.R.id.widget_frame);
-            layoutInflater.inflate(mWidgetLayoutResId, widgetFrame);
+        final ViewGroup widgetFrame = (ViewGroup) layout
+                .findViewById(com.android.internal.R.id.widget_frame);
+        if (widgetFrame != null) {
+            if (mWidgetLayoutResId != 0) {
+                layoutInflater.inflate(mWidgetLayoutResId, widgetFrame);
+            } else {
+                widgetFrame.setVisibility(View.GONE);
+            }
         }
-
         return layout;
     }
     
@@ -452,11 +518,24 @@ public class Preference implements Comparable<Preference>, OnDependencyChangeLis
             }
         }
         
+        ImageView imageView = (ImageView) view.findViewById(com.android.internal.R.id.icon);
+        if (imageView != null) {
+            if (mIconResId != 0 || mIcon != null) {
+                if (mIcon == null) {
+                    mIcon = getContext().getResources().getDrawable(mIconResId);
+                }
+                if (mIcon != null) {
+                    imageView.setImageDrawable(mIcon);
+                }
+            }
+            imageView.setVisibility(mIcon != null ? View.VISIBLE : View.GONE);
+        }
+
         if (mShouldDisableView) {
             setEnabledStateOnViews(view, isEnabled());
         }
     }
-    
+
     /**
      * Makes sure the view (and any children) get the enabled state changed.
      */
@@ -514,6 +593,7 @@ public class Preference implements Comparable<Preference>, OnDependencyChangeLis
      */
     public void setTitle(CharSequence title) {
         if (title == null && mTitle != null || title != null && !title.equals(mTitle)) {
+            mTitleRes = 0;
             mTitle = title;
             notifyChanged();
         }
@@ -527,8 +607,20 @@ public class Preference implements Comparable<Preference>, OnDependencyChangeLis
      */
     public void setTitle(int titleResId) {
         setTitle(mContext.getString(titleResId));
+        mTitleRes = titleResId;
     }
     
+    /**
+     * Returns the title resource ID of this Preference.  If the title did
+     * not come from a resource, 0 is returned.
+     *
+     * @return The title resource.
+     * @see #setTitle(int)
+     */
+    public int getTitleRes() {
+        return mTitleRes;
+    }
+
     /**
      * Returns the title of this Preference.
      * 
@@ -537,6 +629,43 @@ public class Preference implements Comparable<Preference>, OnDependencyChangeLis
      */
     public CharSequence getTitle() {
         return mTitle;
+    }
+
+    /**
+     * Sets the icon for this Preference with a Drawable. 
+     * This icon will be placed into the ID
+     * {@link android.R.id#icon} within the View created by
+     * {@link #onCreateView(ViewGroup)}.
+     * 
+     * @param icon The optional icon for this Preference.
+     */
+    public void setIcon(Drawable icon) {
+        if ((icon == null && mIcon != null) || (icon != null && mIcon != icon)) {
+            mIcon = icon;
+
+            notifyChanged();
+        }
+    }
+
+    /**
+     * Sets the icon for this Preference with a resource ID. 
+     * 
+     * @see #setIcon(Drawable)
+     * @param iconResId The icon as a resource ID.
+     */
+    public void setIcon(int iconResId) {
+        mIconResId = iconResId;
+        setIcon(mContext.getResources().getDrawable(iconResId));
+    }
+
+    /**
+     * Returns the icon of this Preference.
+     * 
+     * @return The icon.
+     * @see #setIcon(Drawable)
+     */
+    public Drawable getIcon() {
+        return mIcon;
     }
 
     /**
@@ -827,6 +956,17 @@ public class Preference implements Comparable<Preference>, OnDependencyChangeLis
             Context context = getContext();
             context.startActivity(mIntent);
         }
+    }
+
+    /**
+     * Allows a Preference to intercept key events without having focus.
+     * For example, SeekBarPreference uses this to intercept +/- to adjust
+     * the progress.
+     * @return True if the Preference handled the key. Returns false by default.
+     * @hide
+     */
+    public boolean onKey(View v, int keyCode, KeyEvent event) {
+        return false;
     }
     
     /**
@@ -1254,6 +1394,61 @@ public class Preference implements Comparable<Preference>, OnDependencyChangeLis
         }
         
         return mPreferenceManager.getSharedPreferences().getString(mKey, defaultReturnValue);
+    }
+    
+    /**
+     * Attempts to persist a set of Strings to the {@link android.content.SharedPreferences}.
+     * <p>
+     * This will check if this Preference is persistent, get an editor from
+     * the {@link PreferenceManager}, put in the strings, and check if we should commit (and
+     * commit if so).
+     * 
+     * @param values The values to persist.
+     * @return True if the Preference is persistent. (This is not whether the
+     *         value was persisted, since we may not necessarily commit if there
+     *         will be a batch commit later.)
+     * @see #getPersistedString(Set)
+     * 
+     * @hide Pending API approval
+     */
+    protected boolean persistStringSet(Set<String> values) {
+        if (shouldPersist()) {
+            // Shouldn't store null
+            if (values.equals(getPersistedStringSet(null))) {
+                // It's already there, so the same as persisting
+                return true;
+            }
+            
+            SharedPreferences.Editor editor = mPreferenceManager.getEditor();
+            editor.putStringSet(mKey, values);
+            tryCommit(editor);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Attempts to get a persisted set of Strings from the
+     * {@link android.content.SharedPreferences}.
+     * <p>
+     * This will check if this Preference is persistent, get the SharedPreferences
+     * from the {@link PreferenceManager}, and get the value.
+     * 
+     * @param defaultReturnValue The default value to return if either the
+     *            Preference is not persistent or the Preference is not in the
+     *            shared preferences.
+     * @return The value from the SharedPreferences or the default return
+     *         value.
+     * @see #persistStringSet(Set)
+     * 
+     * @hide Pending API approval
+     */
+    protected Set<String> getPersistedStringSet(Set<String> defaultReturnValue) {
+        if (!shouldPersist()) {
+            return defaultReturnValue;
+        }
+        
+        return mPreferenceManager.getSharedPreferences().getStringSet(mKey, defaultReturnValue);
     }
     
     /**

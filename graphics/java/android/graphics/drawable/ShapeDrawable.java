@@ -34,9 +34,16 @@ import java.io.IOException;
  * the ShapeDrawable will default to a 
  * {@link android.graphics.drawable.shapes.RectShape}.
  *
- * <p>It can be defined in an XML file with the <code>&lt;shape></code> element. For more
- * information, see the guide to <a
- * href="{@docRoot}guide/topics/resources/drawable-resource.html">Drawable Resources</a>.</p>
+ * <p>This object can be defined in an XML file with the <code>&lt;shape></code> element.</p>
+ *
+ * <div class="special reference">
+ * <h3>Developer Guides</h3>
+ * <p>For more information about how to use ShapeDrawable, read the
+ * <a href="{@docRoot}guide/topics/graphics/2d-graphics.html#shape-drawable">
+ * Canvas and Drawables</a> document. For more information about defining a ShapeDrawable in
+ * XML, read the
+ * <a href="{@docRoot}guide/topics/resources/drawable-resource.html#Shape">Drawable Resources</a>
+ * document.</p></div>
  *
  * @attr ref android.R.styleable#ShapeDrawablePadding_left
  * @attr ref android.R.styleable#ShapeDrawablePadding_top
@@ -129,6 +136,7 @@ public class ShapeDrawable extends Drawable {
             }
             mShapeState.mPadding.set(left, top, right, bottom);
         }
+        invalidateSelf();
     }
     
     /**
@@ -144,6 +152,7 @@ public class ShapeDrawable extends Drawable {
             }
             mShapeState.mPadding.set(padding);
         }
+        invalidateSelf();
     }
     
     /**
@@ -153,6 +162,7 @@ public class ShapeDrawable extends Drawable {
      */
     public void setIntrinsicWidth(int width) {
         mShapeState.mIntrinsicWidth = width;
+        invalidateSelf();
     }
     
     /**
@@ -162,6 +172,7 @@ public class ShapeDrawable extends Drawable {
      */
     public void setIntrinsicHeight(int height) {
         mShapeState.mIntrinsicHeight = height;
+        invalidateSelf();
     }
     
     @Override
@@ -236,11 +247,13 @@ public class ShapeDrawable extends Drawable {
      */
     @Override public void setAlpha(int alpha) {
         mShapeState.mAlpha = alpha;
+        invalidateSelf();
     }
     
     @Override
     public void setColorFilter(ColorFilter cf) {
         mShapeState.mPaint.setColorFilter(cf);
+        invalidateSelf();
     }
     
     @Override
@@ -264,6 +277,7 @@ public class ShapeDrawable extends Drawable {
     @Override
     public void setDither(boolean dither) {
         mShapeState.mPaint.setDither(dither);
+        invalidateSelf();
     }
 
     @Override
@@ -279,7 +293,7 @@ public class ShapeDrawable extends Drawable {
     protected boolean inflateTag(String name, Resources r, XmlPullParser parser,
             AttributeSet attrs) {
 
-        if (name.equals("padding")) {
+        if ("padding".equals(name)) {
             TypedArray a = r.obtainAttributes(attrs,
                     com.android.internal.R.styleable.ShapeDrawablePadding);
             setPadding(
@@ -308,7 +322,10 @@ public class ShapeDrawable extends Drawable {
         int color = mShapeState.mPaint.getColor();
         color = a.getColor(com.android.internal.R.styleable.ShapeDrawable_color, color);
         mShapeState.mPaint.setColor(color);
-            
+
+        boolean dither = a.getBoolean(com.android.internal.R.styleable.ShapeDrawable_dither, false);
+        mShapeState.mPaint.setDither(dither);
+
         setIntrinsicWidth((int)
                 a.getDimension(com.android.internal.R.styleable.ShapeDrawable_width, 0f));
         setIntrinsicHeight((int)
@@ -344,11 +361,12 @@ public class ShapeDrawable extends Drawable {
                 mShapeState.mPaint.setShader(mShapeState.mShaderFactory.resize(w, h));
             }
         }
+        invalidateSelf();
     }
     
     @Override
     public ConstantState getConstantState() {
-        mShapeState.mChangingConfigurations = super.getChangingConfigurations();
+        mShapeState.mChangingConfigurations = getChangingConfigurations();
         return mShapeState;
     }
 

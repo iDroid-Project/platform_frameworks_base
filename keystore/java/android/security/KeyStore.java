@@ -23,12 +23,17 @@ import java.io.InputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UnsupportedEncodingException;
+import java.nio.charset.Charsets;
 import java.util.ArrayList;
 
 /**
- * {@hide}
+ * @hide This should not be made public in its present form because it
+ * assumes that private and secret key bytes are available and would
+ * preclude the use of hardware crypto.
  */
 public class KeyStore {
+
+    // ResponseCodes
     public static final int NO_ERROR = 1;
     public static final int LOCKED = 2;
     public static final int UNINITIALIZED = 3;
@@ -39,6 +44,9 @@ public class KeyStore {
     public static final int VALUE_CORRUPTED = 8;
     public static final int UNDEFINED_ACTION = 9;
     public static final int WRONG_PASSWORD = 10;
+
+    // States
+    public enum State { UNLOCKED, LOCKED, UNINITIALIZED };
 
     private static final LocalSocketAddress sAddress = new LocalSocketAddress(
             "keystore", LocalSocketAddress.Namespace.RESERVED);
@@ -51,31 +59,35 @@ public class KeyStore {
         return new KeyStore();
     }
 
-    public int test() {
+    public State state() {
         execute('t');
-        return mError;
+        switch (mError) {
+            case NO_ERROR: return State.UNLOCKED;
+            case LOCKED: return State.LOCKED;
+            case UNINITIALIZED: return State.UNINITIALIZED;
+            default: throw new AssertionError(mError);
+        }
     }
 
-    public byte[] get(byte[] key) {
+    private byte[] get(byte[] key) {
         ArrayList<byte[]> values = execute('g', key);
         return (values == null || values.isEmpty()) ? null : values.get(0);
     }
 
-    public String get(String key) {
-        byte[] value = get(getBytes(key));
-        return (value == null) ? null : toString(value);
+    public byte[] get(String key) {
+        return get(getBytes(key));
     }
 
-    public boolean put(byte[] key, byte[] value) {
+    private boolean put(byte[] key, byte[] value) {
         execute('i', key, value);
         return mError == NO_ERROR;
     }
 
-    public boolean put(String key, String value) {
-        return put(getBytes(key), getBytes(value));
+    public boolean put(String key, byte[] value) {
+        return put(getBytes(key), value);
     }
 
-    public boolean delete(byte[] key) {
+    private boolean delete(byte[] key) {
         execute('d', key);
         return mError == NO_ERROR;
     }
@@ -84,7 +96,7 @@ public class KeyStore {
         return delete(getBytes(key));
     }
 
-    public boolean contains(byte[] key) {
+    private boolean contains(byte[] key) {
         execute('e', key);
         return mError == NO_ERROR;
     }
@@ -115,17 +127,9 @@ public class KeyStore {
         return mError == NO_ERROR;
     }
 
-    public boolean password(byte[] oldPassword, byte[] newPassword) {
-        execute('p', oldPassword, newPassword);
+    private boolean password(byte[] password) {
+        execute('p', password);
         return mError == NO_ERROR;
-    }
-
-    public boolean password(String oldPassword, String newPassword) {
-        return password(getBytes(oldPassword), getBytes(newPassword));
-    }
-
-    public boolean password(byte[] password) {
-        return password(password, password);
     }
 
     public boolean password(String password) {
@@ -137,13 +141,18 @@ public class KeyStore {
         return mError == NO_ERROR;
     }
 
-    public boolean unlock(byte[] password) {
+    private boolean unlock(byte[] password) {
         execute('u', password);
         return mError == NO_ERROR;
     }
 
     public boolean unlock(String password) {
         return unlock(getBytes(password));
+    }
+
+    public boolean isEmpty() {
+        execute('z');
+        return mError == KEY_NOT_FOUND;
     }
 
     public int getLastError() {
@@ -211,20 +220,10 @@ public class KeyStore {
     }
 
     private static byte[] getBytes(String string) {
-        try {
-            return string.getBytes("UTF-8");
-        } catch (UnsupportedEncodingException e) {
-            // will never happen
-            throw new RuntimeException(e);
-        }
+        return string.getBytes(Charsets.UTF_8);
     }
 
     private static String toString(byte[] bytes) {
-        try {
-            return new String(bytes, "UTF-8");
-        } catch (UnsupportedEncodingException e) {
-            // will never happen
-            throw new RuntimeException(e);
-        }
+        return new String(bytes, Charsets.UTF_8);
     }
 }

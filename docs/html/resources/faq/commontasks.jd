@@ -97,7 +97,7 @@ want to look at the sample code included with the Android SDK, in the
         the device, are described below.
         The list of files you'll need for your application are described in <a href="#filelist">List
         of Files for an Android Application</a>. </li>
-    <li><strong><a href="{@docRoot}guide/developing/other-ide.html#buildingwithant">Build and install your
+    <li><strong><a href="{@docRoot}guide/developing/building/building-cmdline.html">Build and install your
                 package</a>.</strong> The Android SDK has some nice tools for generating
                 projects and debugging code. </li>
 </ol>
@@ -124,8 +124,9 @@ It is not necessary to put external JARs in the assets folder.
 <h2>Implementing Activity Callbacks</h2>
 <p>Android calls a number of callbacks to let you draw your screen, store data before
     pausing, and refresh data after closing. You must implement at least some of
-    these methods. See <a href="{@docRoot}guide/topics/fundamentals.html#lcycles">Lifecycles</a>
-    discussion in Application Fundamentals to learn when and in what order these methods 
+    these methods. Read the <a
+href="{@docRoot}guide/topics/fundamentals/activities.html#Lifecycle">Activities</a>
+    document to learn when and in what order these methods 
     are called. Here are some of the standard types of screen classes that Android provides:</p>
 <ul>
     <li>{@link android.app.Activity android.app.Activity} - This is a standard screen,
@@ -150,9 +151,9 @@ It is not necessary to put external JARs in the assets folder.
 <p>When you open a new screen you can decide whether to make it transparent or floating,
     or full-screen. The choice of new screen affects the event sequence of events
     in the old screen (if the new screen obscures the old screen, a different
-    series of events is called in the old screen). See <a
-    href="{@docRoot}guide/topics/fundamentals.html#lcycles">Lifecycles</a> discussion
-    in Application Fundamentals for details. </p> 
+    series of events is called in the old screen). See the <a
+    href="{@docRoot}guide/topics/fundamentals/activities.html#Lifecycle">Activities</a> document for
+details. </p> 
 <p>Transparent or floating windows are implemented in three
     standard ways: </p>
 <ul>
@@ -222,7 +223,7 @@ public void onClick(View v){
 // Listen for results.
 protected void onActivityResult(int requestCode, int resultCode, Intent data){
     // See which child activity is calling us back.
-    switch (resultCode) {
+    switch (requestCode) {
         case CHOOSE_FIGHTER:
             // This is the standard resultCode that is sent back if the
             // activity crashed or didn't doesn't supply an explicit result.
@@ -256,7 +257,7 @@ protected void onActivityResult(int requestCode, int resultCode, Intent data){
             stats.putString("height","6\'2\""); 
             stats.putString("weight", "190 lbs");
             stats.putString("reach", "73\"");
-            setResult(RESULT_OK, "Washington", Bundle);
+            setResult(RESULT_OK, "Washington", stats);
             finish();
         }
     };
@@ -267,7 +268,8 @@ protected void onActivityResult(int requestCode, int resultCode, Intent data){
     {@link android.app.Activity#finishActivity(int) Activity.finishActivity()}
     on any screens that it opens to close them. </p>
 <a name="listening" id="listening"></a><h2>Listening for Button Clicks</h2>
-<p>Button click and other UI event capturing are covered in <a href="{@docRoot}guide/topics/ui/ui-events.html">Handling UI Events</a> on the UI Design page.</p>
+<p>Button click and other UI event capturing are covered in <a
+href="{@docRoot}guide/topics/ui/ui-events.html">Input Events</a>.</p>
 <a name="configurewindowproperties" id="configurewindowproperties"></a><h2>Configuring General Window Properties</h2>
 <p>You can set a number of general window properties, such as whether to display
     a title, whether the window is floating, and whether it displays an icon, by
@@ -288,7 +290,12 @@ your application is starting up. With the explicit method call, your application
 will have a title bar visible to the user until <code>onCreate</code> runs.</p>
 <p>(Note that this can be applied to either the <code>&lt;application&gt;</code>
 tag or to individual <code>&lt;activity&gt;</code> tags.)</p>
-<a name="localhostalias" id="localhostalias"></a><h2>Referring to localhost from the emulated environment</h2>
+<p class="caution"><strong>Caution:</strong> This theme will also hide the Action Bar on Android
+3.0 and higher. If you want to keep the Action Bar, but hide the title bar, see how you can <a
+href="{@docRoot}guide/topics/ui/themes.html#SelectATheme">select a theme based on platform
+version</a>.</p>
+<a name="localhostalias" id="localhostalias"></a><h2>Referring to localhost from the emulated
+environment</h2>
 <p>
 If you need to refer to your host computer's <em>localhost</em>, such as when you 
 want the emulator client to contact a server running on the same host, use the alias 
@@ -309,7 +316,8 @@ loopback interface.
     the application is finalized. See the topics for {@link android.app.Activity#onSaveInstanceState} and
     {@link android.app.Activity#onCreate} for
     examples of storing and retrieving state.</p>
-<p>Read more about the lifecycle of an application in <a href="{@docRoot}guide/topics/fundamentals.html">Application Fundamentals</a>.</p>
+<p>Read more about the lifecycle of an activity in <a
+href="{@docRoot}guide/topics/fundamentals/activities.html">Activities</a> document.</p>
 <h3>Storing and Retrieving Larger or More Complex Persistent Data<a name="storingandretrieving" id="storingandretrieving"></a></h3>
 <p>Your application can store files or complex collection objects, and reserve them
     for private use by itself or other activities in the application, or it can expose
@@ -536,7 +544,7 @@ focus to the notification before they can interact with it.</p>
     which enables a  dialog box with an embedded progress bar to send a &quot;I'm working
     on it&quot; notification to the user. </p>
 <a name="addmenuitems" id="addmenuitems"></a><h2>Adding Items to the Screen Menu</h2>
-<p>See <a href="{@docRoot}guide/topics/ui/menus.html">Creating Menus</a>.</p>
+<p>See <a href="{@docRoot}guide/topics/ui/menus.html">Menus</a>.</p>
 
 <a name="webpage" id="webpage"></a><h2>Display a Web Page</h2>
 <p>Use the {@link android.webkit.WebView webkit.WebView} object. </p>

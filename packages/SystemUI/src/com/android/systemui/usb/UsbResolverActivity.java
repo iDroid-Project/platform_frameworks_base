@@ -23,6 +23,7 @@ import android.content.Intent;
 import android.content.pm.ResolveInfo;
 import android.hardware.usb.IUsbManager;
 import android.hardware.usb.UsbAccessory;
+import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.os.Bundle;
 import android.os.IBinder;
@@ -41,6 +42,7 @@ public class UsbResolverActivity extends ResolverActivity {
     public static final String TAG = "UsbResolverActivity";
     public static final String EXTRA_RESOLVE_INFOS = "rlist";
 
+    private UsbDevice mDevice;
     private UsbAccessory mAccessory;
     private UsbDisconnectedReceiver mDisconnectedReceiver;
 
@@ -61,16 +63,25 @@ public class UsbResolverActivity extends ResolverActivity {
 
         CheckBox alwaysUse = (CheckBox)findViewById(com.android.internal.R.id.alwaysUse);
         if (alwaysUse != null) {
-            alwaysUse.setText(R.string.always_use_accessory);
+            if (mDevice == null) {
+                alwaysUse.setText(R.string.always_use_accessory);
+            } else {
+                alwaysUse.setText(R.string.always_use_device);
+            }
         }
 
-        mAccessory = (UsbAccessory)target.getParcelableExtra(UsbManager.EXTRA_ACCESSORY);
-        if (mAccessory == null) {
-            Log.e(TAG, "accessory is null");
-            finish();
-            return;
+        mDevice = (UsbDevice)target.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+        if (mDevice != null) {
+            mDisconnectedReceiver = new UsbDisconnectedReceiver(this, mDevice);
+        } else {
+            mAccessory = (UsbAccessory)target.getParcelableExtra(UsbManager.EXTRA_ACCESSORY);
+            if (mAccessory == null) {
+                Log.e(TAG, "no device or accessory");
+                finish();
+                return;
+            }
+            mDisconnectedReceiver = new UsbDisconnectedReceiver(this, mAccessory);
         }
-        mDisconnectedReceiver = new UsbDisconnectedReceiver(this, mAccessory);
     }
 
     @Override
@@ -87,13 +98,24 @@ public class UsbResolverActivity extends ResolverActivity {
             IUsbManager service = IUsbManager.Stub.asInterface(b);
             int uid = ri.activityInfo.applicationInfo.uid;
 
-            // grant permission for the accessory
-            service.grantAccessoryPermission(mAccessory, uid);
-            // set or clear default setting
-            if (alwaysCheck) {
-                service.setAccessoryPackage(mAccessory, ri.activityInfo.packageName);
-            } else {
-                service.setAccessoryPackage(mAccessory, null);
+            if (mDevice != null) {
+                // grant permission for the device
+                service.grantDevicePermission(mDevice, uid);
+                // set or clear default setting
+                if (alwaysCheck) {
+                    service.setDevicePackage(mDevice, ri.activityInfo.packageName);
+                } else {
+                    service.setDevicePackage(mDevice, null);
+                }
+            } else if (mAccessory != null) {
+                // grant permission for the accessory
+                service.grantAccessoryPermission(mAccessory, uid);
+                // set or clear default setting
+                if (alwaysCheck) {
+                    service.setAccessoryPackage(mAccessory, ri.activityInfo.packageName);
+                } else {
+                    service.setAccessoryPackage(mAccessory, null);
+                }
             }
 
             try {

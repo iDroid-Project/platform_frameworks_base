@@ -17,6 +17,7 @@
 
 package android.view;
 
+import android.content.ClipData;
 import android.content.res.Configuration;
 import android.graphics.Rect;
 import android.graphics.Region;
@@ -33,10 +34,10 @@ import android.view.Surface;
  * {@hide}
  */
 interface IWindowSession {
-    int add(IWindow window, in WindowManager.LayoutParams attrs,
+    int add(IWindow window, int seq, in WindowManager.LayoutParams attrs,
             in int viewVisibility, out Rect outContentInsets,
             out InputChannel outInputChannel);
-    int addWithoutInputChannel(IWindow window, in WindowManager.LayoutParams attrs,
+    int addWithoutInputChannel(IWindow window, int seq, in WindowManager.LayoutParams attrs,
             in int viewVisibility, out Rect outContentInsets);
     void remove(IWindow window);
     
@@ -48,6 +49,7 @@ interface IWindowSession {
      * to draw the window's contents.
      * 
      * @param window The window being modified.
+     * @param seq Ordering sequence number.
      * @param attrs If non-null, new attributes to apply to the window.
      * @param requestedWidth The width the window wants to be.
      * @param requestedHeight The height the window wants to be.
@@ -76,11 +78,16 @@ interface IWindowSession {
      * @return int Result flags: {@link WindowManagerImpl#RELAYOUT_SHOW_FOCUS},
      * {@link WindowManagerImpl#RELAYOUT_FIRST_TIME}.
      */
-    int relayout(IWindow window, in WindowManager.LayoutParams attrs,
+    int relayout(IWindow window, int seq, in WindowManager.LayoutParams attrs,
             int requestedWidth, int requestedHeight, int viewVisibility,
             boolean insetsPending, out Rect outFrame, out Rect outContentInsets,
             out Rect outVisibleInsets, out Configuration outConfig,
             out Surface outSurface);
+
+    /**
+     * Called by a client to report that it ran out of graphics memory.
+     */
+    boolean outOfMemory(IWindow window);
 
     /**
      * Give the window manager a hint of the part of the window that is
@@ -100,7 +107,7 @@ interface IWindowSession {
      * {@link android.view.ViewTreeObserver.InternalInsetsInfo}.
      */
     void setInsets(IWindow window, int touchableInsets, in Rect contentInsets,
-            in Rect visibleInsets);
+            in Rect visibleInsets, in Region touchableRegion);
     
     /**
      * Return the current display size in which the window is being laid out,
@@ -115,6 +122,37 @@ interface IWindowSession {
     
     boolean performHapticFeedback(IWindow window, int effectId, boolean always);
     
+    /**
+     * Allocate the drag's thumbnail surface.  Also assigns a token that identifies
+     * the drag to the OS and passes that as the return value.  A return value of
+     * null indicates failure.
+     */
+    IBinder prepareDrag(IWindow window, int flags,
+            int thumbnailWidth, int thumbnailHeight, out Surface outSurface);
+
+    /**
+     * Initiate the drag operation itself
+     */
+    boolean performDrag(IWindow window, IBinder dragToken, float touchX, float touchY,
+            float thumbCenterX, float thumbCenterY, in ClipData data);
+
+	/**
+	 * Report the result of a drop action targeted to the given window.
+	 * consumed is 'true' when the drop was accepted by a valid recipient,
+	 * 'false' otherwise.
+	 */
+	void reportDropResult(IWindow window, boolean consumed);
+
+    /**
+     * Tell the OS that we've just dragged into a View that is willing to accept the drop
+     */
+    void dragRecipientEntered(IWindow window);
+
+    /**
+     * Tell the OS that we've just dragged *off* of a View that was willing to accept the drop
+     */
+    void dragRecipientExited(IWindow window);
+
     /**
      * For windows with the wallpaper behind them, and the wallpaper is
      * larger than the screen, set the offset within the screen.

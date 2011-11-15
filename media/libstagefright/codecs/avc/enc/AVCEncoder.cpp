@@ -33,6 +33,80 @@
 
 namespace android {
 
+static status_t ConvertOmxAvcProfileToAvcSpecProfile(
+        int32_t omxProfile, AVCProfile* pvProfile) {
+    LOGV("ConvertOmxAvcProfileToAvcSpecProfile: %d", omxProfile);
+    switch (omxProfile) {
+        case OMX_VIDEO_AVCProfileBaseline:
+            *pvProfile = AVC_BASELINE;
+            return OK;
+        default:
+            LOGE("Unsupported omx profile: %d", omxProfile);
+    }
+    return BAD_VALUE;
+}
+
+static status_t ConvertOmxAvcLevelToAvcSpecLevel(
+        int32_t omxLevel, AVCLevel *pvLevel) {
+    LOGV("ConvertOmxAvcLevelToAvcSpecLevel: %d", omxLevel);
+    AVCLevel level = AVC_LEVEL5_1;
+    switch (omxLevel) {
+        case OMX_VIDEO_AVCLevel1:
+            level = AVC_LEVEL1_B;
+            break;
+        case OMX_VIDEO_AVCLevel1b:
+            level = AVC_LEVEL1;
+            break;
+        case OMX_VIDEO_AVCLevel11:
+            level = AVC_LEVEL1_1;
+            break;
+        case OMX_VIDEO_AVCLevel12:
+            level = AVC_LEVEL1_2;
+            break;
+        case OMX_VIDEO_AVCLevel13:
+            level = AVC_LEVEL1_3;
+            break;
+        case OMX_VIDEO_AVCLevel2:
+            level = AVC_LEVEL2;
+            break;
+        case OMX_VIDEO_AVCLevel21:
+            level = AVC_LEVEL2_1;
+            break;
+        case OMX_VIDEO_AVCLevel22:
+            level = AVC_LEVEL2_2;
+            break;
+        case OMX_VIDEO_AVCLevel3:
+            level = AVC_LEVEL3;
+            break;
+        case OMX_VIDEO_AVCLevel31:
+            level = AVC_LEVEL3_1;
+            break;
+        case OMX_VIDEO_AVCLevel32:
+            level = AVC_LEVEL3_2;
+            break;
+        case OMX_VIDEO_AVCLevel4:
+            level = AVC_LEVEL4;
+            break;
+        case OMX_VIDEO_AVCLevel41:
+            level = AVC_LEVEL4_1;
+            break;
+        case OMX_VIDEO_AVCLevel42:
+            level = AVC_LEVEL4_2;
+            break;
+        case OMX_VIDEO_AVCLevel5:
+            level = AVC_LEVEL5;
+            break;
+        case OMX_VIDEO_AVCLevel51:
+            level = AVC_LEVEL5_1;
+            break;
+        default:
+            LOGE("Unknown omx level: %d", omxLevel);
+            return BAD_VALUE;
+    }
+    *pvLevel = level;
+    return OK;
+}
+
 inline static void ConvertYUV420SemiPlanarToYUV420Planar(
         uint8_t *inyuv, uint8_t* outyuv,
         int32_t width, int32_t height) {
@@ -104,7 +178,7 @@ AVCEncoder::AVCEncoder(
       mInputFrameData(NULL),
       mGroup(NULL) {
 
-    LOGV("Construct software AVCEncoder");
+    LOGI("Construct software AVCEncoder");
 
     mHandle = new tagAVCHandle;
     memset(mHandle, 0, sizeof(tagAVCHandle));
@@ -133,7 +207,7 @@ status_t AVCEncoder::initCheck(const sp<MetaData>& meta) {
     LOGV("initCheck");
     CHECK(meta->findInt32(kKeyWidth, &mVideoWidth));
     CHECK(meta->findInt32(kKeyHeight, &mVideoHeight));
-    CHECK(meta->findInt32(kKeySampleRate, &mVideoFrameRate));
+    CHECK(meta->findInt32(kKeyFrameRate, &mVideoFrameRate));
     CHECK(meta->findInt32(kKeyBitRate, &mVideoBitRate));
 
     // XXX: Add more color format support
@@ -231,10 +305,16 @@ status_t AVCEncoder::initCheck(const sp<MetaData>& meta) {
     mEncParams->level = AVC_LEVEL3_2;
     int32_t profile, level;
     if (meta->findInt32(kKeyVideoProfile, &profile)) {
-        mEncParams->profile = (AVCProfile) profile;
+        if (OK != ConvertOmxAvcProfileToAvcSpecProfile(
+                        profile, &mEncParams->profile)) {
+            return BAD_VALUE;
+        }
     }
     if (meta->findInt32(kKeyVideoLevel, &level)) {
-        mEncParams->level = (AVCLevel) level;
+        if (OK != ConvertOmxAvcLevelToAvcSpecLevel(
+                        level, &mEncParams->level)) {
+            return BAD_VALUE;
+        }
     }
 
 
@@ -242,7 +322,7 @@ status_t AVCEncoder::initCheck(const sp<MetaData>& meta) {
     mFormat->setInt32(kKeyWidth, mVideoWidth);
     mFormat->setInt32(kKeyHeight, mVideoHeight);
     mFormat->setInt32(kKeyBitRate, mVideoBitRate);
-    mFormat->setInt32(kKeySampleRate, mVideoFrameRate);
+    mFormat->setInt32(kKeyFrameRate, mVideoFrameRate);
     mFormat->setInt32(kKeyColorFormat, mVideoColorFormat);
     mFormat->setCString(kKeyMIMEType, MEDIA_MIMETYPE_VIDEO_AVC);
     mFormat->setCString(kKeyDecoderComponent, "AVCEncoder");
@@ -395,7 +475,9 @@ status_t AVCEncoder::read(
         }
         status_t err = mSource->read(&mInputBuffer, options);
         if (err != OK) {
-            LOGE("Failed to read input video frame: %d", err);
+            if (err != ERROR_END_OF_STREAM) {
+                LOGE("Failed to read input video frame: %d", err);
+            }
             outputBuffer->release();
             return err;
         }

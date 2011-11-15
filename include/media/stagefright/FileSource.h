@@ -23,6 +23,7 @@
 #include <media/stagefright/DataSource.h>
 #include <media/stagefright/MediaErrors.h>
 #include <utils/threads.h>
+#include <drm/DrmManagerClient.h>
 
 namespace android {
 
@@ -33,18 +34,31 @@ public:
 
     virtual status_t initCheck() const;
 
-    virtual ssize_t readAt(off_t offset, void *data, size_t size);
+    virtual ssize_t readAt(off64_t offset, void *data, size_t size);
 
-    virtual status_t getSize(off_t *size);
+    virtual status_t getSize(off64_t *size);
+
+    virtual sp<DecryptHandle> DrmInitialization();
+
+    virtual void getDrmInfo(sp<DecryptHandle> &handle, DrmManagerClient **client);
 
 protected:
     virtual ~FileSource();
 
 private:
-    FILE *mFile;
+    int mFd;
     int64_t mOffset;
     int64_t mLength;
     Mutex mLock;
+
+    /*for DRM*/
+    sp<DecryptHandle> mDecryptHandle;
+    DrmManagerClient *mDrmManagerClient;
+    int64_t mDrmBufOffset;
+    int64_t mDrmBufSize;
+    unsigned char *mDrmBuf;
+
+    ssize_t readAtDRM(off64_t offset, void *data, size_t size);
 
     FileSource(const FileSource &);
     FileSource &operator=(const FileSource &);

@@ -24,8 +24,39 @@
 namespace android {
 
 enum camcorder_quality {
+    CAMCORDER_QUALITY_LIST_START = 0,
     CAMCORDER_QUALITY_LOW  = 0,
-    CAMCORDER_QUALITY_HIGH = 1
+    CAMCORDER_QUALITY_HIGH = 1,
+    CAMCORDER_QUALITY_QCIF = 2,
+    CAMCORDER_QUALITY_CIF = 3,
+    CAMCORDER_QUALITY_480P = 4,
+    CAMCORDER_QUALITY_720P = 5,
+    CAMCORDER_QUALITY_1080P = 6,
+    CAMCORDER_QUALITY_QVGA = 7,
+    CAMCORDER_QUALITY_LIST_END = 7,
+
+    CAMCORDER_QUALITY_TIME_LAPSE_LIST_START = 1000,
+    CAMCORDER_QUALITY_TIME_LAPSE_LOW  = 1000,
+    CAMCORDER_QUALITY_TIME_LAPSE_HIGH = 1001,
+    CAMCORDER_QUALITY_TIME_LAPSE_QCIF = 1002,
+    CAMCORDER_QUALITY_TIME_LAPSE_CIF = 1003,
+    CAMCORDER_QUALITY_TIME_LAPSE_480P = 1004,
+    CAMCORDER_QUALITY_TIME_LAPSE_720P = 1005,
+    CAMCORDER_QUALITY_TIME_LAPSE_1080P = 1006,
+    CAMCORDER_QUALITY_TIME_LAPSE_QVGA = 1007,
+    CAMCORDER_QUALITY_TIME_LAPSE_LIST_END = 1007,
+};
+
+/**
+ *Set CIF as default maximum import and export resolution of video editor.
+ *The maximum import and export resolutions are platform specific,
+ *which should be defined in media_profiles.xml.
+ */
+enum videoeditor_capability {
+    VIDEOEDITOR_DEFAULT_MAX_INPUT_FRAME_WIDTH = 352,
+    VIDEOEDITOR_DEFUALT_MAX_INPUT_FRAME_HEIGHT = 288,
+    VIDEOEDITOR_DEFAULT_MAX_OUTPUT_FRAME_WIDTH = 352,
+    VIDEOEDITOR_DEFUALT_MAX_OUTPUT_FRAME_HEIGHT = 288,
 };
 
 enum video_decoder {
@@ -68,6 +99,12 @@ public:
                                        camcorder_quality quality) const;
 
     /**
+     * Returns true if a profile for the given camera at the given quality exists,
+     * or false if not.
+     */
+    bool hasCamcorderProfile(int cameraId, camcorder_quality quality) const;
+
+    /**
      * Returns the output file formats supported.
      */
     Vector<output_format> getOutputFileFormats() const;
@@ -92,6 +129,30 @@ public:
      * enc.vid.fps.max - max frame rate in frames per second
      */
     int getVideoEncoderParamByName(const char *name, video_encoder codec) const;
+
+    /**
+     * Returns the value for the given param name for the video editor cap
+     * param or -1 if error.
+     * Supported param name are:
+     * videoeditor.input.width.max - max input video frame width
+     * videoeditor.input.height.max - max input video frame height
+     * videoeditor.output.width.max - max output video frame width
+     * videoeditor.output.height.max - max output video frame height
+     */
+    int getVideoEditorCapParamByName(const char *name) const;
+
+    /**
+     * Returns the value for the given param name for the video editor export codec format
+     * param or -1 if error.
+     * Supported param name are:
+     * videoeditor.export.profile - export video profile
+     * videoeditor.export.level - export video level
+     * Supported param codec are:
+     * 1 for h263
+     * 2 for h264
+     * 3 for mpeg4
+     */
+    int getVideoEditorExportParamByName(const char *name, int codec) const;
 
     /**
      * Returns the audio encoders supported.
@@ -127,10 +188,21 @@ public:
      */
     Vector<int> getImageEncodingQualityLevels(int cameraId) const;
 
+    /**
+     * Returns the start time offset (in ms) for the given camera Id.
+     * If the given camera Id does not exist, -1 will be returned.
+     */
+    int getStartTimeOffsetMs(int cameraId) const;
+
 private:
+    enum {
+        // Camcorder profiles (high/low) and timelapse profiles (high/low)
+        kNumRequiredProfiles = 4,
+    };
+
     MediaProfiles& operator=(const MediaProfiles&);  // Don't call me
     MediaProfiles(const MediaProfiles&);             // Don't call me
-    MediaProfiles() {}                               // Dummy default constructor
+    MediaProfiles() { mVideoEditorCap = NULL; }        // Dummy default constructor
     ~MediaProfiles();                                // Don't delete me
 
     struct VideoCodec {
@@ -140,6 +212,14 @@ private:
               mFrameWidth(frameWidth),
               mFrameHeight(frameHeight),
               mFrameRate(frameRate) {}
+
+        VideoCodec(const VideoCodec& copy) {
+            mCodec = copy.mCodec;
+            mBitRate = copy.mBitRate;
+            mFrameWidth = copy.mFrameWidth;
+            mFrameHeight = copy.mFrameHeight;
+            mFrameRate = copy.mFrameRate;
+        }
 
         ~VideoCodec() {}
 
@@ -157,6 +237,13 @@ private:
               mSampleRate(sampleRate),
               mChannels(channels) {}
 
+        AudioCodec(const AudioCodec& copy) {
+            mCodec = copy.mCodec;
+            mBitRate = copy.mBitRate;
+            mSampleRate = copy.mSampleRate;
+            mChannels = copy.mChannels;
+        }
+
         ~AudioCodec() {}
 
         audio_encoder mCodec;
@@ -173,6 +260,15 @@ private:
               mDuration(0),
               mVideoCodec(0),
               mAudioCodec(0) {}
+
+        CamcorderProfile(const CamcorderProfile& copy) {
+            mCameraId = copy.mCameraId;
+            mFileFormat = copy.mFileFormat;
+            mQuality = copy.mQuality;
+            mDuration = copy.mDuration;
+            mVideoCodec = new VideoCodec(*copy.mVideoCodec);
+            mAudioCodec = new AudioCodec(*copy.mAudioCodec);
+        }
 
         ~CamcorderProfile() {
             delete mVideoCodec;
@@ -251,6 +347,33 @@ private:
         int mCameraId;
         Vector<int> mLevels;
     };
+    struct ExportVideoProfile {
+        ExportVideoProfile(int codec, int profile, int level)
+            :mCodec(codec),mProfile(profile),mLevel(level) {}
+        ~ExportVideoProfile() {}
+        int mCodec;
+        int mProfile;
+        int mLevel;
+    };
+    struct VideoEditorCap {
+        VideoEditorCap(int inFrameWidth, int inFrameHeight,
+            int outFrameWidth, int outFrameHeight)
+            : mMaxInputFrameWidth(inFrameWidth),
+              mMaxInputFrameHeight(inFrameHeight),
+              mMaxOutputFrameWidth(outFrameWidth),
+              mMaxOutputFrameHeight(outFrameHeight) {}
+
+        ~VideoEditorCap() {}
+
+        int mMaxInputFrameWidth;
+        int mMaxInputFrameHeight;
+        int mMaxOutputFrameWidth;
+        int mMaxOutputFrameHeight;
+    };
+
+    int getCamcorderProfileIndex(int cameraId, camcorder_quality quality) const;
+    void initRequiredProfileRefs(const Vector<int>& cameraIds);
+    int getRequiredProfileRefIndex(int cameraId);
 
     // Debug
     static void logVideoCodec(const VideoCodec& codec);
@@ -259,6 +382,7 @@ private:
     static void logAudioEncoderCap(const AudioEncoderCap& cap);
     static void logVideoDecoderCap(const VideoDecoderCap& cap);
     static void logAudioDecoderCap(const AudioDecoderCap& cap);
+    static void logVideoEditorCap(const VideoEditorCap& cap);
 
     // If the xml configuration file does exist, use the settings
     // from the xml
@@ -270,8 +394,16 @@ private:
     static VideoDecoderCap* createVideoDecoderCap(const char **atts);
     static VideoEncoderCap* createVideoEncoderCap(const char **atts);
     static AudioEncoderCap* createAudioEncoderCap(const char **atts);
-    static CamcorderProfile* createCamcorderProfile(int cameraId, const char **atts);
+    static VideoEditorCap* createVideoEditorCap(
+                const char **atts, MediaProfiles *profiles);
+    static ExportVideoProfile* createExportVideoProfile(const char **atts);
+
+    static CamcorderProfile* createCamcorderProfile(
+                int cameraId, const char **atts, Vector<int>& cameraIds);
+
     static int getCameraId(const char **atts);
+
+    void addStartTimeOffset(int cameraId, const char **atts);
 
     ImageEncodingQualityLevels* findImageEncodingQualityLevels(int cameraId) const;
     void addImageEncodingQualityLevel(int cameraId, const char** atts);
@@ -281,8 +413,25 @@ private:
 
     // If the xml configuration file does not exist, use hard-coded values
     static MediaProfiles* createDefaultInstance();
-    static CamcorderProfile *createDefaultCamcorderLowProfile();
-    static CamcorderProfile *createDefaultCamcorderHighProfile();
+
+    static CamcorderProfile *createDefaultCamcorderQcifProfile(camcorder_quality quality);
+    static CamcorderProfile *createDefaultCamcorderCifProfile(camcorder_quality quality);
+    static void createDefaultCamcorderLowProfiles(
+            MediaProfiles::CamcorderProfile **lowProfile,
+            MediaProfiles::CamcorderProfile **lowSpecificProfile);
+    static void createDefaultCamcorderHighProfiles(
+            MediaProfiles::CamcorderProfile **highProfile,
+            MediaProfiles::CamcorderProfile **highSpecificProfile);
+
+    static CamcorderProfile *createDefaultCamcorderTimeLapseQcifProfile(camcorder_quality quality);
+    static CamcorderProfile *createDefaultCamcorderTimeLapse480pProfile(camcorder_quality quality);
+    static void createDefaultCamcorderTimeLapseLowProfiles(
+            MediaProfiles::CamcorderProfile **lowTimeLapseProfile,
+            MediaProfiles::CamcorderProfile **lowSpecificTimeLapseProfile);
+    static void createDefaultCamcorderTimeLapseHighProfiles(
+            MediaProfiles::CamcorderProfile **highTimeLapseProfile,
+            MediaProfiles::CamcorderProfile **highSpecificTimeLapseProfile);
+
     static void createDefaultCamcorderProfiles(MediaProfiles *profiles);
     static void createDefaultVideoEncoders(MediaProfiles *profiles);
     static void createDefaultAudioEncoders(MediaProfiles *profiles);
@@ -291,11 +440,29 @@ private:
     static void createDefaultEncoderOutputFileFormats(MediaProfiles *profiles);
     static void createDefaultImageEncodingQualityLevels(MediaProfiles *profiles);
     static void createDefaultImageDecodingMaxMemory(MediaProfiles *profiles);
+    static void createDefaultVideoEditorCap(MediaProfiles *profiles);
+    static void createDefaultExportVideoProfiles(MediaProfiles *profiles);
+
     static VideoEncoderCap* createDefaultH263VideoEncoderCap();
     static VideoEncoderCap* createDefaultM4vVideoEncoderCap();
     static AudioEncoderCap* createDefaultAmrNBEncoderCap();
 
     static int findTagForName(const NameToTagMap *map, size_t nMappings, const char *name);
+
+    /**
+     * Check on existing profiles with the following criteria:
+     * 1. Low quality profile must have the lowest video
+     *    resolution product (width x height)
+     * 2. High quality profile must have the highest video
+     *    resolution product (width x height)
+     *
+     * and add required low/high quality camcorder/timelapse
+     * profiles if they are not found. This allows to remove
+     * duplicate profile definitions in the media_profiles.xml
+     * file.
+     */
+    void checkAndAddRequiredProfilesIfNecessary();
+
 
     // Mappings from name (for instance, codec name) to enum value
     static const NameToTagMap sVideoEncoderNameMap[];
@@ -317,6 +484,23 @@ private:
     Vector<VideoDecoderCap*>  mVideoDecoders;
     Vector<output_format>     mEncoderOutputFileFormats;
     Vector<ImageEncodingQualityLevels *>  mImageEncodingQualityLevels;
+    KeyedVector<int, int> mStartTimeOffsets;
+
+    typedef struct {
+        bool mHasRefProfile;      // Refers to an existing profile
+        int  mRefProfileIndex;    // Reference profile index
+        int  mResolutionProduct;  // width x height
+    } RequiredProfileRefInfo;     // Required low and high profiles
+
+    typedef struct {
+        RequiredProfileRefInfo mRefs[kNumRequiredProfiles];
+        int mCameraId;
+    } RequiredProfiles;
+
+    RequiredProfiles *mRequiredProfileRefs;
+    Vector<int>              mCameraIds;
+    VideoEditorCap* mVideoEditorCap;
+    Vector<ExportVideoProfile*> mVideoEditorExportProfiles;
 };
 
 }; // namespace android

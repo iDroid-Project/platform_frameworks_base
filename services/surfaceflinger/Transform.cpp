@@ -20,47 +20,12 @@
 #include <utils/String8.h>
 #include <ui/Region.h>
 
+#include "clz.h"
 #include "Transform.h"
 
 // ---------------------------------------------------------------------------
 
 namespace android {
-
-// ---------------------------------------------------------------------------
-
-template <typename T>
-static inline T min(T a, T b) {
-    return a<b ? a : b;
-}
-template <typename T>
-static inline T min(T a, T b, T c) {
-    return min(a, min(b, c));
-}
-template <typename T>
-static inline T min(T a, T b, T c, T d) {
-    return min(a, b, min(c, d));
-}
-
-template <typename T>
-static inline T max(T a, T b) {
-    return a>b ? a : b;
-}
-template <typename T>
-static inline T max(T a, T b, T c) {
-    return max(a, max(b, c));
-}
-template <typename T>
-static inline T max(T a, T b, T c, T d) {
-    return max(a, b, max(c, d));
-}
-
-template <typename T>
-static inline
-void swap(T& a, T& b) {
-    T t(a);
-    a = b;
-    b = t;
-}
 
 // ---------------------------------------------------------------------------
 
@@ -126,12 +91,12 @@ bool Transform::transformed() const {
     return type() > TRANSLATE;
 }
 
-int Transform::tx() const {
-    return floorf(mMatrix[2][0] + 0.5f);
+float Transform::tx() const {
+    return mMatrix[2][0];
 }
 
-int Transform::ty() const {
-    return floorf(mMatrix[2][1] + 0.5f);
+float Transform::ty() const {
+    return mMatrix[2][1];
 }
 
 void Transform::reset() {
@@ -274,7 +239,9 @@ Region Transform::transform(const Region& reg) const
             out.set(transform(reg.bounds()));
         }
     } else {
-        out = reg.translate(tx(), ty());
+        int xpos = floorf(tx() + 0.5f);
+        int ypos = floorf(ty() + 0.5f);
+        out = reg.translate(xpos, ypos);
     }
     return out;
 }
@@ -308,6 +275,7 @@ uint32_t Transform::type() const
                 scale = true;
             }
         } else {
+            // there is a skew component and/or a non 90 degrees rotation
             flags = ROT_INVALID;
         }
 
@@ -342,7 +310,7 @@ uint32_t Transform::getOrientation() const
 
 bool Transform::preserveRects() const
 {
-    return (type() & ROT_INVALID) ? false : true;
+    return (getOrientation() & ROT_INVALID) ? false : true;
 }
 
 void Transform::dump(const char* name) const

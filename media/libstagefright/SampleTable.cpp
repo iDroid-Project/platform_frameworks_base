@@ -23,8 +23,8 @@
 
 #include <arpa/inet.h>
 
+#include <media/stagefright/foundation/ADebug.h>
 #include <media/stagefright/DataSource.h>
-#include <media/stagefright/MediaDebug.h>
 #include <media/stagefright/Utils.h>
 
 namespace android {
@@ -37,6 +37,71 @@ const uint32_t SampleTable::kChunkOffsetType64 = FOURCC('c', 'o', '6', '4');
 const uint32_t SampleTable::kSampleSizeType32 = FOURCC('s', 't', 's', 'z');
 // static
 const uint32_t SampleTable::kSampleSizeTypeCompact = FOURCC('s', 't', 'z', '2');
+
+////////////////////////////////////////////////////////////////////////////////
+
+struct SampleTable::CompositionDeltaLookup {
+    CompositionDeltaLookup();
+
+    void setEntries(
+            const uint32_t *deltaEntries, size_t numDeltaEntries);
+
+    uint32_t getCompositionTimeOffset(uint32_t sampleIndex);
+
+private:
+    Mutex mLock;
+
+    const uint32_t *mDeltaEntries;
+    size_t mNumDeltaEntries;
+
+    size_t mCurrentDeltaEntry;
+    size_t mCurrentEntrySampleIndex;
+
+    DISALLOW_EVIL_CONSTRUCTORS(CompositionDeltaLookup);
+};
+
+SampleTable::CompositionDeltaLookup::CompositionDeltaLookup()
+    : mDeltaEntries(NULL),
+      mNumDeltaEntries(0),
+      mCurrentDeltaEntry(0),
+      mCurrentEntrySampleIndex(0) {
+}
+
+void SampleTable::CompositionDeltaLookup::setEntries(
+        const uint32_t *deltaEntries, size_t numDeltaEntries) {
+    Mutex::Autolock autolock(mLock);
+
+    mDeltaEntries = deltaEntries;
+    mNumDeltaEntries = numDeltaEntries;
+    mCurrentDeltaEntry = 0;
+    mCurrentEntrySampleIndex = 0;
+}
+
+uint32_t SampleTable::CompositionDeltaLookup::getCompositionTimeOffset(
+        uint32_t sampleIndex) {
+    Mutex::Autolock autolock(mLock);
+
+    if (mDeltaEntries == NULL) {
+        return 0;
+    }
+
+    if (sampleIndex < mCurrentEntrySampleIndex) {
+        mCurrentDeltaEntry = 0;
+        mCurrentEntrySampleIndex = 0;
+    }
+
+    while (mCurrentDeltaEntry < mNumDeltaEntries) {
+        uint32_t sampleCount = mDeltaEntries[2 * mCurrentDeltaEntry];
+        if (sampleIndex < mCurrentEntrySampleIndex + sampleCount) {
+            return mDeltaEntries[2 * mCurrentDeltaEntry + 1];
+        }
+
+        mCurrentEntrySampleIndex += sampleCount;
+        ++mCurrentDeltaEntry;
+    }
+
+    return 0;
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -53,6 +118,10 @@ SampleTable::SampleTable(const sp<DataSource> &source)
       mNumSampleSizes(0),
       mTimeToSampleCount(0),
       mTimeToSample(NULL),
+      mSampleTimeEntries(NULL),
+      mCompositionTimeDeltaEntries(NULL),
+      mNumCompositionTimeDeltaEntries(0),
+      mCompositionDeltaLookup(new CompositionDeltaLookup),
       mSyncSampleOffset(-1),
       mNumSyncSamples(0),
       mSyncSamples(NULL),
@@ -68,6 +137,15 @@ SampleTable::~SampleTable() {
     delete[] mSyncSamples;
     mSyncSamples = NULL;
 
+    delete mCompositionDeltaLookup;
+    mCompositionDeltaLookup = NULL;
+
+    delete[] mCompositionTimeDeltaEntries;
+    mCompositionTimeDeltaEntries = NULL;
+
+    delete[] mSampleTimeEntries;
+    mSampleTimeEntries = NULL;
+
     delete[] mTimeToSample;
     mTimeToSample = NULL;
 
@@ -75,8 +153,15 @@ SampleTable::~SampleTable() {
     mSampleIterator = NULL;
 }
 
+bool SampleTable::isValid() const {
+    return mChunkOffsetOffset >= 0
+        && mSampleToChunkOffset >= 0
+        && mSampleSizeOffset >= 0
+        && mTimeToSample != NULL;
+}
+
 status_t SampleTable::setChunkOffsetParams(
-        uint32_t type, off_t data_offset, size_t data_size) {
+        uint32_t type, off64_t data_offset, size_t data_size) {
     if (mChunkOffsetOffset >= 0) {
         return ERROR_MALFORMED;
     }
@@ -117,7 +202,7 @@ status_t SampleTable::setChunkOffsetParams(
 }
 
 status_t SampleTable::setSampleToChunkParams(
-        off_t data_offset, size_t data_size) {
+        off64_t data_offset, size_t data_size) {
     if (mSampleToChunkOffset >= 0) {
         return ERROR_MALFORMED;
     }
@@ -168,7 +253,7 @@ status_t SampleTable::setSampleToChunkParams(
 }
 
 status_t SampleTable::setSampleSizeParams(
-        uint32_t type, off_t data_offset, size_t data_size) {
+        uint32_t type, off64_t data_offset, size_t data_size) {
     if (mSampleSizeOffset >= 0) {
         return ERROR_MALFORMED;
     }
@@ -211,7 +296,7 @@ status_t SampleTable::setSampleSizeParams(
             return ERROR_MALFORMED;
         }
 
-        mSampleSizeFieldSize = mDefaultSampleSize & 0xf;
+        mSampleSizeFieldSize = mDefaultSampleSize & 0xff;
         mDefaultSampleSize = 0;
 
         if (mSampleSizeFieldSize != 4 && mSampleSizeFieldSize != 8
@@ -228,7 +313,7 @@ status_t SampleTable::setSampleSizeParams(
 }
 
 status_t SampleTable::setTimeToSampleParams(
-        off_t data_offset, size_t data_size) {
+        off64_t data_offset, size_t data_size) {
     if (mTimeToSample != NULL || data_size < 8) {
         return ERROR_MALFORMED;
     }
@@ -260,7 +345,55 @@ status_t SampleTable::setTimeToSampleParams(
     return OK;
 }
 
-status_t SampleTable::setSyncSampleParams(off_t data_offset, size_t data_size) {
+status_t SampleTable::setCompositionTimeToSampleParams(
+        off64_t data_offset, size_t data_size) {
+    LOGI("There are reordered frames present.");
+
+    if (mCompositionTimeDeltaEntries != NULL || data_size < 8) {
+        return ERROR_MALFORMED;
+    }
+
+    uint8_t header[8];
+    if (mDataSource->readAt(
+                data_offset, header, sizeof(header))
+            < (ssize_t)sizeof(header)) {
+        return ERROR_IO;
+    }
+
+    if (U32_AT(header) != 0) {
+        // Expected version = 0, flags = 0.
+        return ERROR_MALFORMED;
+    }
+
+    size_t numEntries = U32_AT(&header[4]);
+
+    if (data_size != (numEntries + 1) * 8) {
+        return ERROR_MALFORMED;
+    }
+
+    mNumCompositionTimeDeltaEntries = numEntries;
+    mCompositionTimeDeltaEntries = new uint32_t[2 * numEntries];
+
+    if (mDataSource->readAt(
+                data_offset + 8, mCompositionTimeDeltaEntries, numEntries * 8)
+            < (ssize_t)numEntries * 8) {
+        delete[] mCompositionTimeDeltaEntries;
+        mCompositionTimeDeltaEntries = NULL;
+
+        return ERROR_IO;
+    }
+
+    for (size_t i = 0; i < 2 * numEntries; ++i) {
+        mCompositionTimeDeltaEntries[i] = ntohl(mCompositionTimeDeltaEntries[i]);
+    }
+
+    mCompositionDeltaLookup->setEntries(
+            mCompositionTimeDeltaEntries, mNumCompositionTimeDeltaEntries);
+
+    return OK;
+}
+
+status_t SampleTable::setSyncSampleParams(off64_t data_offset, size_t data_size) {
     if (mSyncSampleOffset >= 0 || data_size < 8) {
         return ERROR_MALFORMED;
     }
@@ -281,7 +414,7 @@ status_t SampleTable::setSyncSampleParams(off_t data_offset, size_t data_size) {
     mNumSyncSamples = U32_AT(&header[4]);
 
     if (mNumSyncSamples < 2) {
-        LOGW("Table of sync samples is empty or has only a single entry!");
+        LOGV("Table of sync samples is empty or has only a single entry!");
     }
 
     mSyncSamples = new uint32_t[mNumSyncSamples];
@@ -331,65 +464,140 @@ uint32_t abs_difference(uint32_t time1, uint32_t time2) {
     return time1 > time2 ? time1 - time2 : time2 - time1;
 }
 
-status_t SampleTable::findSampleAtTime(
-        uint32_t req_time, uint32_t *sample_index, uint32_t flags) {
-    *sample_index = 0;
+// static
+int SampleTable::CompareIncreasingTime(const void *_a, const void *_b) {
+    const SampleTimeEntry *a = (const SampleTimeEntry *)_a;
+    const SampleTimeEntry *b = (const SampleTimeEntry *)_b;
 
+    if (a->mCompositionTime < b->mCompositionTime) {
+        return -1;
+    } else if (a->mCompositionTime > b->mCompositionTime) {
+        return 1;
+    }
+
+    return 0;
+}
+
+void SampleTable::buildSampleEntriesTable() {
     Mutex::Autolock autoLock(mLock);
 
-    uint32_t cur_sample = 0;
-    uint32_t time = 0;
+    if (mSampleTimeEntries != NULL) {
+        return;
+    }
+
+    mSampleTimeEntries = new SampleTimeEntry[mNumSampleSizes];
+
+    uint32_t sampleIndex = 0;
+    uint32_t sampleTime = 0;
+
     for (uint32_t i = 0; i < mTimeToSampleCount; ++i) {
         uint32_t n = mTimeToSample[2 * i];
         uint32_t delta = mTimeToSample[2 * i + 1];
 
-        if (req_time < time + n * delta) {
-            int j = (req_time - time) / delta;
+        for (uint32_t j = 0; j < n; ++j) {
+            if (sampleIndex < mNumSampleSizes) {
+                // Technically this should always be the case if the file
+                // is well-formed, but you know... there's (gasp) malformed
+                // content out there.
 
-            uint32_t time1 = time + j * delta;
-            uint32_t time2 = time1 + delta;
+                mSampleTimeEntries[sampleIndex].mSampleIndex = sampleIndex;
 
-            uint32_t sampleTime;
-            if (i+1 == mTimeToSampleCount
-                    || (abs_difference(req_time, time1)
-                        < abs_difference(req_time, time2))) {
-                *sample_index = cur_sample + j;
-                sampleTime = time1;
-            } else {
-                *sample_index = cur_sample + j + 1;
-                sampleTime = time2;
+                uint32_t compTimeDelta =
+                    mCompositionDeltaLookup->getCompositionTimeOffset(
+                            sampleIndex);
+
+                mSampleTimeEntries[sampleIndex].mCompositionTime =
+                    sampleTime + compTimeDelta;
             }
 
-            switch (flags) {
-                case kFlagBefore:
-                {
-                    if (sampleTime > req_time && *sample_index > 0) {
-                        --*sample_index;
-                    }
-                    break;
-                }
-
-                case kFlagAfter:
-                {
-                    if (sampleTime < req_time
-                            && *sample_index + 1 < mNumSampleSizes) {
-                        ++*sample_index;
-                    }
-                    break;
-                }
-
-                default:
-                    break;
-            }
-
-            return OK;
+            ++sampleIndex;
+            sampleTime += delta;
         }
-
-        time += delta * n;
-        cur_sample += n;
     }
 
-    return ERROR_OUT_OF_RANGE;
+    qsort(mSampleTimeEntries, mNumSampleSizes, sizeof(SampleTimeEntry),
+          CompareIncreasingTime);
+}
+
+status_t SampleTable::findSampleAtTime(
+        uint32_t req_time, uint32_t *sample_index, uint32_t flags) {
+    buildSampleEntriesTable();
+
+    uint32_t left = 0;
+    uint32_t right = mNumSampleSizes;
+    while (left < right) {
+        uint32_t center = (left + right) / 2;
+        uint32_t centerTime = mSampleTimeEntries[center].mCompositionTime;
+
+        if (req_time < centerTime) {
+            right = center;
+        } else if (req_time > centerTime) {
+            left = center + 1;
+        } else {
+            left = center;
+            break;
+        }
+    }
+
+    if (left == mNumSampleSizes) {
+        if (flags == kFlagAfter) {
+            return ERROR_OUT_OF_RANGE;
+        }
+
+        --left;
+    }
+
+    uint32_t closestIndex = left;
+
+    switch (flags) {
+        case kFlagBefore:
+        {
+            while (closestIndex > 0
+                    && mSampleTimeEntries[closestIndex].mCompositionTime
+                            > req_time) {
+                --closestIndex;
+            }
+            break;
+        }
+
+        case kFlagAfter:
+        {
+            while (closestIndex + 1 < mNumSampleSizes
+                    && mSampleTimeEntries[closestIndex].mCompositionTime
+                            < req_time) {
+                ++closestIndex;
+            }
+            break;
+        }
+
+        default:
+        {
+            CHECK(flags == kFlagClosest);
+
+            if (closestIndex > 0) {
+                // Check left neighbour and pick closest.
+                uint32_t absdiff1 =
+                    abs_difference(
+                            mSampleTimeEntries[closestIndex].mCompositionTime,
+                            req_time);
+
+                uint32_t absdiff2 =
+                    abs_difference(
+                            mSampleTimeEntries[closestIndex - 1].mCompositionTime,
+                            req_time);
+
+                if (absdiff1 > absdiff2) {
+                    closestIndex = closestIndex - 1;
+                }
+            }
+
+            break;
+        }
+    }
+
+    *sample_index = mSampleTimeEntries[closestIndex].mSampleIndex;
+
+    return OK;
 }
 
 status_t SampleTable::findSyncSampleNear(
@@ -419,8 +627,10 @@ status_t SampleTable::findSyncSampleNear(
 
         ++left;
     }
+    if (left > 0) {
+        --left;
+    }
 
-    --left;
     uint32_t x;
     if (mDataSource->readAt(
                 mSyncSampleOffset + 8 + left * 4, &x, 4) != 4) {
@@ -557,9 +767,9 @@ status_t SampleTable::getSampleSize_l(
 
 status_t SampleTable::getMetaDataForSample(
         uint32_t sampleIndex,
-        off_t *offset,
+        off64_t *offset,
         size_t *size,
-        uint32_t *decodingTime,
+        uint32_t *compositionTime,
         bool *isSyncSample) {
     Mutex::Autolock autoLock(mLock);
 
@@ -576,8 +786,8 @@ status_t SampleTable::getMetaDataForSample(
         *size = mSampleIterator->getSampleSize();
     }
 
-    if (decodingTime) {
-        *decodingTime = mSampleIterator->getSampleTime();
+    if (compositionTime) {
+        *compositionTime = mSampleIterator->getSampleTime();
     }
 
     if (isSyncSample) {
@@ -603,6 +813,10 @@ status_t SampleTable::getMetaDataForSample(
     }
 
     return OK;
+}
+
+uint32_t SampleTable::getCompositionTimeOffset(uint32_t sampleIndex) {
+    return mCompositionDeltaLookup->getCompositionTimeOffset(sampleIndex);
 }
 
 }  // namespace android

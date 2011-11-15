@@ -124,6 +124,11 @@ public:
                        const String16& type,
                        const String16& name) const;
 
+    bool hasBagOrEntry(const String16& package,
+                       const String16& type,
+                       const String16& name,
+                       const ResTable_config& config) const;
+
     bool hasBagOrEntry(const String16& ref,
                        const String16* defType = NULL,
                        const String16* defPackage = NULL);
@@ -162,13 +167,13 @@ public:
     uint32_t getResId(const String16& package,
                       const String16& type,
                       const String16& name,
-                      bool onlyPublic = false) const;
+                      bool onlyPublic = true) const;
 
     uint32_t getResId(const String16& ref,
                       const String16* defType = NULL,
                       const String16* defPackage = NULL,
                       const char** outErrorMsg = NULL,
-                      bool onlyPublic = false) const;
+                      bool onlyPublic = true) const;
 
     static bool isValidResourceName(const String16& s);
     
@@ -543,20 +548,5 @@ private:
     // key = string resource name, value = set of locales in which that name is defined
     map<String16, set<String8> > mLocalizations;
 };
-
-class ResourceFilter
-{
-public:
-    ResourceFilter() : mData(), mContainsPseudo(false) {}
-    status_t parse(const char* arg);
-    bool match(int axis, uint32_t value);
-    bool match(const ResTable_config& config);
-    inline bool containsPseudo() { return mContainsPseudo; }
-
-private:
-    KeyedVector<int,SortedVector<uint32_t> > mData;
-    bool mContainsPseudo;
-};
-
 
 #endif

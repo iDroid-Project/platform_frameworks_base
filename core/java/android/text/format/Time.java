@@ -22,8 +22,8 @@ import java.util.Locale;
 import java.util.TimeZone;
 
 /**
- * The Time class is a faster replacement for the java.util.Calendar and
- * java.util.GregorianCalendar classes. An instance of the Time class represents
+ * An alternative to the {@link java.util.Calendar} and
+ * {@link java.util.GregorianCalendar} classes. An instance of the Time class represents
  * a moment in time, specified with second precision. It is modelled after
  * struct tm, and in fact, uses struct tm to implement most of the
  * functionality.
@@ -32,7 +32,7 @@ public class Time {
     private static final String Y_M_D_T_H_M_S_000 = "%Y-%m-%dT%H:%M:%S.000";
     private static final String Y_M_D_T_H_M_S_000_Z = "%Y-%m-%dT%H:%M:%S.000Z";
     private static final String Y_M_D = "%Y-%m-%d";
-    
+
     public static final String TIMEZONE_UTC = "UTC";
 
     /**
@@ -40,6 +40,12 @@ public class Time {
      * calendar.
      */
     public static final int EPOCH_JULIAN_DAY = 2440588;
+
+    /**
+     * The Julian day of the Monday in the week of the epoch, December 29, 1969
+     * on the Gregorian calendar.
+     */
+    public static final int MONDAY_BEFORE_JULIAN_EPOCH = EPOCH_JULIAN_DAY - 3;
 
     /**
      * True if this is an allDay event. The hour, minute, second fields are
@@ -73,7 +79,7 @@ public class Time {
     public int month;
 
     /**
-     * Year. TBD. Is this years since 1900 like in struct tm?
+     * Year. For example, 1970.
      */
     public int year;
 
@@ -170,11 +176,11 @@ public class Time {
     public Time() {
         this(TimeZone.getDefault().getID());
     }
-    
+
     /**
      * A copy constructor.  Construct a Time object by copying the given
      * Time object.  No normalization occurs.
-     * 
+     *
      * @param other
      */
     public Time(Time other) {
@@ -185,17 +191,17 @@ public class Time {
      * Ensures the values in each field are in range. For example if the
      * current value of this calendar is March 32, normalize() will convert it
      * to April 1. It also fills in weekDay, yearDay, isDst and gmtoff.
-     * 
+     *
      * <p>
      * If "ignoreDst" is true, then this method sets the "isDst" field to -1
      * (the "unknown" value) before normalizing.  It then computes the
      * correct value for "isDst".
-     * 
+     *
      * <p>
      * See {@link #toMillis(boolean)} for more information about when to
      * use <tt>true</tt> or <tt>false</tt> for "ignoreDst".
-     * 
-     * @return the UTC milliseconds since the epoch 
+     *
+     * @return the UTC milliseconds since the epoch
      */
     native public long normalize(boolean ignoreDst);
 
@@ -275,10 +281,29 @@ public class Time {
     }
 
     /**
-     * return a negative number if a is less than b, a positive number if a is
-     * greater than b, and 0 if they are equal.
+     * Compare two {@code Time} objects and return a negative number if {@code
+     * a} is less than {@code b}, a positive number if {@code a} is greater than
+     * {@code b}, or 0 if they are equal.
+     *
+     * @param a first {@code Time} instance to compare
+     * @param b second {@code Time} instance to compare
+     * @throws NullPointerException if either argument is {@code null}
+     * @throws IllegalArgumentException if {@link #allDay} is true but {@code
+     *             hour}, {@code minute}, and {@code second} are not 0.
+     * @return a negative result if {@code a} is earlier, a positive result if
+     *         {@code a} is earlier, or 0 if they are equal.
      */
-    native public static int compare(Time a, Time b);
+    public static int compare(Time a, Time b) {
+        if (a == null) {
+            throw new NullPointerException("a == null");
+        } else if (b == null) {
+            throw new NullPointerException("b == null");
+        }
+
+        return nativeCompare(a, b);
+    }
+
+    private static native int nativeCompare(Time a, Time b);
 
     /**
      * Print the current value given the format string provided. See man
@@ -379,13 +404,13 @@ public class Time {
      * Parses a date-time string in either the RFC 2445 format or an abbreviated
      * format that does not include the "time" field.  For example, all of the
      * following strings are valid:
-     * 
+     *
      * <ul>
      *   <li>"20081013T160000Z"</li>
      *   <li>"20081013T160000"</li>
      *   <li>"20081013"</li>
      * </ul>
-     * 
+     *
      * Returns whether or not the time is in UTC (ends with Z).  If the string
      * ends with "Z" then the timezone is set to UTC.  If the date-time string
      * included only a date and no time field, then the <code>allDay</code>
@@ -396,10 +421,10 @@ public class Time {
      * <code>yearDay</code>, and <code>gmtoff</code> are always set to zero,
      * and the field <code>isDst</code> is set to -1 (unknown).  To set those
      * fields, call {@link #normalize(boolean)} after parsing.
-     * 
+     *
      * To parse a date-time string and convert it to UTC milliseconds, do
      * something like this:
-     * 
+     *
      * <pre>
      *   Time time = new Time();
      *   String date = "20081013T160000Z";
@@ -428,25 +453,25 @@ public class Time {
      * Parse a time in RFC 3339 format.  This method also parses simple dates
      * (that is, strings that contain no time or time offset).  For example,
      * all of the following strings are valid:
-     * 
+     *
      * <ul>
      *   <li>"2008-10-13T16:00:00.000Z"</li>
      *   <li>"2008-10-13T16:00:00.000+07:00"</li>
      *   <li>"2008-10-13T16:00:00.000-07:00"</li>
      *   <li>"2008-10-13"</li>
      * </ul>
-     * 
+     *
      * <p>
      * If the string contains a time and time offset, then the time offset will
      * be used to convert the time value to UTC.
      * </p>
-     * 
+     *
      * <p>
      * If the given string contains just a date (with no time field), then
      * the {@link #allDay} field is set to true and the {@link #hour},
      * {@link #minute}, and  {@link #second} fields are set to zero.
      * </p>
-     * 
+     *
      * <p>
      * Returns true if the resulting time value is in UTC time.
      * </p>
@@ -462,7 +487,7 @@ public class Time {
          }
          return false;
      }
-     
+
      native private boolean nativeParse3339(String s);
 
     /**
@@ -484,13 +509,13 @@ public class Time {
      * <em>not</em> change any of the fields in this Time object.  If you want
      * to normalize the fields in this Time object and also get the milliseconds
      * then use {@link #normalize(boolean)}.
-     * 
+     *
      * <p>
      * If "ignoreDst" is false, then this method uses the current setting of the
      * "isDst" field and will adjust the returned time if the "isDst" field is
      * wrong for the given time.  See the sample code below for an example of
      * this.
-     * 
+     *
      * <p>
      * If "ignoreDst" is true, then this method ignores the current setting of
      * the "isDst" field in this Time object and will instead figure out the
@@ -499,27 +524,27 @@ public class Time {
      * correct value of the "isDst" field is when the time is inherently
      * ambiguous because it falls in the hour that is repeated when switching
      * from Daylight-Saving Time to Standard Time.
-     * 
+     *
      * <p>
      * Here is an example where <tt>toMillis(true)</tt> adjusts the time,
      * assuming that DST changes at 2am on Sunday, Nov 4, 2007.
-     * 
+     *
      * <pre>
      * Time time = new Time();
-     * time.set(2007, 10, 4);  // set the date to Nov 4, 2007, 12am
+     * time.set(4, 10, 2007);  // set the date to Nov 4, 2007, 12am
      * time.normalize();       // this sets isDst = 1
      * time.monthDay += 1;     // changes the date to Nov 5, 2007, 12am
      * millis = time.toMillis(false);   // millis is Nov 4, 2007, 11pm
      * millis = time.toMillis(true);    // millis is Nov 5, 2007, 12am
      * </pre>
-     * 
+     *
      * <p>
      * To avoid this problem, use <tt>toMillis(true)</tt>
      * after adding or subtracting days or explicitly setting the "monthDay"
      * field.  On the other hand, if you are adding
      * or subtracting hours or minutes, then you should use
      * <tt>toMillis(false)</tt>.
-     * 
+     *
      * <p>
      * You should also use <tt>toMillis(false)</tt> if you want
      * to read back the same milliseconds that you set with {@link #set(long)}
@@ -531,14 +556,14 @@ public class Time {
      * Sets the fields in this Time object given the UTC milliseconds.  After
      * this method returns, all the fields are normalized.
      * This also sets the "isDst" field to the correct value.
-     * 
+     *
      * @param millis the time in UTC milliseconds since the epoch.
      */
     native public void set(long millis);
 
     /**
      * Format according to RFC 2445 DATETIME type.
-     * 
+     *
      * <p>
      * The same as format("%Y%m%dT%H%M%S").
      */
@@ -584,7 +609,7 @@ public class Time {
      * Sets the date from the given fields.  Also sets allDay to true.
      * Sets weekDay, yearDay and gmtoff to 0, and isDst to -1.
      * Call {@link #normalize(boolean)} if you need those.
-     * 
+     *
      * @param monthDay the day of the month (in the range [1,31])
      * @param month the zero-based month number (in the range [0,11])
      * @param year the year
@@ -606,7 +631,7 @@ public class Time {
     /**
      * Returns true if the time represented by this Time object occurs before
      * the given time.
-     * 
+     *
      * @param that a given Time object to compare against
      * @return true if this time is less than the given time
      */
@@ -618,7 +643,7 @@ public class Time {
     /**
      * Returns true if the time represented by this Time object occurs after
      * the given time.
-     * 
+     *
      * @param that a given Time object to compare against
      * @return true if this time is greater than the given time
      */
@@ -632,12 +657,12 @@ public class Time {
      * closest Thursday yearDay.
      */
     private static final int[] sThursdayOffset = { -3, 3, 2, 1, 0, -1, -2 };
-        
+
     /**
      * Computes the week number according to ISO 8601.  The current Time
      * object must already be normalized because this method uses the
      * yearDay and weekDay fields.
-     * 
+     *
      * <p>
      * In IS0 8601, weeks start on Monday.
      * The first week of the year (week 1) is defined by ISO 8601 as the
@@ -645,12 +670,12 @@ public class Time {
      * Or equivalently, the week containing January 4.  Or equivalently,
      * the week with the year's first Thursday in it.
      * </p>
-     * 
+     *
      * <p>
      * The week number can be calculated by counting Thursdays.  Week N
      * contains the Nth Thursday of the year.
      * </p>
-     *   
+     *
      * @return the ISO week number.
      */
     public int getWeekNumber() {
@@ -661,7 +686,7 @@ public class Time {
         if (closestThursday >= 0 && closestThursday <= 364) {
             return closestThursday / 7 + 1;
         }
-        
+
         // The week crosses a year boundary.
         Time temp = new Time(this);
         temp.monthDay += sThursdayOffset[weekDay];
@@ -670,7 +695,7 @@ public class Time {
     }
 
     /**
-     * Return a string in the RFC 3339 format. 
+     * Return a string in the RFC 3339 format.
      * <p>
      * If allDay is true, expresses the time as Y-M-D</p>
      * <p>
@@ -691,13 +716,13 @@ public class Time {
             int offset = (int)Math.abs(gmtoff);
             int minutes = (offset % 3600) / 60;
             int hours = offset / 3600;
-            
+
             return String.format("%s%s%02d:%02d", base, sign, hours, minutes);
         }
     }
-    
+
     /**
-     * Returns true if the day of the given time is the epoch on the Julian Calendar 
+     * Returns true if the day of the given time is the epoch on the Julian Calendar
      * (January 1, 1970 on the Gregorian calendar).
      *
      * @param time the time to test
@@ -707,7 +732,7 @@ public class Time {
         long millis = time.toMillis(true);
         return getJulianDay(millis, 0) == EPOCH_JULIAN_DAY;
     }
-    
+
     /**
      * Computes the Julian day number, given the UTC milliseconds
      * and the offset (in seconds) from UTC.  The Julian day for a given
@@ -716,10 +741,10 @@ public class Time {
      * what timezone is being used.  The Julian day is useful for testing
      * if two events occur on the same day and for determining the relative
      * time of an event from the present ("yesterday", "3 days ago", etc.).
-     * 
+     *
      * <p>
      * Use {@link #toMillis(boolean)} to get the milliseconds.
-     * 
+     *
      * @param millis the time in UTC milliseconds
      * @param gmtoff the offset from UTC in seconds
      * @return the Julian day
@@ -729,7 +754,7 @@ public class Time {
         long julianDay = (millis + offsetMillis) / DateUtils.DAY_IN_MILLIS;
         return (int) julianDay + EPOCH_JULIAN_DAY;
     }
-    
+
     /**
      * <p>Sets the time from the given Julian day number, which must be based on
      * the same timezone that is set in this Time object.  The "gmtoff" field
@@ -738,7 +763,7 @@ public class Time {
      * After this method returns all the fields will be normalized and the time
      * will be set to 12am at the beginning of the given Julian day.
      * </p>
-     * 
+     *
      * <p>
      * The only exception to this is if 12am does not exist for that day because
      * of daylight saving time.  For example, Cairo, Eqypt moves time ahead one
@@ -746,7 +771,7 @@ public class Time {
      * also change daylight saving time at 12am.  In those cases, the time
      * will be set to 1am.
      * </p>
-     * 
+     *
      * @param julianDay the Julian day in the timezone for this Time object
      * @return the UTC milliseconds for the beginning of the Julian day
      */
@@ -756,18 +781,53 @@ public class Time {
         // the day.
         long millis = (julianDay - EPOCH_JULIAN_DAY) * DateUtils.DAY_IN_MILLIS;
         set(millis);
-        
+
         // Figure out how close we are to the requested Julian day.
         // We can't be off by more than a day.
         int approximateDay = getJulianDay(millis, gmtoff);
         int diff = julianDay - approximateDay;
         monthDay += diff;
-        
+
         // Set the time to 12am and re-normalize.
         hour = 0;
         minute = 0;
         second = 0;
         millis = normalize(true);
         return millis;
+    }
+
+    /**
+     * Returns the week since {@link #EPOCH_JULIAN_DAY} (Jan 1, 1970) adjusted
+     * for first day of week. This takes a julian day and the week start day and
+     * calculates which week since {@link #EPOCH_JULIAN_DAY} that day occurs in,
+     * starting at 0. *Do not* use this to compute the ISO week number for the
+     * year.
+     *
+     * @param julianDay The julian day to calculate the week number for
+     * @param firstDayOfWeek Which week day is the first day of the week, see
+     *            {@link #SUNDAY}
+     * @return Weeks since the epoch
+     */
+    public static int getWeeksSinceEpochFromJulianDay(int julianDay, int firstDayOfWeek) {
+        int diff = THURSDAY - firstDayOfWeek;
+        if (diff < 0) {
+            diff += 7;
+        }
+        int refDay = EPOCH_JULIAN_DAY - diff;
+        return (julianDay - refDay) / 7;
+    }
+
+    /**
+     * Takes a number of weeks since the epoch and calculates the Julian day of
+     * the Monday for that week. This assumes that the week containing the
+     * {@link #EPOCH_JULIAN_DAY} is considered week 0. It returns the Julian day
+     * for the Monday week weeks after the Monday of the week containing the
+     * epoch.
+     *
+     * @param week Number of weeks since the epoch
+     * @return The julian day for the Monday of the given week since the epoch
+     */
+    public static int getJulianMondayFromWeeksSinceEpoch(int week) {
+        return MONDAY_BEFORE_JULIAN_EPOCH + week * 7;
     }
 }

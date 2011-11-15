@@ -27,22 +27,52 @@
 #include <utils/Timers.h>
 #include <utils/RefBase.h>
 #include <utils/String8.h>
+#include <utils/BitSet.h>
+
+#ifdef HAVE_ANDROID_OS
+class SkMatrix;
+#endif
 
 /*
  * Additional private constants not defined in ndk/ui/input.h.
  */
 enum {
+    /* Private control to determine when an app is tracking a key sequence. */
+    AKEY_EVENT_FLAG_START_TRACKING = 0x40000000,
+
+    /* Key event is inconsistent with previously sent key events. */
+    AKEY_EVENT_FLAG_TAINTED = 0x80000000,
+};
+
+enum {
+    /* Motion event is inconsistent with previously sent motion events. */
+    AMOTION_EVENT_FLAG_TAINTED = 0x80000000,
+};
+
+enum {
     /*
-     * Private control to determine when an app is tracking a key sequence.
+     * Indicates that an input device has switches.
+     * This input source flag is hidden from the API because switches are only used by the system
+     * and applications have no way to interact with them.
      */
-    AKEY_EVENT_FLAG_START_TRACKING = 0x40000000
+    AINPUT_SOURCE_SWITCH = 0x80000000,
+};
+
+/*
+ * SystemUiVisibility constants from View.
+ */
+enum {
+    ASYSTEM_UI_VISIBILITY_STATUS_BAR_VISIBLE = 0,
+    ASYSTEM_UI_VISIBILITY_STATUS_BAR_HIDDEN = 0x00000001,
 };
 
 /*
  * Maximum number of pointers supported per motion event.
  * Smallest number of pointers is 1.
+ * (We want at least 10 but some touch controllers obstensibly configured for 10 pointers
+ * will occasionally emit 11.  There is not much harm making this constant bigger.)
  */
-#define MAX_POINTERS 10
+#define MAX_POINTERS 16
 
 /*
  * Maximum pointer id value supported in a motion event.
@@ -68,6 +98,10 @@ struct AInputDevice {
 
 namespace android {
 
+#ifdef HAVE_ANDROID_OS
+class Parcel;
+#endif
+
 /*
  * Flags that flow alongside events in the input dispatch system to help with certain
  * policy decisions such as waking from device sleep.
@@ -76,7 +110,7 @@ namespace android {
  */
 enum {
     /* These flags originate in RawEvents and are generally set in the key map.
-     * See also labels for policy flags in KeycodeLabels.h. */
+     * NOTE: If you edit these flags, also edit labels in KeycodeLabels.h. */
 
     POLICY_FLAG_WAKE = 0x00000001,
     POLICY_FLAG_WAKE_DROPPED = 0x00000002,
@@ -87,6 +121,7 @@ enum {
     POLICY_FLAG_MENU = 0x00000040,
     POLICY_FLAG_LAUNCHER = 0x00000080,
     POLICY_FLAG_VIRTUAL = 0x00000100,
+    POLICY_FLAG_FUNCTION = 0x00000200,
 
     POLICY_FLAG_RAW_MASK = 0x0000ffff,
 
@@ -98,6 +133,12 @@ enum {
     // Indicates that the input event is from a trusted source such as a directly attached
     // input device or an application with system-wide event injection permission.
     POLICY_FLAG_TRUSTED = 0x02000000,
+
+    // Indicates that the input event has passed through an input filter.
+    POLICY_FLAG_FILTERED = 0x04000000,
+
+    // Disables automatic key repeating behavior.
+    POLICY_FLAG_DISABLE_KEY_REPEAT = 0x08000000,
 
     /* These flags are set by the input reader policy as it intercepts each event. */
 
@@ -150,15 +191,69 @@ struct InputConfiguration {
  * Pointer coordinate data.
  */
 struct PointerCoords {
-    float x;
-    float y;
-    float pressure;
-    float size;
-    float touchMajor;
-    float touchMinor;
-    float toolMajor;
-    float toolMinor;
-    float orientation;
+    enum { MAX_AXES = 14 }; // 14 so that sizeof(PointerCoords) == 64
+
+    // Bitfield of axes that are present in this structure.
+    uint64_t bits;
+
+    // Values of axes that are stored in this structure packed in order by axis id
+    // for each axis that is present in the structure according to 'bits'.
+    float values[MAX_AXES];
+
+    inline void clear() {
+        bits = 0;
+    }
+
+    float getAxisValue(int32_t axis) const;
+    status_t setAxisValue(int32_t axis, float value);
+
+    void scale(float scale);
+
+    inline float getX() const {
+        return getAxisValue(AMOTION_EVENT_AXIS_X);
+    }
+
+    inline float getY() const {
+        return getAxisValue(AMOTION_EVENT_AXIS_Y);
+    }
+
+#ifdef HAVE_ANDROID_OS
+    status_t readFromParcel(Parcel* parcel);
+    status_t writeToParcel(Parcel* parcel) const;
+#endif
+
+    bool operator==(const PointerCoords& other) const;
+    inline bool operator!=(const PointerCoords& other) const {
+        return !(*this == other);
+    }
+
+    void copyFrom(const PointerCoords& other);
+
+private:
+    void tooManyAxes(int axis);
+};
+
+/*
+ * Pointer property data.
+ */
+struct PointerProperties {
+    // The id of the pointer.
+    int32_t id;
+
+    // The pointer tool type.
+    int32_t toolType;
+
+    inline void clear() {
+        id = -1;
+        toolType = 0;
+    }
+
+    bool operator==(const PointerProperties& other) const;
+    inline bool operator!=(const PointerProperties& other) const {
+        return !(*this == other);
+    }
+
+    void copyFrom(const PointerProperties& other);
 };
 
 /*
@@ -173,12 +268,13 @@ public:
     inline int32_t getDeviceId() const { return mDeviceId; }
 
     inline int32_t getSource() const { return mSource; }
-    
+
+    inline void setSource(int32_t source) { mSource = source; }
+
 protected:
     void initialize(int32_t deviceId, int32_t source);
     void initialize(const InputEvent& from);
 
-private:
     int32_t mDeviceId;
     int32_t mSource;
 };
@@ -229,7 +325,7 @@ public:
             nsecs_t eventTime);
     void initialize(const KeyEvent& from);
 
-private:
+protected:
     int32_t mAction;
     int32_t mFlags;
     int32_t mKeyCode;
@@ -251,11 +347,28 @@ public:
 
     inline int32_t getAction() const { return mAction; }
 
+    inline int32_t getActionMasked() const { return mAction & AMOTION_EVENT_ACTION_MASK; }
+
+    inline int32_t getActionIndex() const {
+        return (mAction & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK)
+                >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
+    }
+
+    inline void setAction(int32_t action) { mAction = action; }
+
     inline int32_t getFlags() const { return mFlags; }
+
+    inline void setFlags(int32_t flags) { mFlags = flags; }
 
     inline int32_t getEdgeFlags() const { return mEdgeFlags; }
 
+    inline void setEdgeFlags(int32_t edgeFlags) { mEdgeFlags = edgeFlags; }
+
     inline int32_t getMetaState() const { return mMetaState; }
+
+    inline void setMetaState(int32_t metaState) { mMetaState = metaState; }
+
+    inline int32_t getButtonState() const { return mButtonState; }
 
     inline float getXOffset() const { return mXOffset; }
 
@@ -267,54 +380,72 @@ public:
 
     inline nsecs_t getDownTime() const { return mDownTime; }
 
-    inline size_t getPointerCount() const { return mPointerIds.size(); }
+    inline void setDownTime(nsecs_t downTime) { mDownTime = downTime; }
 
-    inline int32_t getPointerId(size_t pointerIndex) const { return mPointerIds[pointerIndex]; }
+    inline size_t getPointerCount() const { return mPointerProperties.size(); }
+
+    inline const PointerProperties* getPointerProperties(size_t pointerIndex) const {
+        return &mPointerProperties[pointerIndex];
+    }
+
+    inline int32_t getPointerId(size_t pointerIndex) const {
+        return mPointerProperties[pointerIndex].id;
+    }
+
+    inline int32_t getToolType(size_t pointerIndex) const {
+        return mPointerProperties[pointerIndex].toolType;
+    }
 
     inline nsecs_t getEventTime() const { return mSampleEventTimes[getHistorySize()]; }
 
+    const PointerCoords* getRawPointerCoords(size_t pointerIndex) const;
+
+    float getRawAxisValue(int32_t axis, size_t pointerIndex) const;
+
     inline float getRawX(size_t pointerIndex) const {
-        return getCurrentPointerCoords(pointerIndex).x;
+        return getRawAxisValue(AMOTION_EVENT_AXIS_X, pointerIndex);
     }
 
     inline float getRawY(size_t pointerIndex) const {
-        return getCurrentPointerCoords(pointerIndex).y;
+        return getRawAxisValue(AMOTION_EVENT_AXIS_Y, pointerIndex);
     }
 
+    float getAxisValue(int32_t axis, size_t pointerIndex) const;
+
     inline float getX(size_t pointerIndex) const {
-        return getRawX(pointerIndex) + mXOffset;
+        return getAxisValue(AMOTION_EVENT_AXIS_X, pointerIndex);
     }
 
     inline float getY(size_t pointerIndex) const {
-        return getRawY(pointerIndex) + mYOffset;
+        return getAxisValue(AMOTION_EVENT_AXIS_Y, pointerIndex);
     }
 
     inline float getPressure(size_t pointerIndex) const {
-        return getCurrentPointerCoords(pointerIndex).pressure;
+        return getAxisValue(AMOTION_EVENT_AXIS_PRESSURE, pointerIndex);
     }
 
     inline float getSize(size_t pointerIndex) const {
-        return getCurrentPointerCoords(pointerIndex).size;
+        return getAxisValue(AMOTION_EVENT_AXIS_SIZE, pointerIndex);
     }
 
     inline float getTouchMajor(size_t pointerIndex) const {
-        return getCurrentPointerCoords(pointerIndex).touchMajor;
+        return getAxisValue(AMOTION_EVENT_AXIS_TOUCH_MAJOR, pointerIndex);
     }
 
     inline float getTouchMinor(size_t pointerIndex) const {
-        return getCurrentPointerCoords(pointerIndex).touchMinor;
+        return getAxisValue(AMOTION_EVENT_AXIS_TOUCH_MINOR, pointerIndex);
     }
 
     inline float getToolMajor(size_t pointerIndex) const {
-        return getCurrentPointerCoords(pointerIndex).toolMajor;
+        return getAxisValue(AMOTION_EVENT_AXIS_TOOL_MAJOR, pointerIndex);
     }
 
     inline float getToolMinor(size_t pointerIndex) const {
-        return getCurrentPointerCoords(pointerIndex).toolMinor;
+        return getAxisValue(AMOTION_EVENT_AXIS_TOOL_MINOR, pointerIndex);
     }
 
     inline float getOrientation(size_t pointerIndex) const {
-        return getCurrentPointerCoords(pointerIndex).orientation;
+        return getAxisValue(AMOTION_EVENT_AXIS_ORIENTATION, pointerIndex);
     }
 
     inline size_t getHistorySize() const { return mSampleEventTimes.size() - 1; }
@@ -323,49 +454,70 @@ public:
         return mSampleEventTimes[historicalIndex];
     }
 
+    const PointerCoords* getHistoricalRawPointerCoords(
+            size_t pointerIndex, size_t historicalIndex) const;
+
+    float getHistoricalRawAxisValue(int32_t axis, size_t pointerIndex,
+            size_t historicalIndex) const;
+
     inline float getHistoricalRawX(size_t pointerIndex, size_t historicalIndex) const {
-        return getHistoricalPointerCoords(pointerIndex, historicalIndex).x;
+        return getHistoricalRawAxisValue(
+                AMOTION_EVENT_AXIS_X, pointerIndex, historicalIndex);
     }
 
     inline float getHistoricalRawY(size_t pointerIndex, size_t historicalIndex) const {
-        return getHistoricalPointerCoords(pointerIndex, historicalIndex).y;
+        return getHistoricalRawAxisValue(
+                AMOTION_EVENT_AXIS_Y, pointerIndex, historicalIndex);
     }
 
+    float getHistoricalAxisValue(int32_t axis, size_t pointerIndex, size_t historicalIndex) const;
+
     inline float getHistoricalX(size_t pointerIndex, size_t historicalIndex) const {
-        return getHistoricalRawX(pointerIndex, historicalIndex) + mXOffset;
+        return getHistoricalAxisValue(
+                AMOTION_EVENT_AXIS_X, pointerIndex, historicalIndex);
     }
 
     inline float getHistoricalY(size_t pointerIndex, size_t historicalIndex) const {
-        return getHistoricalRawY(pointerIndex, historicalIndex) + mYOffset;
+        return getHistoricalAxisValue(
+                AMOTION_EVENT_AXIS_Y, pointerIndex, historicalIndex);
     }
 
     inline float getHistoricalPressure(size_t pointerIndex, size_t historicalIndex) const {
-        return getHistoricalPointerCoords(pointerIndex, historicalIndex).pressure;
+        return getHistoricalAxisValue(
+                AMOTION_EVENT_AXIS_PRESSURE, pointerIndex, historicalIndex);
     }
 
     inline float getHistoricalSize(size_t pointerIndex, size_t historicalIndex) const {
-        return getHistoricalPointerCoords(pointerIndex, historicalIndex).size;
+        return getHistoricalAxisValue(
+                AMOTION_EVENT_AXIS_SIZE, pointerIndex, historicalIndex);
     }
 
     inline float getHistoricalTouchMajor(size_t pointerIndex, size_t historicalIndex) const {
-        return getHistoricalPointerCoords(pointerIndex, historicalIndex).touchMajor;
+        return getHistoricalAxisValue(
+                AMOTION_EVENT_AXIS_TOUCH_MAJOR, pointerIndex, historicalIndex);
     }
 
     inline float getHistoricalTouchMinor(size_t pointerIndex, size_t historicalIndex) const {
-        return getHistoricalPointerCoords(pointerIndex, historicalIndex).touchMinor;
+        return getHistoricalAxisValue(
+                AMOTION_EVENT_AXIS_TOUCH_MINOR, pointerIndex, historicalIndex);
     }
 
     inline float getHistoricalToolMajor(size_t pointerIndex, size_t historicalIndex) const {
-        return getHistoricalPointerCoords(pointerIndex, historicalIndex).toolMajor;
+        return getHistoricalAxisValue(
+                AMOTION_EVENT_AXIS_TOOL_MAJOR, pointerIndex, historicalIndex);
     }
 
     inline float getHistoricalToolMinor(size_t pointerIndex, size_t historicalIndex) const {
-        return getHistoricalPointerCoords(pointerIndex, historicalIndex).toolMinor;
+        return getHistoricalAxisValue(
+                AMOTION_EVENT_AXIS_TOOL_MINOR, pointerIndex, historicalIndex);
     }
 
     inline float getHistoricalOrientation(size_t pointerIndex, size_t historicalIndex) const {
-        return getHistoricalPointerCoords(pointerIndex, historicalIndex).orientation;
+        return getHistoricalAxisValue(
+                AMOTION_EVENT_AXIS_ORIENTATION, pointerIndex, historicalIndex);
     }
+
+    ssize_t findPointerIndex(int32_t pointerId) const;
 
     void initialize(
             int32_t deviceId,
@@ -374,6 +526,7 @@ public:
             int32_t flags,
             int32_t edgeFlags,
             int32_t metaState,
+            int32_t buttonState,
             float xOffset,
             float yOffset,
             float xPrecision,
@@ -381,8 +534,10 @@ public:
             nsecs_t downTime,
             nsecs_t eventTime,
             size_t pointerCount,
-            const int32_t* pointerIds,
+            const PointerProperties* pointerProperties,
             const PointerCoords* pointerCoords);
+
+    void copyFrom(const MotionEvent* other, bool keepHistory);
 
     void addSample(
             nsecs_t eventTime,
@@ -390,35 +545,43 @@ public:
 
     void offsetLocation(float xOffset, float yOffset);
 
+    void scale(float scaleFactor);
+
+#ifdef HAVE_ANDROID_OS
+    void transform(const SkMatrix* matrix);
+
+    status_t readFromParcel(Parcel* parcel);
+    status_t writeToParcel(Parcel* parcel) const;
+#endif
+
+    static bool isTouchEvent(int32_t source, int32_t action);
+    inline bool isTouchEvent() const {
+        return isTouchEvent(mSource, mAction);
+    }
+
     // Low-level accessors.
-    inline const int32_t* getPointerIds() const { return mPointerIds.array(); }
+    inline const PointerProperties* getPointerProperties() const {
+        return mPointerProperties.array();
+    }
     inline const nsecs_t* getSampleEventTimes() const { return mSampleEventTimes.array(); }
     inline const PointerCoords* getSamplePointerCoords() const {
             return mSamplePointerCoords.array();
     }
 
-private:
+protected:
     int32_t mAction;
     int32_t mFlags;
     int32_t mEdgeFlags;
     int32_t mMetaState;
+    int32_t mButtonState;
     float mXOffset;
     float mYOffset;
     float mXPrecision;
     float mYPrecision;
     nsecs_t mDownTime;
-    Vector<int32_t> mPointerIds;
+    Vector<PointerProperties> mPointerProperties;
     Vector<nsecs_t> mSampleEventTimes;
     Vector<PointerCoords> mSamplePointerCoords;
-
-    inline const PointerCoords& getCurrentPointerCoords(size_t pointerIndex) const {
-        return mSamplePointerCoords[getHistorySize() * getPointerCount() + pointerIndex];
-    }
-
-    inline const PointerCoords& getHistoricalPointerCoords(
-            size_t pointerIndex, size_t historicalIndex) const {
-        return mSamplePointerCoords[historicalIndex * getPointerCount() + pointerIndex];
-    }
 };
 
 /*
@@ -453,6 +616,183 @@ private:
 };
 
 /*
+ * Calculates the velocity of pointer movements over time.
+ */
+class VelocityTracker {
+public:
+    // Default polynomial degree.  (used by getVelocity)
+    static const uint32_t DEFAULT_DEGREE = 2;
+
+    // Default sample horizon.  (used by getVelocity)
+    // We don't use too much history by default since we want to react to quick
+    // changes in direction.
+    static const nsecs_t DEFAULT_HORIZON = 100 * 1000000; // 100 ms
+
+    struct Position {
+        float x, y;
+    };
+
+    struct Estimator {
+        static const size_t MAX_DEGREE = 2;
+
+        // Polynomial coefficients describing motion in X and Y.
+        float xCoeff[MAX_DEGREE + 1], yCoeff[MAX_DEGREE + 1];
+
+        // Polynomial degree (number of coefficients), or zero if no information is
+        // available.
+        uint32_t degree;
+
+        // Confidence (coefficient of determination), between 0 (no fit) and 1 (perfect fit).
+        float confidence;
+
+        inline void clear() {
+            degree = 0;
+            confidence = 0;
+            for (size_t i = 0; i <= MAX_DEGREE; i++) {
+                xCoeff[i] = 0;
+                yCoeff[i] = 0;
+            }
+        }
+    };
+
+    VelocityTracker();
+
+    // Resets the velocity tracker state.
+    void clear();
+
+    // Resets the velocity tracker state for specific pointers.
+    // Call this method when some pointers have changed and may be reusing
+    // an id that was assigned to a different pointer earlier.
+    void clearPointers(BitSet32 idBits);
+
+    // Adds movement information for a set of pointers.
+    // The idBits bitfield specifies the pointer ids of the pointers whose positions
+    // are included in the movement.
+    // The positions array contains position information for each pointer in order by
+    // increasing id.  Its size should be equal to the number of one bits in idBits.
+    void addMovement(nsecs_t eventTime, BitSet32 idBits, const Position* positions);
+
+    // Adds movement information for all pointers in a MotionEvent, including historical samples.
+    void addMovement(const MotionEvent* event);
+
+    // Gets the velocity of the specified pointer id in position units per second.
+    // Returns false and sets the velocity components to zero if there is
+    // insufficient movement information for the pointer.
+    bool getVelocity(uint32_t id, float* outVx, float* outVy) const;
+
+    // Gets a quadratic estimator for the movements of the specified pointer id.
+    // Returns false and clears the estimator if there is no information available
+    // about the pointer.
+    bool getEstimator(uint32_t id, uint32_t degree, nsecs_t horizon,
+            Estimator* outEstimator) const;
+
+    // Gets the active pointer id, or -1 if none.
+    inline int32_t getActivePointerId() const { return mActivePointerId; }
+
+    // Gets a bitset containing all pointer ids from the most recent movement.
+    inline BitSet32 getCurrentPointerIdBits() const { return mMovements[mIndex].idBits; }
+
+private:
+    // Number of samples to keep.
+    static const uint32_t HISTORY_SIZE = 20;
+
+    struct Movement {
+        nsecs_t eventTime;
+        BitSet32 idBits;
+        Position positions[MAX_POINTERS];
+
+        inline const Position& getPosition(uint32_t id) const {
+            return positions[idBits.getIndexOfBit(id)];
+        }
+    };
+
+    uint32_t mIndex;
+    Movement mMovements[HISTORY_SIZE];
+    int32_t mActivePointerId;
+};
+
+
+/*
+ * Specifies parameters that govern pointer or wheel acceleration.
+ */
+struct VelocityControlParameters {
+    // A scale factor that is multiplied with the raw velocity deltas
+    // prior to applying any other velocity control factors.  The scale
+    // factor should be used to adapt the input device resolution
+    // (eg. counts per inch) to the output device resolution (eg. pixels per inch).
+    //
+    // Must be a positive value.
+    // Default is 1.0 (no scaling).
+    float scale;
+
+    // The scaled speed at which acceleration begins to be applied.
+    // This value establishes the upper bound of a low speed regime for
+    // small precise motions that are performed without any acceleration.
+    //
+    // Must be a non-negative value.
+    // Default is 0.0 (no low threshold).
+    float lowThreshold;
+
+    // The scaled speed at which maximum acceleration is applied.
+    // The difference between highThreshold and lowThreshold controls
+    // the range of speeds over which the acceleration factor is interpolated.
+    // The wider the range, the smoother the acceleration.
+    //
+    // Must be a non-negative value greater than or equal to lowThreshold.
+    // Default is 0.0 (no high threshold).
+    float highThreshold;
+
+    // The acceleration factor.
+    // When the speed is above the low speed threshold, the velocity will scaled
+    // by an interpolated value between 1.0 and this amount.
+    //
+    // Must be a positive greater than or equal to 1.0.
+    // Default is 1.0 (no acceleration).
+    float acceleration;
+
+    VelocityControlParameters() :
+            scale(1.0f), lowThreshold(0.0f), highThreshold(0.0f), acceleration(1.0f) {
+    }
+
+    VelocityControlParameters(float scale, float lowThreshold,
+            float highThreshold, float acceleration) :
+            scale(scale), lowThreshold(lowThreshold),
+            highThreshold(highThreshold), acceleration(acceleration) {
+    }
+};
+
+/*
+ * Implements mouse pointer and wheel speed control and acceleration.
+ */
+class VelocityControl {
+public:
+    VelocityControl();
+
+    /* Sets the various parameters. */
+    void setParameters(const VelocityControlParameters& parameters);
+
+    /* Resets the current movement counters to zero.
+     * This has the effect of nullifying any acceleration. */
+    void reset();
+
+    /* Translates a raw movement delta into an appropriately
+     * scaled / accelerated delta based on the current velocity. */
+    void move(nsecs_t eventTime, float* deltaX, float* deltaY);
+
+private:
+    // If no movements are received within this amount of time,
+    // we assume the movement has stopped and reset the movement counters.
+    static const nsecs_t STOP_TIME = 500 * 1000000; // 500 ms
+
+    VelocityControlParameters mParameters;
+
+    nsecs_t mLastMovementTime;
+    VelocityTracker::Position mRawPosition;
+    VelocityTracker mVelocityTracker;
+};
+
+
+/*
  * Describes the characteristics and capabilities of an input device.
  */
 class InputDeviceInfo {
@@ -462,6 +802,8 @@ public:
     ~InputDeviceInfo();
 
     struct MotionRange {
+        int32_t axis;
+        uint32_t source;
         float min;
         float max;
         float flat;
@@ -474,16 +816,17 @@ public:
     inline const String8 getName() const { return mName; }
     inline uint32_t getSources() const { return mSources; }
 
-    const MotionRange* getMotionRange(int32_t rangeType) const;
+    const MotionRange* getMotionRange(int32_t axis, uint32_t source) const;
 
     void addSource(uint32_t source);
-    void addMotionRange(int32_t rangeType, float min, float max, float flat, float fuzz);
-    void addMotionRange(int32_t rangeType, const MotionRange& range);
+    void addMotionRange(int32_t axis, uint32_t source,
+            float min, float max, float flat, float fuzz);
+    void addMotionRange(const MotionRange& range);
 
     inline void setKeyboardType(int32_t keyboardType) { mKeyboardType = keyboardType; }
     inline int32_t getKeyboardType() const { return mKeyboardType; }
 
-    inline const KeyedVector<int32_t, MotionRange> getMotionRanges() const {
+    inline const Vector<MotionRange>& getMotionRanges() const {
         return mMotionRanges;
     }
 
@@ -493,9 +836,57 @@ private:
     uint32_t mSources;
     int32_t mKeyboardType;
 
-    KeyedVector<int32_t, MotionRange> mMotionRanges;
+    Vector<MotionRange> mMotionRanges;
 };
 
+/*
+ * Identifies a device.
+ */
+struct InputDeviceIdentifier {
+    inline InputDeviceIdentifier() :
+            bus(0), vendor(0), product(0), version(0) {
+    }
+
+    String8 name;
+    String8 location;
+    String8 uniqueId;
+    uint16_t bus;
+    uint16_t vendor;
+    uint16_t product;
+    uint16_t version;
+};
+
+/* Types of input device configuration files. */
+enum InputDeviceConfigurationFileType {
+    INPUT_DEVICE_CONFIGURATION_FILE_TYPE_CONFIGURATION = 0,     /* .idc file */
+    INPUT_DEVICE_CONFIGURATION_FILE_TYPE_KEY_LAYOUT = 1,        /* .kl file */
+    INPUT_DEVICE_CONFIGURATION_FILE_TYPE_KEY_CHARACTER_MAP = 2, /* .kcm file */
+};
+
+/*
+ * Gets the path of an input device configuration file, if one is available.
+ * Considers both system provided and user installed configuration files.
+ *
+ * The device identifier is used to construct several default configuration file
+ * names to try based on the device name, vendor, product, and version.
+ *
+ * Returns an empty string if not found.
+ */
+extern String8 getInputDeviceConfigurationFilePathByDeviceIdentifier(
+        const InputDeviceIdentifier& deviceIdentifier,
+        InputDeviceConfigurationFileType type);
+
+/*
+ * Gets the path of an input device configuration file, if one is available.
+ * Considers both system provided and user installed configuration files.
+ *
+ * The name is case-sensitive and is used to construct the filename to resolve.
+ * All characters except 'a'-'z', 'A'-'Z', '0'-'9', '-', and '_' are replaced by underscores.
+ *
+ * Returns an empty string if not found.
+ */
+extern String8 getInputDeviceConfigurationFilePathByName(
+        const String8& name, InputDeviceConfigurationFileType type);
 
 } // namespace android
 

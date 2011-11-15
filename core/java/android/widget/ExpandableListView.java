@@ -22,7 +22,6 @@ import android.content.Context;
 import android.content.res.TypedArray;
 import android.graphics.Canvas;
 import android.graphics.Rect;
-import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.Parcel;
 import android.os.Parcelable;
@@ -185,7 +184,6 @@ public class ExpandableListView extends ListView {
     
     /** Drawable to be used as a divider when it is adjacent to any children */
     private Drawable mChildDivider;
-    private boolean mClipChildDivider;
 
     // Bounds of the indicator to be drawn
     private final Rect mIndicatorRect = new Rect();
@@ -213,6 +211,9 @@ public class ExpandableListView extends ListView {
                 .getDimensionPixelSize(com.android.internal.R.styleable.ExpandableListView_indicatorLeft, 0);
         mIndicatorRight = a
                 .getDimensionPixelSize(com.android.internal.R.styleable.ExpandableListView_indicatorRight, 0);
+        if (mIndicatorRight == 0 && mGroupIndicator != null) {
+            mIndicatorRight = mIndicatorLeft + mGroupIndicator.getIntrinsicWidth();
+        }
         mChildIndicatorLeft = a.getDimensionPixelSize(
                 com.android.internal.R.styleable.ExpandableListView_childIndicatorLeft, CHILD_INDICATOR_INHERIT);
         mChildIndicatorRight = a.getDimensionPixelSize(
@@ -298,6 +299,9 @@ public class ExpandableListView extends ListView {
                     indicatorRect.right = mIndicatorRight;
                 }
                 
+                indicatorRect.left += mPaddingLeft;
+                indicatorRect.right += mPaddingLeft;
+
                 lastItemType = pos.position.type; 
             }
 
@@ -379,7 +383,6 @@ public class ExpandableListView extends ListView {
      */
     public void setChildDivider(Drawable childDivider) {
         mChildDivider = childDivider;
-        mClipChildDivider = childDivider != null && childDivider instanceof ColorDrawable;
     }
 
     @Override
@@ -396,17 +399,8 @@ public class ExpandableListView extends ListView {
                     pos.groupMetadata.lastChildFlPos != pos.groupMetadata.flPos)) {
                 // These are the cases where we draw the child divider
                 final Drawable divider = mChildDivider;
-                final boolean clip = mClipChildDivider;
-                if (!clip) {
-                    divider.setBounds(bounds);
-                } else {
-                    canvas.save();
-                    canvas.clipRect(bounds);
-                }
+                divider.setBounds(bounds);
                 divider.draw(canvas);
-                if (clip) {
-                    canvas.restore();
-                }
                 pos.recycle();
                 return;
             }
@@ -605,12 +599,35 @@ public class ExpandableListView extends ListView {
      *         was already expanded, this will return false)
      */
     public boolean expandGroup(int groupPos) {
-        boolean retValue = mConnector.expandGroup(groupPos);
+       return expandGroup(groupPos, false);
+    }
+
+    /**
+     * Expand a group in the grouped list view
+     *
+     * @param groupPos the group to be expanded
+     * @param animate true if the expanding group should be animated in
+     * @return True if the group was expanded, false otherwise (if the group
+     *         was already expanded, this will return false)
+     */
+    public boolean expandGroup(int groupPos, boolean animate) {
+        PositionMetadata pm = mConnector.getFlattenedPos(ExpandableListPosition.obtain(
+                ExpandableListPosition.GROUP, groupPos, -1, -1));
+        boolean retValue = mConnector.expandGroup(pm);
 
         if (mOnGroupExpandListener != null) {
             mOnGroupExpandListener.onGroupExpand(groupPos);
         }
-        
+
+        if (animate) {
+            final int groupFlatPos = pm.position.flatListPos;
+
+            final int shiftedGroupPosition = groupFlatPos + getHeaderViewsCount();
+            smoothScrollToPosition(shiftedGroupPosition + mAdapter.getChildrenCount(groupPos),
+                    shiftedGroupPosition);
+        }
+        pm.recycle();
+
         return retValue;
     }
     
@@ -1031,8 +1048,11 @@ public class ExpandableListView extends ListView {
      */
     public void setGroupIndicator(Drawable groupIndicator) {
         mGroupIndicator = groupIndicator;
+        if (mIndicatorRight == 0 && mGroupIndicator != null) {
+            mIndicatorRight = mIndicatorLeft + mGroupIndicator.getIntrinsicWidth();
+        }
     }
-    
+
     /**
      * Sets the drawing bounds for the indicators (at minimum, the group indicator
      * is affected by this; the child indicator is affected by this if the

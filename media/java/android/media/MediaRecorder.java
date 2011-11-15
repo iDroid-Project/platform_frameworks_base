@@ -16,17 +16,16 @@
 
 package android.media;
 
-import android.media.CamcorderProfile;
 import android.hardware.Camera;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.util.Log;
 import android.view.Surface;
-import java.io.IOException;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
+
 import java.io.FileDescriptor;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.lang.ref.WeakReference;
 
 /**
@@ -51,9 +50,25 @@ import java.lang.ref.WeakReference;
  * recorder.release(); // Now the object cannot be reused
  * </pre>
  *
- * <p>See the <a href="{@docRoot}guide/topics/media/index.html">Audio and Video</a>
- * documentation for additional help with using MediaRecorder.
- * <p>Note: Currently, MediaRecorder does not work on the emulator.
+ * <p>Applications may want to register for informational and error
+ * events in order to be informed of some internal update and possible
+ * runtime errors during recording. Registration for such events is
+ * done by setting the appropriate listeners (via calls
+ * (to {@link #setOnInfoListener(OnInfoListener)}setOnInfoListener and/or
+ * {@link #setOnErrorListener(OnErrorListener)}setOnErrorListener).
+ * In order to receive the respective callback associated with these listeners,
+ * applications are required to create MediaRecorder objects on threads with a
+ * Looper running (the main UI thread by default already has a Looper running).
+ *
+ * <p><strong>Note:</strong> Currently, MediaRecorder does not work on the emulator.
+ *
+ * <div class="special reference">
+ * <h3>Developer Guides</h3>
+ * <p>For more information about how to use MediaRecorder for recording video, read the
+ * <a href="{@docRoot}guide/topics/media/camera.html#capture-video">Camera</a> developer guide.
+ * For more information about how to use MediaRecorder for recording sound, read the
+ * <a href="{@docRoot}guide/topics/media/audio-capture.html">Audio Capture</a> developer guide.</p>
+ * </div>
  */
 public class MediaRecorder
 {
@@ -99,7 +114,8 @@ public class MediaRecorder
     /**
      * Sets a Camera to use for recording. Use this function to switch
      * quickly between preview and capture mode without a teardown of
-     * the camera object. Must call before prepare().
+     * the camera object. {@link android.hardware.Camera#unlock()} should be
+     * called before this. Must call before prepare().
      *
      * @param c the Camera to use for recording
      */
@@ -146,12 +162,10 @@ public class MediaRecorder
          *  {@link #DEFAULT} otherwise. */
         public static final int VOICE_RECOGNITION = 6;
 
-        /**
-         * @hide
-         * Microphone audio source tuned for voice communications such as VoIP. It
-         * will for instance take advantage of echo cancellation or automatic gain control
-         * if available. It otherwise behaves like {@link #DEFAULT} if no voice processing
-         * is available.
+        /** Microphone audio source tuned for voice communications such as VoIP. It
+         *  will for instance take advantage of echo cancellation or automatic gain control
+         *  if available. It otherwise behaves like {@link #DEFAULT} if no voice processing
+         *  is applied.
          */
         public static final int VOICE_COMMUNICATION = 7;
     }
@@ -168,6 +182,8 @@ public class MediaRecorder
         public static final int DEFAULT = 0;
         /** Camera video source */
         public static final int CAMERA = 1;
+        /** @hide */
+        public static final int GRALLOC_BUFFER = 2;
     }
 
     /**
@@ -260,7 +276,7 @@ public class MediaRecorder
      * Gets the maximum value for audio sources.
      * @see android.media.MediaRecorder.AudioSource
      */
-    public static final int getAudioSourceMax() { return AudioSource.VOICE_RECOGNITION; }
+    public static final int getAudioSourceMax() { return AudioSource.VOICE_COMMUNICATION; }
 
     /**
      * Sets the video source to be used for recording. If this method is not
@@ -287,11 +303,37 @@ public class MediaRecorder
         setVideoFrameRate(profile.videoFrameRate);
         setVideoSize(profile.videoFrameWidth, profile.videoFrameHeight);
         setVideoEncodingBitRate(profile.videoBitRate);
-        setAudioEncodingBitRate(profile.audioBitRate);
-        setAudioChannels(profile.audioChannels);
-        setAudioSamplingRate(profile.audioSampleRate);
         setVideoEncoder(profile.videoCodec);
-        setAudioEncoder(profile.audioCodec);
+        if (profile.quality >= CamcorderProfile.QUALITY_TIME_LAPSE_LOW &&
+             profile.quality <= CamcorderProfile.QUALITY_TIME_LAPSE_1080P) {
+            // Enable time lapse. Also don't set audio for time lapse.
+            setParameter(String.format("time-lapse-enable=1"));
+        } else {
+            setAudioEncodingBitRate(profile.audioBitRate);
+            setAudioChannels(profile.audioChannels);
+            setAudioSamplingRate(profile.audioSampleRate);
+            setAudioEncoder(profile.audioCodec);
+        }
+    }
+
+    /**
+     * Set video frame capture rate. This can be used to set a different video frame capture
+     * rate than the recorded video's playback rate. Currently this works only for time lapse mode.
+     *
+     * @param fps Rate at which frames should be captured in frames per second.
+     * The fps can go as low as desired. However the fastest fps will be limited by the hardware.
+     * For resolutions that can be captured by the video camera, the fastest fps can be computed using
+     * {@link android.hardware.Camera.Parameters#getPreviewFpsRange(int[])}. For higher
+     * resolutions the fastest fps may be more restrictive.
+     * Note that the recorder cannot guarantee that frames will be captured at the
+     * given rate due to camera/encoder limitations. However it tries to be as close as
+     * possible.
+     */
+    public void setCaptureRate(double fps) {
+        double timeBetweenFrameCapture = 1 / fps;
+        int timeBetweenFrameCaptureMs = (int) (1000 * timeBetweenFrameCapture);
+        setParameter(String.format("time-between-time-lapse-frame-capture=%d",
+                    timeBetweenFrameCaptureMs));
     }
 
     /**
@@ -316,7 +358,40 @@ public class MediaRecorder
             degrees != 270) {
             throw new IllegalArgumentException("Unsupported angle: " + degrees);
         }
-        setParameter(String.format("video-param-rotation-angle-degrees=%d", degrees));
+        setParameter("video-param-rotation-angle-degrees=" + degrees);
+    }
+
+    /**
+     * Set and store the geodata (latitude and longitude) in the output file.
+     * This method should be called before prepare(). The geodata is
+     * stored in udta box if the output format is OutputFormat.THREE_GPP
+     * or OutputFormat.MPEG_4, and is ignored for other output formats.
+     * The geodata is stored according to ISO-6709 standard.
+     *
+     * @param latitude latitude in degrees. Its value must be in the
+     * range [-90, 90].
+     * @param longitude longitude in degrees. Its value must be in the
+     * range [-180, 180].
+     *
+     * @throws IllegalArgumentException if the given latitude or
+     * longitude is out of range.
+     *
+     */
+    public void setLocation(float latitude, float longitude) {
+        int latitudex10000  = (int) (latitude * 10000 + 0.5);
+        int longitudex10000 = (int) (longitude * 10000 + 0.5);
+
+        if (latitudex10000 > 900000 || latitudex10000 < -900000) {
+            String msg = "Latitude: " + latitude + " out of range.";
+            throw new IllegalArgumentException(msg);
+        }
+        if (longitudex10000 > 1800000 || longitudex10000 < -1800000) {
+            String msg = "Longitude: " + longitude + " out of range";
+            throw new IllegalArgumentException(msg);
+        }
+
+        setParameter("param-geotag-latitude=" + latitudex10000);
+        setParameter("param-geotag-longitude=" + longitudex10000);
     }
 
     /**
@@ -426,8 +501,9 @@ public class MediaRecorder
      * the specified audio sampling rate is applicable. The sampling rate really depends
      * on the format for the audio recording, as well as the capabilities of the platform.
      * For instance, the sampling rate supported by AAC audio coding standard ranges
-     * from 8 to 96 kHz. Please consult with the related audio coding standard for the
-     * supported audio sampling rate.
+     * from 8 to 96 kHz, the sampling rate supported by AMRNB is 8kHz, and the sampling
+     * rate supported by AMRWB is 16kHz. Please consult with the related audio coding
+     * standard for the supported audio sampling rate.
      *
      * @param samplingRate the sampling rate for audio in samples per second.
      */
@@ -435,7 +511,7 @@ public class MediaRecorder
         if (samplingRate <= 0) {
             throw new IllegalArgumentException("Audio sampling rate is not positive");
         }
-        setParameter(String.format("audio-param-sampling-rate=%d", samplingRate));
+        setParameter("audio-param-sampling-rate=" + samplingRate);
     }
 
     /**
@@ -450,7 +526,7 @@ public class MediaRecorder
         if (numChannels <= 0) {
             throw new IllegalArgumentException("Number of channels is not positive");
         }
-        setParameter(String.format("audio-param-number-of-channels=%d", numChannels));
+        setParameter("audio-param-number-of-channels=" + numChannels);
     }
 
     /**
@@ -466,7 +542,7 @@ public class MediaRecorder
         if (bitRate <= 0) {
             throw new IllegalArgumentException("Audio encoding bit rate is not positive");
         }
-        setParameter(String.format("audio-param-encoding-bitrate=%d", bitRate));
+        setParameter("audio-param-encoding-bitrate=" + bitRate);
     }
 
     /**
@@ -482,7 +558,27 @@ public class MediaRecorder
         if (bitRate <= 0) {
             throw new IllegalArgumentException("Video encoding bit rate is not positive");
         }
-        setParameter(String.format("video-param-encoding-bitrate=%d", bitRate));
+        setParameter("video-param-encoding-bitrate=" + bitRate);
+    }
+
+    /**
+     * Currently not implemented. It does nothing.
+     * @deprecated Time lapse mode video recording using camera still image capture
+     * is not desirable, and will not be supported.
+     */
+    public void setAuxiliaryOutputFile(FileDescriptor fd)
+    {
+        Log.w(TAG, "setAuxiliaryOutputFile(FileDescriptor) is no longer supported.");
+    }
+
+    /**
+     * Currently not implemented. It does nothing.
+     * @deprecated Time lapse mode video recording using camera still image capture
+     * is not desirable, and will not be supported.
+     */
+    public void setAuxiliaryOutputFile(String path)
+    {
+        Log.w(TAG, "setAuxiliaryOutputFile(String) is no longer supported.");
     }
 
     /**
@@ -541,12 +637,19 @@ public class MediaRecorder
         } else {
             throw new IOException("No valid output file");
         }
+
         _prepare();
     }
 
     /**
      * Begins capturing and encoding data to the file specified with
      * setOutputFile(). Call this after prepare().
+     *
+     * <p>Since API level 13, if applications set a camera via
+     * {@link #setCamera(Camera)}, the apps can use the camera after this method
+     * call. The apps do not need to lock the camera again. However, if this
+     * method fails, the apps should still lock the camera back. The apps should
+     * not start another recording session during recording.
      *
      * @throws IllegalStateException if it is called before
      * prepare().
@@ -556,6 +659,12 @@ public class MediaRecorder
     /**
      * Stops recording. Call this after start(). Once recording is stopped,
      * you will have to configure it again as if it has just been constructed.
+     * Note that a RuntimeException is intentionally thrown to the
+     * application, if no valid audio/video data has been received when stop()
+     * is called. This happens if stop() is called immediately after
+     * start(). The failure lets the application take action accordingly to
+     * clean up the output file (delete the output file, for instance), since
+     * the output file is not properly constructed when this happens.
      *
      * @throws IllegalStateException if it is called before start()
      */
@@ -640,6 +749,75 @@ public class MediaRecorder
      */
     public static final int MEDIA_RECORDER_INFO_MAX_FILESIZE_REACHED = 801;
 
+    /** informational events for individual tracks, for testing purpose.
+     * The track informational event usually contains two parts in the ext1
+     * arg of the onInfo() callback: bit 31-28 contains the track id; and
+     * the rest of the 28 bits contains the informational event defined here.
+     * For example, ext1 = (1 << 28 | MEDIA_RECORDER_TRACK_INFO_TYPE) if the
+     * track id is 1 for informational event MEDIA_RECORDER_TRACK_INFO_TYPE;
+     * while ext1 = (0 << 28 | MEDIA_RECORDER_TRACK_INFO_TYPE) if the track
+     * id is 0 for informational event MEDIA_RECORDER_TRACK_INFO_TYPE. The
+     * application should extract the track id and the type of informational
+     * event from ext1, accordingly.
+     *
+     * FIXME:
+     * Please update the comment for onInfo also when these
+     * events are unhidden so that application knows how to extract the track
+     * id and the informational event type from onInfo callback.
+     *
+     * {@hide}
+     */
+    public static final int MEDIA_RECORDER_TRACK_INFO_LIST_START        = 1000;
+    /** Signal the completion of the track for the recording session.
+     * {@hide}
+     */
+    public static final int MEDIA_RECORDER_TRACK_INFO_COMPLETION_STATUS = 1000;
+    /** Indicate the recording progress in time (ms) during recording.
+     * {@hide}
+     */
+    public static final int MEDIA_RECORDER_TRACK_INFO_PROGRESS_IN_TIME  = 1001;
+    /** Indicate the track type: 0 for Audio and 1 for Video.
+     * {@hide}
+     */
+    public static final int MEDIA_RECORDER_TRACK_INFO_TYPE              = 1002;
+    /** Provide the track duration information.
+     * {@hide}
+     */
+    public static final int MEDIA_RECORDER_TRACK_INFO_DURATION_MS       = 1003;
+    /** Provide the max chunk duration in time (ms) for the given track.
+     * {@hide}
+     */
+    public static final int MEDIA_RECORDER_TRACK_INFO_MAX_CHUNK_DUR_MS  = 1004;
+    /** Provide the total number of recordd frames.
+     * {@hide}
+     */
+    public static final int MEDIA_RECORDER_TRACK_INFO_ENCODED_FRAMES    = 1005;
+    /** Provide the max spacing between neighboring chunks for the given track.
+     * {@hide}
+     */
+    public static final int MEDIA_RECORDER_TRACK_INTER_CHUNK_TIME_MS    = 1006;
+    /** Provide the elapsed time measuring from the start of the recording
+     * till the first output frame of the given track is received, excluding
+     * any intentional start time offset of a recording session for the
+     * purpose of eliminating the recording sound in the recorded file.
+     * {@hide}
+     */
+    public static final int MEDIA_RECORDER_TRACK_INFO_INITIAL_DELAY_MS  = 1007;
+    /** Provide the start time difference (delay) betweeen this track and
+     * the start of the movie.
+     * {@hide}
+     */
+    public static final int MEDIA_RECORDER_TRACK_INFO_START_OFFSET_MS   = 1008;
+    /** Provide the total number of data (in kilo-bytes) encoded.
+     * {@hide}
+     */
+    public static final int MEDIA_RECORDER_TRACK_INFO_DATA_KBYTES       = 1009;
+    /**
+     * {@hide}
+     */
+    public static final int MEDIA_RECORDER_TRACK_INFO_LIST_END          = 2000;
+
+
     /**
      * Interface definition for a callback to be invoked when an error
      * occurs while recording.
@@ -684,8 +862,17 @@ public class MediaRecorder
         /* Do not change these values without updating their counterparts
          * in include/media/mediarecorder.h!
          */
-        private static final int MEDIA_RECORDER_EVENT_ERROR = 1;
-        private static final int MEDIA_RECORDER_EVENT_INFO  = 2;
+        private static final int MEDIA_RECORDER_EVENT_LIST_START = 1;
+        private static final int MEDIA_RECORDER_EVENT_ERROR      = 1;
+        private static final int MEDIA_RECORDER_EVENT_INFO       = 2;
+        private static final int MEDIA_RECORDER_EVENT_LIST_END   = 99;
+
+        /* Events related to individual tracks */
+        private static final int MEDIA_RECORDER_TRACK_EVENT_LIST_START = 100;
+        private static final int MEDIA_RECORDER_TRACK_EVENT_ERROR      = 100;
+        private static final int MEDIA_RECORDER_TRACK_EVENT_INFO       = 101;
+        private static final int MEDIA_RECORDER_TRACK_EVENT_LIST_END   = 1000;
+
 
         @Override
         public void handleMessage(Message msg) {
@@ -695,12 +882,14 @@ public class MediaRecorder
             }
             switch(msg.what) {
             case MEDIA_RECORDER_EVENT_ERROR:
+            case MEDIA_RECORDER_TRACK_EVENT_ERROR:
                 if (mOnErrorListener != null)
                     mOnErrorListener.onError(mMediaRecorder, msg.arg1, msg.arg2);
 
                 return;
 
             case MEDIA_RECORDER_EVENT_INFO:
+            case MEDIA_RECORDER_TRACK_EVENT_INFO:
                 if (mOnInfoListener != null)
                     mOnInfoListener.onInfo(mMediaRecorder, msg.arg1, msg.arg2);
 

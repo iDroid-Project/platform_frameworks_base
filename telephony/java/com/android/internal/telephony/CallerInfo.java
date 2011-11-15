@@ -19,6 +19,7 @@ package com.android.internal.telephony;
 import android.content.Context;
 import android.database.Cursor;
 import android.graphics.drawable.Drawable;
+import android.location.CountryDetector;
 import android.net.Uri;
 import android.provider.ContactsContract.CommonDataKinds.Phone;
 import android.provider.ContactsContract.Data;
@@ -28,6 +29,13 @@ import android.telephony.PhoneNumberUtils;
 import android.telephony.TelephonyManager;
 import android.text.TextUtils;
 import android.util.Log;
+
+import com.android.i18n.phonenumbers.geocoding.PhoneNumberOfflineGeocoder;
+import com.android.i18n.phonenumbers.NumberParseException;
+import com.android.i18n.phonenumbers.PhoneNumberUtil;
+import com.android.i18n.phonenumbers.Phonenumber.PhoneNumber;
+
+import java.util.Locale;
 
 
 /**
@@ -72,6 +80,8 @@ public class CallerInfo {
      */
     public String name;
     public String phoneNumber;
+    public String normalizedNumber;
+    public String geoDescription;
 
     public String cnapName;
     public int numberPresentation;
@@ -130,7 +140,7 @@ public class CallerInfo {
         info.isCachedPhotoCurrent = false;
         info.contactExists = false;
 
-        if (VDBG) Log.v(TAG, "construct callerInfo from cursor");
+        if (VDBG) Log.v(TAG, "getCallerInfo() based on cursor...");
 
         if (cursor != null) {
             if (cursor.moveToFirst()) {
@@ -150,6 +160,12 @@ public class CallerInfo {
                 columnIndex = cursor.getColumnIndex(PhoneLookup.NUMBER);
                 if (columnIndex != -1) {
                     info.phoneNumber = cursor.getString(columnIndex);
+                }
+
+                // Look for the normalized number
+                columnIndex = cursor.getColumnIndex(PhoneLookup.NORMALIZED_NUMBER);
+                if (columnIndex != -1) {
+                    info.normalizedNumber = cursor.getString(columnIndex);
                 }
 
                 // Look for the label/type combo
@@ -229,6 +245,8 @@ public class CallerInfo {
      * with all relevant fields empty or null.
      */
     public static CallerInfo getCallerInfo(Context context, String number) {
+        if (VDBG) Log.v(TAG, "getCallerInfo() based on number...");
+
         if (TextUtils.isEmpty(number)) {
             return null;
         }
@@ -236,7 +254,7 @@ public class CallerInfo {
         // Change the callerInfo number ONLY if it is an emergency number
         // or if it is the voicemail number.  If it is either, take a
         // shortcut and skip the query.
-        if (PhoneNumberUtils.isEmergencyNumber(number)) {
+        if (PhoneNumberUtils.isLocalEmergencyNumber(number, context)) {
             return new CallerInfo().markAsEmergency(context);
         } else if (PhoneNumberUtils.isVoiceMailNumber(number)) {
             return new CallerInfo().markAsVoiceMail();
@@ -466,6 +484,76 @@ public class CallerInfo {
     }
 
     /**
+     * Updates this CallerInfo's geoDescription field, based on the raw
+     * phone number in the phoneNumber field.
+     *
+     * (Note that the various getCallerInfo() methods do *not* set the
+     * geoDescription automatically; you need to call this method
+     * explicitly to get it.)
+     *
+     * @param context the context used to look up the current locale / country
+     * @param fallbackNumber if this CallerInfo's phoneNumber field is empty,
+     *        this specifies a fallback number to use instead.
+     */
+    public void updateGeoDescription(Context context, String fallbackNumber) {
+        String number = TextUtils.isEmpty(phoneNumber) ? fallbackNumber : phoneNumber;
+        geoDescription = getGeoDescription(context, number);
+    }
+
+    /**
+     * @return a geographical description string for the specified number.
+     * @see com.android.i18n.phonenumbers.PhoneNumberOfflineGeocoder
+     */
+    private static String getGeoDescription(Context context, String number) {
+        if (VDBG) Log.v(TAG, "getGeoDescription('" + number + "')...");
+
+        if (TextUtils.isEmpty(number)) {
+            return null;
+        }
+
+        PhoneNumberUtil util = PhoneNumberUtil.getInstance();
+        PhoneNumberOfflineGeocoder geocoder = PhoneNumberOfflineGeocoder.getInstance();
+
+        Locale locale = context.getResources().getConfiguration().locale;
+        String countryIso = getCurrentCountryIso(context, locale);
+        PhoneNumber pn = null;
+        try {
+            if (VDBG) Log.v(TAG, "parsing '" + number
+                            + "' for countryIso '" + countryIso + "'...");
+            pn = util.parse(number, countryIso);
+            if (VDBG) Log.v(TAG, "- parsed number: " + pn);
+        } catch (NumberParseException e) {
+            Log.w(TAG, "getGeoDescription: NumberParseException for incoming number '" + number + "'");
+        }
+
+        if (pn != null) {
+            String description = geocoder.getDescriptionForNumber(pn, locale);
+            if (VDBG) Log.v(TAG, "- got description: '" + description + "'");
+            return description;
+        } else {
+            return null;
+        }
+    }
+
+    /**
+     * @return The ISO 3166-1 two letters country code of the country the user
+     *         is in.
+     */
+    private static String getCurrentCountryIso(Context context, Locale locale) {
+      String countryIso;
+      CountryDetector detector = (CountryDetector) context.getSystemService(
+          Context.COUNTRY_DETECTOR);
+      if (detector != null) {
+        countryIso = detector.detectCountry().getCountryIso();
+      } else {
+        countryIso = locale.getCountry();
+        Log.w(TAG, "No CountryDetector; falling back to countryIso based on locale: "
+              + countryIso);
+      }
+      return countryIso;
+    }
+
+    /**
      * @return a string debug representation of this instance.
      */
     public String toString() {
@@ -475,8 +563,11 @@ public class CallerInfo {
 
         if (VERBOSE_DEBUG) {
             return new StringBuilder(384)
+                    .append(super.toString() + " { ")
                     .append("\nname: " + name)
                     .append("\nphoneNumber: " + phoneNumber)
+                    .append("\nnormalizedNumber: " + normalizedNumber)
+                    .append("\ngeoDescription: " + geoDescription)
                     .append("\ncnapName: " + cnapName)
                     .append("\nnumberPresentation: " + numberPresentation)
                     .append("\nnamePresentation: " + namePresentation)
@@ -495,10 +586,11 @@ public class CallerInfo {
                     .append("\nemergency: " + mIsEmergency)
                     .append("\nvoicemail " + mIsVoiceMail)
                     .append("\ncontactExists " + contactExists)
+                    .append(" }")
                     .toString();
         } else {
             return new StringBuilder(128)
-                    .append("CallerInfo { ")
+                    .append(super.toString() + " { ")
                     .append("name " + ((name == null) ? "null" : "non-null"))
                     .append(", phoneNumber " + ((phoneNumber == null) ? "null" : "non-null"))
                     .append(" }")

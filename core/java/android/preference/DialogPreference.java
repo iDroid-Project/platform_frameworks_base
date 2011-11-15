@@ -321,8 +321,7 @@ public abstract class DialogPreference extends Preference implements
      */
     private void requestInputMethod(Dialog dialog) {
         Window window = dialog.getWindow();
-        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE |
-                WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
     }
 
     /**
@@ -338,8 +337,7 @@ public abstract class DialogPreference extends Preference implements
             return null;
         }
         
-        LayoutInflater inflater = (LayoutInflater) getContext().getSystemService(
-                Context.LAYOUT_INFLATER_SERVICE);
+        LayoutInflater inflater = LayoutInflater.from(mBuilder.getContext());
         return inflater.inflate(mDialogLayoutResId, null);
     }
     

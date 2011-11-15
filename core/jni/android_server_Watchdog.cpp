@@ -17,6 +17,7 @@
 #define LOG_TAG "Watchdog_N"
 #include <utils/Log.h>
 
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <fcntl.h>
 #include <dirent.h>
@@ -63,7 +64,8 @@ static void dumpKernelStacks(JNIEnv* env, jobject clazz, jstring pathStr) {
 
     const char *path = env->GetStringUTFChars(pathStr, NULL);
 
-    int outFd = open(path, O_WRONLY | O_APPEND | O_CREAT);
+    int outFd = open(path, O_WRONLY | O_APPEND | O_CREAT,
+        S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH|S_IWOTH);
     if (outFd < 0) {
         LOGE("Unable to open stack dump file: %d (%s)", errno, strerror(errno));
         goto done;

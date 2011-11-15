@@ -21,7 +21,6 @@
 #define TOKEN_MAX     8     /* max number of arguments in buffer */
 #define REPLY_MAX     256   /* largest reply allowed */
 
-
 static int do_ping(char **arg, char reply[REPLY_MAX])
 {
     return 0;
@@ -29,7 +28,7 @@ static int do_ping(char **arg, char reply[REPLY_MAX])
 
 static int do_install(char **arg, char reply[REPLY_MAX])
 {
-    return install(arg[0], atoi(arg[1]), atoi(arg[2]), atoi(arg[3])); /* pkgname, uid, gid */
+    return install(arg[0], atoi(arg[1]), atoi(arg[2])); /* pkgname, uid, gid */
 }
 
 static int do_dexopt(char **arg, char reply[REPLY_MAX])
@@ -50,12 +49,12 @@ static int do_rm_dex(char **arg, char reply[REPLY_MAX])
 
 static int do_remove(char **arg, char reply[REPLY_MAX])
 {
-    return uninstall(arg[0], atoi(arg[1])); /* pkgname */
+    return uninstall(arg[0], atoi(arg[1])); /* pkgname, userid */
 }
 
 static int do_rename(char **arg, char reply[REPLY_MAX])
 {
-    return renamepkg(arg[0], arg[1], atoi(arg[2])); /* oldpkgname, newpkgname */
+    return renamepkg(arg[0], arg[1]); /* oldpkgname, newpkgname */
 }
 
 static int do_free_cache(char **arg, char reply[REPLY_MAX]) /* TODO int:free_size */
@@ -65,7 +64,7 @@ static int do_free_cache(char **arg, char reply[REPLY_MAX]) /* TODO int:free_siz
 
 static int do_rm_cache(char **arg, char reply[REPLY_MAX])
 {
-    return delete_cache(arg[0], atoi(arg[1])); /* pkgname */
+    return delete_cache(arg[0]); /* pkgname */
 }
 
 static int do_protect(char **arg, char reply[REPLY_MAX])
@@ -78,22 +77,34 @@ static int do_get_size(char **arg, char reply[REPLY_MAX])
     int64_t codesize = 0;
     int64_t datasize = 0;
     int64_t cachesize = 0;
+    int64_t asecsize = 0;
     int res = 0;
 
         /* pkgdir, apkpath */
-    res = get_size(arg[0], arg[1], arg[2], &codesize, &datasize, &cachesize, atoi(arg[3]));
+    res = get_size(arg[0], arg[1], arg[2], arg[3], &codesize, &datasize, &cachesize, &asecsize);
 
     /*
      * Each int64_t can take up 22 characters printed out. Make sure it
      * doesn't go over REPLY_MAX in the future.
      */
-    snprintf(reply, REPLY_MAX, "%" PRId64 " %" PRId64 " %" PRId64, codesize, datasize, cachesize);
+    snprintf(reply, REPLY_MAX, "%" PRId64 " %" PRId64 " %" PRId64 " %" PRId64,
+            codesize, datasize, cachesize, asecsize);
     return res;
 }
 
 static int do_rm_user_data(char **arg, char reply[REPLY_MAX])
 {
-    return delete_user_data(arg[0], atoi(arg[1])); /* pkgname */
+    return delete_user_data(arg[0], atoi(arg[1])); /* pkgname, userid */
+}
+
+static int do_mk_user_data(char **arg, char reply[REPLY_MAX])
+{
+    return make_user_data(arg[0], atoi(arg[1]), atoi(arg[2])); /* pkgname, uid, userid */
+}
+
+static int do_rm_user(char **arg, char reply[REPLY_MAX])
+{
+    return delete_persona(atoi(arg[0])); /* userid */
 }
 
 static int do_movefiles(char **arg, char reply[REPLY_MAX])
@@ -119,20 +130,22 @@ struct cmdinfo {
 
 struct cmdinfo cmds[] = {
     { "ping",                 0, do_ping },
-    { "install",              4, do_install },
+    { "install",              3, do_install },
     { "dexopt",               3, do_dexopt },
     { "movedex",              2, do_move_dex },
     { "rmdex",                1, do_rm_dex },
     { "remove",               2, do_remove },
-    { "rename",               3, do_rename },
+    { "rename",               2, do_rename },
     { "freecache",            1, do_free_cache },
-    { "rmcache",              2, do_rm_cache },
+    { "rmcache",              1, do_rm_cache },
     { "protect",              2, do_protect },
     { "getsize",              4, do_get_size },
     { "rmuserdata",           2, do_rm_user_data },
     { "movefiles",            0, do_movefiles },
     { "linklib",              2, do_linklib },
     { "unlinklib",            1, do_unlinklib },
+    { "mkuserdata",           3, do_mk_user_data },
+    { "rmuser",               1, do_rm_user },
 };
 
 static int readx(int s, void *_buf, int count)
@@ -235,11 +248,117 @@ done:
     return 0;
 }
 
-int main(const int argc, const char *argv[]) {    
+/**
+ * Initialize all the global variables that are used elsewhere. Returns 0 upon
+ * success and -1 on error.
+ */
+void free_globals() {
+    size_t i;
+
+    for (i = 0; i < android_system_dirs.count; i++) {
+        if (android_system_dirs.dirs[i].path != NULL) {
+            free(android_system_dirs.dirs[i].path);
+        }
+    }
+
+    free(android_system_dirs.dirs);
+}
+
+int initialize_globals() {
+    // Get the android data directory.
+    if (get_path_from_env(&android_data_dir, "ANDROID_DATA") < 0) {
+        return -1;
+    }
+
+    // Get the android app directory.
+    if (copy_and_append(&android_app_dir, &android_data_dir, APP_SUBDIR) < 0) {
+        return -1;
+    }
+
+    // Get the android protected app directory.
+    if (copy_and_append(&android_app_private_dir, &android_data_dir, PRIVATE_APP_SUBDIR) < 0) {
+        return -1;
+    }
+
+    // Get the sd-card ASEC mount point.
+    if (get_path_from_env(&android_asec_dir, "ASEC_MOUNTPOINT") < 0) {
+        return -1;
+    }
+
+    // Take note of the system and vendor directories.
+    android_system_dirs.count = 2;
+
+    android_system_dirs.dirs = calloc(android_system_dirs.count, sizeof(dir_rec_t));
+    if (android_system_dirs.dirs == NULL) {
+        LOGE("Couldn't allocate array for dirs; aborting\n");
+        return -1;
+    }
+
+    // system
+    if (get_path_from_env(&android_system_dirs.dirs[0], "ANDROID_ROOT") < 0) {
+        free_globals();
+        return -1;
+    }
+
+    // append "app/" to dirs[0]
+    char *system_app_path = build_string2(android_system_dirs.dirs[0].path, APP_SUBDIR);
+    android_system_dirs.dirs[0].path = system_app_path;
+    android_system_dirs.dirs[0].len = strlen(system_app_path);
+
+    // vendor
+    // TODO replace this with an environment variable (doesn't exist yet)
+    android_system_dirs.dirs[1].path = "/vendor/app/";
+    android_system_dirs.dirs[1].len = strlen(android_system_dirs.dirs[1].path);
+
+    return 0;
+}
+
+int initialize_directories() {
+    // /data/user
+    char *user_data_dir = build_string2(android_data_dir.path, SECONDARY_USER_PREFIX);
+    // /data/data
+    char *legacy_data_dir = build_string2(android_data_dir.path, PRIMARY_USER_PREFIX);
+    // /data/user/0
+    char *primary_data_dir = build_string3(android_data_dir.path, SECONDARY_USER_PREFIX,
+            "0");
+    int ret = -1;
+    if (user_data_dir != NULL && primary_data_dir != NULL && legacy_data_dir != NULL) {
+        ret = 0;
+        // Make the /data/user directory if necessary
+        if (access(user_data_dir, R_OK) < 0) {
+            if (mkdir(user_data_dir, 0755) < 0) {
+                return -1;
+            }
+            if (chown(user_data_dir, AID_SYSTEM, AID_SYSTEM) < 0) {
+                return -1;
+            }
+        }
+        // Make the /data/user/0 symlink to /data/data if necessary
+        if (access(primary_data_dir, R_OK) < 0) {
+              ret = symlink(legacy_data_dir, primary_data_dir);
+        }
+        free(user_data_dir);
+        free(legacy_data_dir);
+        free(primary_data_dir);
+    }
+    return ret;
+}
+
+int main(const int argc, const char *argv[]) {
     char buf[BUFFER_MAX];
     struct sockaddr addr;
     socklen_t alen;
     int lsocket, s, count;
+
+    if (initialize_globals() < 0) {
+        LOGE("Could not initialize globals; exiting.\n");
+        exit(1);
+    }
+
+    if (initialize_directories() < 0) {
+        LOGE("Could not create directories; exiting.\n");
+        exit(1);
+    }
 
     lsocket = android_get_control_socket(SOCKET_PATH);
     if (lsocket < 0) {

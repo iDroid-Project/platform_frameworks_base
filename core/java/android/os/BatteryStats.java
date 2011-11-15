@@ -23,8 +23,10 @@ import java.util.List;
 import java.util.Map;
 
 import android.content.pm.ApplicationInfo;
+import android.telephony.SignalStrength;
 import android.util.Log;
 import android.util.Printer;
+import android.util.Slog;
 import android.util.SparseArray;
 import android.util.TimeUtils;
 
@@ -407,15 +409,19 @@ public abstract class BatteryStats implements Parcelable {
     }
 
     public final static class HistoryItem implements Parcelable {
+        static final String TAG = "HistoryItem";
+        static final boolean DEBUG = false;
+        
         public HistoryItem next;
         
         public long time;
         
-        public static final byte CMD_UPDATE = 0;
-        public static final byte CMD_START = 1;
-        public static final byte CMD_OVERFLOW = 2;
+        public static final byte CMD_NULL = 0;
+        public static final byte CMD_UPDATE = 1;
+        public static final byte CMD_START = 2;
+        public static final byte CMD_OVERFLOW = 3;
         
-        public byte cmd;
+        public byte cmd = CMD_NULL;
         
         public byte batteryLevel;
         public byte batteryStatus;
@@ -426,33 +432,38 @@ public abstract class BatteryStats implements Parcelable {
         public char batteryVoltage;
         
         // Constants from SCREEN_BRIGHTNESS_*
-        public static final int STATE_BRIGHTNESS_MASK = 0x000000f;
+        public static final int STATE_BRIGHTNESS_MASK = 0x0000000f;
         public static final int STATE_BRIGHTNESS_SHIFT = 0;
         // Constants from SIGNAL_STRENGTH_*
-        public static final int STATE_SIGNAL_STRENGTH_MASK = 0x00000f0;
+        public static final int STATE_SIGNAL_STRENGTH_MASK = 0x000000f0;
         public static final int STATE_SIGNAL_STRENGTH_SHIFT = 4;
         // Constants from ServiceState.STATE_*
-        public static final int STATE_PHONE_STATE_MASK = 0x0000f00;
+        public static final int STATE_PHONE_STATE_MASK = 0x00000f00;
         public static final int STATE_PHONE_STATE_SHIFT = 8;
         // Constants from DATA_CONNECTION_*
-        public static final int STATE_DATA_CONNECTION_MASK = 0x000f000;
+        public static final int STATE_DATA_CONNECTION_MASK = 0x0000f000;
         public static final int STATE_DATA_CONNECTION_SHIFT = 12;
         
-        public static final int STATE_BATTERY_PLUGGED_FLAG = 1<<30;
-        public static final int STATE_SCREEN_ON_FLAG = 1<<29;
+        // These states always appear directly in the first int token
+        // of a delta change; they should be ones that change relatively
+        // frequently.
+        public static final int STATE_WAKE_LOCK_FLAG = 1<<30;
+        public static final int STATE_SENSOR_ON_FLAG = 1<<29;
         public static final int STATE_GPS_ON_FLAG = 1<<28;
-        public static final int STATE_PHONE_IN_CALL_FLAG = 1<<27;
-        public static final int STATE_PHONE_SCANNING_FLAG = 1<<26;
-        public static final int STATE_WIFI_ON_FLAG = 1<<25;
-        public static final int STATE_WIFI_RUNNING_FLAG = 1<<24;
-        public static final int STATE_WIFI_FULL_LOCK_FLAG = 1<<23;
-        public static final int STATE_WIFI_SCAN_LOCK_FLAG = 1<<22;
-        public static final int STATE_WIFI_MULTICAST_ON_FLAG = 1<<21;
-        public static final int STATE_BLUETOOTH_ON_FLAG = 1<<20;
-        public static final int STATE_AUDIO_ON_FLAG = 1<<19;
-        public static final int STATE_VIDEO_ON_FLAG = 1<<18;
-        public static final int STATE_WAKE_LOCK_FLAG = 1<<17;
-        public static final int STATE_SENSOR_ON_FLAG = 1<<16;
+        public static final int STATE_PHONE_SCANNING_FLAG = 1<<27;
+        public static final int STATE_WIFI_RUNNING_FLAG = 1<<26;
+        public static final int STATE_WIFI_FULL_LOCK_FLAG = 1<<25;
+        public static final int STATE_WIFI_SCAN_LOCK_FLAG = 1<<24;
+        public static final int STATE_WIFI_MULTICAST_ON_FLAG = 1<<23;
+        // These are on the lower bits used for the command; if they change
+        // we need to write another int of data.
+        public static final int STATE_AUDIO_ON_FLAG = 1<<22;
+        public static final int STATE_VIDEO_ON_FLAG = 1<<21;
+        public static final int STATE_SCREEN_ON_FLAG = 1<<20;
+        public static final int STATE_BATTERY_PLUGGED_FLAG = 1<<19;
+        public static final int STATE_PHONE_IN_CALL_FLAG = 1<<18;
+        public static final int STATE_WIFI_ON_FLAG = 1<<17;
+        public static final int STATE_BLUETOOTH_ON_FLAG = 1<<16;
         
         public static final int MOST_INTERESTING_STATES =
             STATE_BATTERY_PLUGGED_FLAG | STATE_SCREEN_ON_FLAG
@@ -465,16 +476,7 @@ public abstract class BatteryStats implements Parcelable {
         
         public HistoryItem(long time, Parcel src) {
             this.time = time;
-            int bat = src.readInt();
-            cmd = (byte)(bat&0xff);
-            batteryLevel = (byte)((bat>>8)&0xff);
-            batteryStatus = (byte)((bat>>16)&0xf);
-            batteryHealth = (byte)((bat>>20)&0xf);
-            batteryPlugType = (byte)((bat>>24)&0xf);
-            bat = src.readInt();
-            batteryTemperature = (char)(bat&0xffff);
-            batteryVoltage = (char)((bat>>16)&0xffff);
-            states = src.readInt();
+            readFromParcel(src);
         }
         
         public int describeContents() {
@@ -493,6 +495,174 @@ public abstract class BatteryStats implements Parcelable {
                     | ((((int)batteryVoltage)<<16)&0xffff0000);
             dest.writeInt(bat);
             dest.writeInt(states);
+        }
+
+        private void readFromParcel(Parcel src) {
+            int bat = src.readInt();
+            cmd = (byte)(bat&0xff);
+            batteryLevel = (byte)((bat>>8)&0xff);
+            batteryStatus = (byte)((bat>>16)&0xf);
+            batteryHealth = (byte)((bat>>20)&0xf);
+            batteryPlugType = (byte)((bat>>24)&0xf);
+            bat = src.readInt();
+            batteryTemperature = (char)(bat&0xffff);
+            batteryVoltage = (char)((bat>>16)&0xffff);
+            states = src.readInt();
+        }
+
+        // Part of initial delta int that specifies the time delta.
+        static final int DELTA_TIME_MASK = 0x3ffff;
+        static final int DELTA_TIME_ABS = 0x3fffd;    // Following is an entire abs update.
+        static final int DELTA_TIME_INT = 0x3fffe;    // The delta is a following int
+        static final int DELTA_TIME_LONG = 0x3ffff;   // The delta is a following long
+        // Part of initial delta int holding the command code.
+        static final int DELTA_CMD_MASK = 0x3;
+        static final int DELTA_CMD_SHIFT = 18;
+        // Flag in delta int: a new battery level int follows.
+        static final int DELTA_BATTERY_LEVEL_FLAG = 1<<20;
+        // Flag in delta int: a new full state and battery status int follows.
+        static final int DELTA_STATE_FLAG = 1<<21;
+        static final int DELTA_STATE_MASK = 0xffc00000;
+        
+        public void writeDelta(Parcel dest, HistoryItem last) {
+            if (last == null || last.cmd != CMD_UPDATE) {
+                dest.writeInt(DELTA_TIME_ABS);
+                writeToParcel(dest, 0);
+                return;
+            }
+            
+            final long deltaTime = time - last.time;
+            final int lastBatteryLevelInt = last.buildBatteryLevelInt();
+            final int lastStateInt = last.buildStateInt();
+            
+            int deltaTimeToken;
+            if (deltaTime < 0 || deltaTime > Integer.MAX_VALUE) {
+                deltaTimeToken = DELTA_TIME_LONG;
+            } else if (deltaTime >= DELTA_TIME_ABS) {
+                deltaTimeToken = DELTA_TIME_INT;
+            } else {
+                deltaTimeToken = (int)deltaTime;
+            }
+            int firstToken = deltaTimeToken
+                    | (cmd<<DELTA_CMD_SHIFT)
+                    | (states&DELTA_STATE_MASK);
+            final int batteryLevelInt = buildBatteryLevelInt();
+            final boolean batteryLevelIntChanged = batteryLevelInt != lastBatteryLevelInt;
+            if (batteryLevelIntChanged) {
+                firstToken |= DELTA_BATTERY_LEVEL_FLAG;
+            }
+            final int stateInt = buildStateInt();
+            final boolean stateIntChanged = stateInt != lastStateInt;
+            if (stateIntChanged) {
+                firstToken |= DELTA_STATE_FLAG;
+            }
+            dest.writeInt(firstToken);
+            if (DEBUG) Slog.i(TAG, "WRITE DELTA: firstToken=0x" + Integer.toHexString(firstToken)
+                    + " deltaTime=" + deltaTime);
+            
+            if (deltaTimeToken >= DELTA_TIME_INT) {
+                if (deltaTimeToken == DELTA_TIME_INT) {
+                    if (DEBUG) Slog.i(TAG, "WRITE DELTA: int deltaTime=" + (int)deltaTime);
+                    dest.writeInt((int)deltaTime);
+                } else {
+                    if (DEBUG) Slog.i(TAG, "WRITE DELTA: long deltaTime=" + deltaTime);
+                    dest.writeLong(deltaTime);
+                }
+            }
+            if (batteryLevelIntChanged) {
+                dest.writeInt(batteryLevelInt);
+                if (DEBUG) Slog.i(TAG, "WRITE DELTA: batteryToken=0x"
+                        + Integer.toHexString(batteryLevelInt)
+                        + " batteryLevel=" + batteryLevel
+                        + " batteryTemp=" + (int)batteryTemperature
+                        + " batteryVolt=" + (int)batteryVoltage);
+            }
+            if (stateIntChanged) {
+                dest.writeInt(stateInt);
+                if (DEBUG) Slog.i(TAG, "WRITE DELTA: stateToken=0x"
+                        + Integer.toHexString(stateInt)
+                        + " batteryStatus=" + batteryStatus
+                        + " batteryHealth=" + batteryHealth
+                        + " batteryPlugType=" + batteryPlugType
+                        + " states=0x" + Integer.toHexString(states));
+            }
+        }
+        
+        private int buildBatteryLevelInt() {
+            return ((((int)batteryLevel)<<24)&0xff000000)
+                    | ((((int)batteryTemperature)<<14)&0x00ffc000)
+                    | (((int)batteryVoltage)&0x00003fff);
+        }
+        
+        private int buildStateInt() {
+            return ((((int)batteryStatus)<<28)&0xf0000000)
+                    | ((((int)batteryHealth)<<24)&0x0f000000)
+                    | ((((int)batteryPlugType)<<22)&0x00c00000)
+                    | (states&(~DELTA_STATE_MASK));
+        }
+        
+        public void readDelta(Parcel src) {
+            int firstToken = src.readInt();
+            int deltaTimeToken = firstToken&DELTA_TIME_MASK;
+            cmd = (byte)((firstToken>>DELTA_CMD_SHIFT)&DELTA_CMD_MASK);
+            if (DEBUG) Slog.i(TAG, "READ DELTA: firstToken=0x" + Integer.toHexString(firstToken)
+                    + " deltaTimeToken=" + deltaTimeToken);
+            
+            if (deltaTimeToken < DELTA_TIME_ABS) {
+                time += deltaTimeToken;
+            } else if (deltaTimeToken == DELTA_TIME_ABS) {
+                time = src.readLong();
+                readFromParcel(src);
+                return;
+            } else if (deltaTimeToken == DELTA_TIME_INT) {
+                int delta = src.readInt();
+                time += delta;
+                if (DEBUG) Slog.i(TAG, "READ DELTA: time delta=" + delta + " new time=" + time);
+            } else {
+                long delta = src.readLong();
+                if (DEBUG) Slog.i(TAG, "READ DELTA: time delta=" + delta + " new time=" + time);
+                time += delta;
+            }
+            
+            if ((firstToken&DELTA_BATTERY_LEVEL_FLAG) != 0) {
+                int batteryLevelInt = src.readInt();
+                batteryLevel = (byte)((batteryLevelInt>>24)&0xff);
+                batteryTemperature = (char)((batteryLevelInt>>14)&0x3ff);
+                batteryVoltage = (char)(batteryLevelInt&0x3fff);
+                if (DEBUG) Slog.i(TAG, "READ DELTA: batteryToken=0x"
+                        + Integer.toHexString(batteryLevelInt)
+                        + " batteryLevel=" + batteryLevel
+                        + " batteryTemp=" + (int)batteryTemperature
+                        + " batteryVolt=" + (int)batteryVoltage);
+            }
+            
+            if ((firstToken&DELTA_STATE_FLAG) != 0) {
+                int stateInt = src.readInt();
+                states = (firstToken&DELTA_STATE_MASK) | (stateInt&(~DELTA_STATE_MASK));
+                batteryStatus = (byte)((stateInt>>28)&0xf);
+                batteryHealth = (byte)((stateInt>>24)&0xf);
+                batteryPlugType = (byte)((stateInt>>22)&0x3);
+                if (DEBUG) Slog.i(TAG, "READ DELTA: stateToken=0x"
+                        + Integer.toHexString(stateInt)
+                        + " batteryStatus=" + batteryStatus
+                        + " batteryHealth=" + batteryHealth
+                        + " batteryPlugType=" + batteryPlugType
+                        + " states=0x" + Integer.toHexString(states));
+            } else {
+                states = (firstToken&DELTA_STATE_MASK) | (states&(~DELTA_STATE_MASK));
+            }
+        }
+
+        public void clear() {
+            time = 0;
+            cmd = CMD_NULL;
+            batteryLevel = 0;
+            batteryStatus = 0;
+            batteryHealth = 0;
+            batteryPlugType = 0;
+            batteryTemperature = 0;
+            batteryVoltage = 0;
+            states = 0;
         }
         
         public void setTo(HistoryItem o) {
@@ -555,11 +725,14 @@ public abstract class BatteryStats implements Parcelable {
 
     public abstract boolean getNextHistoryLocked(HistoryItem out);
 
-    /**
-     * Return the current history of battery state changes.
-     */
-    public abstract HistoryItem getHistory();
-    
+    public abstract void finishIteratingHistoryLocked();
+
+    public abstract boolean startIteratingOldHistoryLocked();
+
+    public abstract boolean getNextOldHistoryLocked(HistoryItem out);
+
+    public abstract void finishIteratingOldHistoryLocked();
+
     /**
      * Return the base time offset for the battery history.
      */
@@ -608,18 +781,6 @@ public abstract class BatteryStats implements Parcelable {
      * {@hide}
      */
     public abstract long getPhoneOnTime(long batteryRealtime, int which);
-
-    public static final int SIGNAL_STRENGTH_NONE_OR_UNKNOWN = 0;
-    public static final int SIGNAL_STRENGTH_POOR = 1;
-    public static final int SIGNAL_STRENGTH_MODERATE = 2;
-    public static final int SIGNAL_STRENGTH_GOOD = 3;
-    public static final int SIGNAL_STRENGTH_GREAT = 4;
-    
-    static final String[] SIGNAL_STRENGTH_NAMES = {
-        "none", "poor", "moderate", "good", "great"
-    };
-    
-    public static final int NUM_SIGNAL_STRENGTH_BINS = 5;
     
     /**
      * Returns the time in microseconds that the phone has been running with
@@ -659,11 +820,14 @@ public abstract class BatteryStats implements Parcelable {
     public static final int DATA_CONNECTION_HSPA = 10;
     public static final int DATA_CONNECTION_IDEN = 11;
     public static final int DATA_CONNECTION_EVDO_B = 12;
-    public static final int DATA_CONNECTION_OTHER = 13;
-    
+    public static final int DATA_CONNECTION_LTE = 13;
+    public static final int DATA_CONNECTION_EHRPD = 14;
+    public static final int DATA_CONNECTION_OTHER = 15;
+
     static final String[] DATA_CONNECTION_NAMES = {
         "none", "gprs", "edge", "umts", "cdma", "evdo_0", "evdo_A",
-        "1xrtt", "hsdpa", "hsupa", "hspa", "iden", "evdo_b", "other"
+        "1xrtt", "hsdpa", "hsupa", "hspa", "iden", "evdo_b", "lte",
+        "ehrpd", "other"
     };
     
     public static final int NUM_DATA_CONNECTION_TYPES = DATA_CONNECTION_OTHER+1;
@@ -707,7 +871,7 @@ public abstract class BatteryStats implements Parcelable {
                 SCREEN_BRIGHTNESS_NAMES),
         new BitDescription(HistoryItem.STATE_SIGNAL_STRENGTH_MASK,
                 HistoryItem.STATE_SIGNAL_STRENGTH_SHIFT, "signal_strength",
-                SIGNAL_STRENGTH_NAMES),
+                SignalStrength.SIGNAL_STRENGTH_NAMES),
         new BitDescription(HistoryItem.STATE_PHONE_STATE_MASK,
                 HistoryItem.STATE_PHONE_STATE_SHIFT, "phone_state",
                 new String[] {"in", "out", "emergency", "off"}),
@@ -931,6 +1095,16 @@ public abstract class BatteryStats implements Parcelable {
         }
     }
 
+    private static long computeWakeLock(Timer timer, long batteryRealtime, int which) {
+        if (timer != null) {
+            // Convert from microseconds to milliseconds with rounding
+            long totalTimeMicros = timer.getTotalTimeLocked(batteryRealtime, which);
+            long totalTimeMillis = (totalTimeMicros + 500) / 1000;
+            return totalTimeMillis;
+        }
+        return 0;
+    }
+
     /**
      *
      * @param sb a StringBuilder object.
@@ -945,9 +1119,7 @@ public abstract class BatteryStats implements Parcelable {
             long batteryRealtime, String name, int which, String linePrefix) {
         
         if (timer != null) {
-            // Convert from microseconds to milliseconds with rounding
-            long totalTimeMicros = timer.getTotalTimeLocked(batteryRealtime, which);
-            long totalTimeMillis = (totalTimeMicros + 500) / 1000;
+            long totalTimeMillis = computeWakeLock(timer, batteryRealtime, which);
             
             int count = timer.getCountLocked(which);
             if (totalTimeMillis != 0) {
@@ -1092,14 +1264,14 @@ public abstract class BatteryStats implements Parcelable {
         dumpLine(pw, 0 /* uid */, category, SCREEN_BRIGHTNESS_DATA, args);
         
         // Dump signal strength stats
-        args = new Object[NUM_SIGNAL_STRENGTH_BINS];
-        for (int i=0; i<NUM_SIGNAL_STRENGTH_BINS; i++) {
+        args = new Object[SignalStrength.NUM_SIGNAL_STRENGTH_BINS];
+        for (int i=0; i<SignalStrength.NUM_SIGNAL_STRENGTH_BINS; i++) {
             args[i] = getPhoneSignalStrengthTime(i, batteryRealtime, which) / 1000;
         }
         dumpLine(pw, 0 /* uid */, category, SIGNAL_STRENGTH_TIME_DATA, args);
         dumpLine(pw, 0 /* uid */, category, SIGNAL_SCANNING_TIME_DATA,
                 getPhoneSignalScanningTime(batteryRealtime, which) / 1000);
-        for (int i=0; i<NUM_SIGNAL_STRENGTH_BINS; i++) {
+        for (int i=0; i<SignalStrength.NUM_SIGNAL_STRENGTH_BINS; i++) {
             args[i] = getPhoneSignalStrengthCount(i, which);
         }
         dumpLine(pw, 0 /* uid */, category, SIGNAL_STRENGTH_COUNT_DATA, args);
@@ -1405,14 +1577,14 @@ public abstract class BatteryStats implements Parcelable {
         sb.append(prefix);
         sb.append("  Signal levels: ");
         didOne = false;
-        for (int i=0; i<NUM_SIGNAL_STRENGTH_BINS; i++) {
+        for (int i=0; i<SignalStrength.NUM_SIGNAL_STRENGTH_BINS; i++) {
             final long time = getPhoneSignalStrengthTime(i, batteryRealtime, which);
             if (time == 0) {
                 continue;
             }
             if (didOne) sb.append(", ");
             didOne = true;
-            sb.append(SIGNAL_STRENGTH_NAMES[i]);
+            sb.append(SignalStrength.SIGNAL_STRENGTH_NAMES[i]);
             sb.append(" ");
             formatTimeMs(sb, time/1000);
             sb.append("(");
@@ -1571,6 +1743,8 @@ public abstract class BatteryStats implements Parcelable {
 
             Map<String, ? extends BatteryStats.Uid.Wakelock> wakelocks = u.getWakelockStats();
             if (wakelocks.size() > 0) {
+                long totalFull = 0, totalPartial = 0, totalWindow = 0;
+                int count = 0;
                 for (Map.Entry<String, ? extends BatteryStats.Uid.Wakelock> ent
                     : wakelocks.entrySet()) {
                     Uid.Wakelock wl = ent.getValue();
@@ -1590,6 +1764,44 @@ public abstract class BatteryStats implements Parcelable {
                         // Only print out wake locks that were held
                         pw.println(sb.toString());
                         uidActivity = true;
+                        count++;
+                    }
+                    totalFull += computeWakeLock(wl.getWakeTime(WAKE_TYPE_FULL),
+                            batteryRealtime, which);
+                    totalPartial += computeWakeLock(wl.getWakeTime(WAKE_TYPE_PARTIAL),
+                            batteryRealtime, which);
+                    totalWindow += computeWakeLock(wl.getWakeTime(WAKE_TYPE_WINDOW),
+                            batteryRealtime, which);
+                }
+                if (count > 1) {
+                    if (totalFull != 0 || totalPartial != 0 || totalWindow != 0) {
+                        sb.setLength(0);
+                        sb.append(prefix);
+                        sb.append("    TOTAL wake: ");
+                        boolean needComma = false;
+                        if (totalFull != 0) {
+                            needComma = true;
+                            formatTimeMs(sb, totalFull);
+                            sb.append("full");
+                        }
+                        if (totalPartial != 0) {
+                            if (needComma) {
+                                sb.append(", ");
+                            }
+                            needComma = true;
+                            formatTimeMs(sb, totalPartial);
+                            sb.append("partial");
+                        }
+                        if (totalWindow != 0) {
+                            if (needComma) {
+                                sb.append(", ");
+                            }
+                            needComma = true;
+                            formatTimeMs(sb, totalWindow);
+                            sb.append("window");
+                        }
+                        sb.append(" realtime");
+                        pw.println(sb.toString());
                     }
                 }
             }
@@ -1737,7 +1949,7 @@ public abstract class BatteryStats implements Parcelable {
         }
     }
 
-    void printBitDescriptions(PrintWriter pw, int oldval, int newval, BitDescription[] descriptions) {
+    static void printBitDescriptions(PrintWriter pw, int oldval, int newval, BitDescription[] descriptions) {
         int diff = oldval ^ newval;
         if (diff == 0) return;
         for (int i=0; i<descriptions.length; i++) {
@@ -1761,6 +1973,125 @@ public abstract class BatteryStats implements Parcelable {
         }
     }
     
+    public void prepareForDumpLocked() {
+    }
+
+    public static class HistoryPrinter {
+        int oldState = 0;
+        int oldStatus = -1;
+        int oldHealth = -1;
+        int oldPlug = -1;
+        int oldTemp = -1;
+        int oldVolt = -1;
+
+        public void printNextItem(PrintWriter pw, HistoryItem rec, long now) {
+            pw.print("  ");
+            TimeUtils.formatDuration(rec.time-now, pw, TimeUtils.HUNDRED_DAY_FIELD_LEN);
+            pw.print(" ");
+            if (rec.cmd == HistoryItem.CMD_START) {
+                pw.println(" START");
+            } else if (rec.cmd == HistoryItem.CMD_OVERFLOW) {
+                pw.println(" *OVERFLOW*");
+            } else {
+                if (rec.batteryLevel < 10) pw.print("00");
+                else if (rec.batteryLevel < 100) pw.print("0");
+                pw.print(rec.batteryLevel);
+                pw.print(" ");
+                if (rec.states < 0x10) pw.print("0000000");
+                else if (rec.states < 0x100) pw.print("000000");
+                else if (rec.states < 0x1000) pw.print("00000");
+                else if (rec.states < 0x10000) pw.print("0000");
+                else if (rec.states < 0x100000) pw.print("000");
+                else if (rec.states < 0x1000000) pw.print("00");
+                else if (rec.states < 0x10000000) pw.print("0");
+                pw.print(Integer.toHexString(rec.states));
+                if (oldStatus != rec.batteryStatus) {
+                    oldStatus = rec.batteryStatus;
+                    pw.print(" status=");
+                    switch (oldStatus) {
+                        case BatteryManager.BATTERY_STATUS_UNKNOWN:
+                            pw.print("unknown");
+                            break;
+                        case BatteryManager.BATTERY_STATUS_CHARGING:
+                            pw.print("charging");
+                            break;
+                        case BatteryManager.BATTERY_STATUS_DISCHARGING:
+                            pw.print("discharging");
+                            break;
+                        case BatteryManager.BATTERY_STATUS_NOT_CHARGING:
+                            pw.print("not-charging");
+                            break;
+                        case BatteryManager.BATTERY_STATUS_FULL:
+                            pw.print("full");
+                            break;
+                        default:
+                            pw.print(oldStatus);
+                            break;
+                    }
+                }
+                if (oldHealth != rec.batteryHealth) {
+                    oldHealth = rec.batteryHealth;
+                    pw.print(" health=");
+                    switch (oldHealth) {
+                        case BatteryManager.BATTERY_HEALTH_UNKNOWN:
+                            pw.print("unknown");
+                            break;
+                        case BatteryManager.BATTERY_HEALTH_GOOD:
+                            pw.print("good");
+                            break;
+                        case BatteryManager.BATTERY_HEALTH_OVERHEAT:
+                            pw.print("overheat");
+                            break;
+                        case BatteryManager.BATTERY_HEALTH_DEAD:
+                            pw.print("dead");
+                            break;
+                        case BatteryManager.BATTERY_HEALTH_OVER_VOLTAGE:
+                            pw.print("over-voltage");
+                            break;
+                        case BatteryManager.BATTERY_HEALTH_UNSPECIFIED_FAILURE:
+                            pw.print("failure");
+                            break;
+                        default:
+                            pw.print(oldHealth);
+                            break;
+                    }
+                }
+                if (oldPlug != rec.batteryPlugType) {
+                    oldPlug = rec.batteryPlugType;
+                    pw.print(" plug=");
+                    switch (oldPlug) {
+                        case 0:
+                            pw.print("none");
+                            break;
+                        case BatteryManager.BATTERY_PLUGGED_AC:
+                            pw.print("ac");
+                            break;
+                        case BatteryManager.BATTERY_PLUGGED_USB:
+                            pw.print("usb");
+                            break;
+                        default:
+                            pw.print(oldPlug);
+                            break;
+                    }
+                }
+                if (oldTemp != rec.batteryTemperature) {
+                    oldTemp = rec.batteryTemperature;
+                    pw.print(" temp=");
+                    pw.print(oldTemp);
+                }
+                if (oldVolt != rec.batteryVoltage) {
+                    oldVolt = rec.batteryVoltage;
+                    pw.print(" volt=");
+                    pw.print(oldVolt);
+                }
+                printBitDescriptions(pw, oldState, rec.states,
+                        HISTORY_STATE_DESCRIPTIONS);
+                pw.println();
+            }
+            oldState = rec.states;
+        }
+    }
+
     /**
      * Dumps a human-readable summary of the battery statistics to the given PrintWriter.
      *
@@ -1768,122 +2099,28 @@ public abstract class BatteryStats implements Parcelable {
      */
     @SuppressWarnings("unused")
     public void dumpLocked(PrintWriter pw) {
+        prepareForDumpLocked();
+
+        long now = getHistoryBaseTime() + SystemClock.elapsedRealtime();
+
         final HistoryItem rec = new HistoryItem();
         if (startIteratingHistoryLocked()) {
             pw.println("Battery History:");
-            long now = getHistoryBaseTime() + SystemClock.elapsedRealtime();
-            int oldState = 0;
-            int oldStatus = -1;
-            int oldHealth = -1;
-            int oldPlug = -1;
-            int oldTemp = -1;
-            int oldVolt = -1;
+            HistoryPrinter hprinter = new HistoryPrinter();
             while (getNextHistoryLocked(rec)) {
-                pw.print("  ");
-                TimeUtils.formatDuration(rec.time-now, pw, TimeUtils.HUNDRED_DAY_FIELD_LEN);
-                pw.print(" ");
-                if (rec.cmd == HistoryItem.CMD_START) {
-                    pw.println(" START");
-                } else if (rec.cmd == HistoryItem.CMD_OVERFLOW) {
-                    pw.println(" *OVERFLOW*");
-                } else {
-                    if (rec.batteryLevel < 10) pw.print("00");
-                    else if (rec.batteryLevel < 100) pw.print("0");
-                    pw.print(rec.batteryLevel);
-                    pw.print(" ");
-                    if (rec.states < 0x10) pw.print("0000000");
-                    else if (rec.states < 0x100) pw.print("000000");
-                    else if (rec.states < 0x1000) pw.print("00000");
-                    else if (rec.states < 0x10000) pw.print("0000");
-                    else if (rec.states < 0x100000) pw.print("000");
-                    else if (rec.states < 0x1000000) pw.print("00");
-                    else if (rec.states < 0x10000000) pw.print("0");
-                    pw.print(Integer.toHexString(rec.states));
-                    if (oldStatus != rec.batteryStatus) {
-                        oldStatus = rec.batteryStatus;
-                        pw.print(" status=");
-                        switch (oldStatus) {
-                            case BatteryManager.BATTERY_STATUS_UNKNOWN:
-                                pw.print("unknown");
-                                break;
-                            case BatteryManager.BATTERY_STATUS_CHARGING:
-                                pw.print("charging");
-                                break;
-                            case BatteryManager.BATTERY_STATUS_DISCHARGING:
-                                pw.print("discharging");
-                                break;
-                            case BatteryManager.BATTERY_STATUS_NOT_CHARGING:
-                                pw.print("not-charging");
-                                break;
-                            case BatteryManager.BATTERY_STATUS_FULL:
-                                pw.print("full");
-                                break;
-                            default:
-                                pw.print(oldStatus);
-                                break;
-                        }
-                    }
-                    if (oldHealth != rec.batteryHealth) {
-                        oldHealth = rec.batteryHealth;
-                        pw.print(" health=");
-                        switch (oldHealth) {
-                            case BatteryManager.BATTERY_HEALTH_UNKNOWN:
-                                pw.print("unknown");
-                                break;
-                            case BatteryManager.BATTERY_HEALTH_GOOD:
-                                pw.print("good");
-                                break;
-                            case BatteryManager.BATTERY_HEALTH_OVERHEAT:
-                                pw.print("overheat");
-                                break;
-                            case BatteryManager.BATTERY_HEALTH_DEAD:
-                                pw.print("dead");
-                                break;
-                            case BatteryManager.BATTERY_HEALTH_OVER_VOLTAGE:
-                                pw.print("over-voltage");
-                                break;
-                            case BatteryManager.BATTERY_HEALTH_UNSPECIFIED_FAILURE:
-                                pw.print("failure");
-                                break;
-                            default:
-                                pw.print(oldHealth);
-                                break;
-                        }
-                    }
-                    if (oldPlug != rec.batteryPlugType) {
-                        oldPlug = rec.batteryPlugType;
-                        pw.print(" plug=");
-                        switch (oldPlug) {
-                            case 0:
-                                pw.print("none");
-                                break;
-                            case BatteryManager.BATTERY_PLUGGED_AC:
-                                pw.print("ac");
-                                break;
-                            case BatteryManager.BATTERY_PLUGGED_USB:
-                                pw.print("usb");
-                                break;
-                            default:
-                                pw.print(oldPlug);
-                                break;
-                        }
-                    }
-                    if (oldTemp != rec.batteryTemperature) {
-                        oldTemp = rec.batteryTemperature;
-                        pw.print(" temp=");
-                        pw.print(oldTemp);
-                    }
-                    if (oldVolt != rec.batteryVoltage) {
-                        oldVolt = rec.batteryVoltage;
-                        pw.print(" volt=");
-                        pw.print(oldVolt);
-                    }
-                    printBitDescriptions(pw, oldState, rec.states,
-                            HISTORY_STATE_DESCRIPTIONS);
-                    pw.println();
-                }
-                oldState = rec.states;
+                hprinter.printNextItem(pw, rec, now);
             }
+            finishIteratingHistoryLocked();
+            pw.println("");
+        }
+
+        if (startIteratingOldHistoryLocked()) {
+            pw.println("Old battery History:");
+            HistoryPrinter hprinter = new HistoryPrinter();
+            while (getNextOldHistoryLocked(rec)) {
+                hprinter.printNextItem(pw, rec, now);
+            }
+            finishIteratingOldHistoryLocked();
             pw.println("");
         }
         
@@ -1891,7 +2128,6 @@ public abstract class BatteryStats implements Parcelable {
         final int NU = uidStats.size();
         boolean didPid = false;
         long nowRealtime = SystemClock.elapsedRealtime();
-        StringBuilder sb = new StringBuilder(64);
         for (int i=0; i<NU; i++) {
             Uid uid = uidStats.valueAt(i);
             SparseArray<? extends Uid.Pid> pids = uid.getPidStats();
@@ -1926,6 +2162,8 @@ public abstract class BatteryStats implements Parcelable {
     
     @SuppressWarnings("unused")
     public void dumpCheckinLocked(PrintWriter pw, String[] args, List<ApplicationInfo> apps) {
+        prepareForDumpLocked();
+
         boolean isUnpluggedOnly = false;
         
         for (String arg : args) {

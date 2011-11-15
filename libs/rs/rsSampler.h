@@ -28,57 +28,68 @@ const static uint32_t RS_MAX_SAMPLER_SLOT = 16;
 
 class SamplerState;
 
-class Sampler : public ObjectBase
-{
+class Sampler : public ObjectBase {
 public:
+    static ObjectBaseRef<Sampler> getSampler(Context *,
+                                             RsSamplerValue magFilter,
+                                             RsSamplerValue minFilter,
+                                             RsSamplerValue wrapS,
+                                             RsSamplerValue wrapT,
+                                             RsSamplerValue wrapR,
+                                             float aniso = 1.0f);
+    void bindToContext(SamplerState *, uint32_t slot);
+    void unbindFromContext(SamplerState *);
+
+    virtual void serialize(OStream *stream) const;
+    virtual RsA3DClassID getClassId() const { return RS_A3D_CLASS_ID_SAMPLER; }
+    static Sampler *createFromStream(Context *rsc, IStream *stream);
+
+    struct Hal {
+        mutable void *drv;
+
+        struct State {
+            RsSamplerValue magFilter;
+            RsSamplerValue minFilter;
+            RsSamplerValue wrapS;
+            RsSamplerValue wrapT;
+            RsSamplerValue wrapR;
+            float aniso;
+        };
+        State state;
+    };
+    Hal mHal;
+
+protected:
+    int32_t mBoundSlot;
+
+    virtual void preDestroy() const;
+    virtual ~Sampler();
+
+private:
+    Sampler(Context *);
     Sampler(Context *,
             RsSamplerValue magFilter,
             RsSamplerValue minFilter,
             RsSamplerValue wrapS,
             RsSamplerValue wrapT,
-            RsSamplerValue wrapR);
-
-    virtual ~Sampler();
-
-    void bind(Allocation *);
-    void setupGL(const Context *, bool npot);
-
-    void bindToContext(SamplerState *, uint32_t slot);
-    void unbindFromContext(SamplerState *);
-
-protected:
-    RsSamplerValue mMagFilter;
-    RsSamplerValue mMinFilter;
-    RsSamplerValue mWrapS;
-    RsSamplerValue mWrapT;
-    RsSamplerValue mWrapR;
-
-    int32_t mBoundSlot;
-
-private:
-    Sampler(Context *);
-
+            RsSamplerValue wrapR,
+            float aniso = 1.0f);
 };
 
 
-class SamplerState
-{
+class SamplerState {
 public:
-
-    RsSamplerValue mMagFilter;
-    RsSamplerValue mMinFilter;
-    RsSamplerValue mWrapS;
-    RsSamplerValue mWrapT;
-    RsSamplerValue mWrapR;
-
-
     ObjectBaseRef<Sampler> mSamplers[RS_MAX_SAMPLER_SLOT];
-
-    //void setupGL();
-
+    void init(Context *rsc) {
+    }
+    void deinit(Context *rsc) {
+        for (uint32_t i = 0; i < RS_MAX_SAMPLER_SLOT; i ++) {
+            mSamplers[i].clear();
+        }
+    }
+    // Cache of all existing raster programs.
+    Vector<Sampler *> mAllSamplers;
 };
-
-
 
 }
 }

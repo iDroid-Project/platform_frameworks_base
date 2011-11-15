@@ -17,7 +17,12 @@
 package android.net;
 
 import java.net.InetAddress;
+import java.net.Inet4Address;
+import java.net.Inet6Address;
 import java.net.UnknownHostException;
+import java.util.Collection;
+
+import android.util.Log;
 
 /**
  * Native methods for managing network interfaces.
@@ -25,29 +30,31 @@ import java.net.UnknownHostException;
  * {@hide}
  */
 public class NetworkUtils {
+
+    private static final String TAG = "NetworkUtils";
+
     /** Bring the named network interface up. */
     public native static int enableInterface(String interfaceName);
 
     /** Bring the named network interface down. */
     public native static int disableInterface(String interfaceName);
 
-    /** Add a route to the specified host via the named interface. */
-    public native static int addHostRoute(String interfaceName, int hostaddr);
+    /** Setting bit 0 indicates reseting of IPv4 addresses required */
+    public static final int RESET_IPV4_ADDRESSES = 0x01;
 
-    /** Add a default route for the named interface. */
-    public native static int setDefaultRoute(String interfaceName, int gwayAddr);
+    /** Setting bit 1 indicates reseting of IPv4 addresses required */
+    public static final int RESET_IPV6_ADDRESSES = 0x02;
 
-    /** Return the gateway address for the default route for the named interface. */
-    public native static int getDefaultRoute(String interfaceName);
+    /** Reset all addresses */
+    public static final int RESET_ALL_ADDRESSES = RESET_IPV4_ADDRESSES | RESET_IPV6_ADDRESSES;
 
-    /** Remove host routes that uses the named interface. */
-    public native static int removeHostRoutes(String interfaceName);
-
-    /** Remove the default route for the named interface. */
-    public native static int removeDefaultRoute(String interfaceName);
-
-    /** Reset any sockets that are connected via the named interface. */
-    public native static int resetConnections(String interfaceName);
+    /**
+     * Reset IPv6 or IPv4 sockets that are connected via the named interface.
+     *
+     * @param interfaceName is the interface to reset
+     * @param mask {@see #RESET_IPV4_ADDRESSES} and {@see #RESET_IPV6_ADDRESSES}
+     */
+    public native static int resetConnections(String interfaceName, int mask);
 
     /**
      * Start the DHCP client daemon, in order to have it request addresses
@@ -59,7 +66,17 @@ public class NetworkUtils {
      * the IP address information.
      * @return {@code true} for success, {@code false} for failure
      */
-    public native static boolean runDhcp(String interfaceName, DhcpInfo ipInfo);
+    public native static boolean runDhcp(String interfaceName, DhcpInfoInternal ipInfo);
+
+    /**
+     * Initiate renewal on the Dhcp client daemon. This call blocks until it obtains
+     * a result (either success or failure) from the daemon.
+     * @param interfaceName the name of the interface to configure
+     * @param ipInfo if the request succeeds, this object is filled in with
+     * the IP address information.
+     * @return {@code true} for success, {@code false} for failure
+     */
+    public native static boolean runDhcpRenew(String interfaceName, DhcpInfoInternal ipInfo);
 
     /**
      * Shut down the DHCP client daemon.
@@ -86,73 +103,151 @@ public class NetworkUtils {
     public native static String getDhcpError();
 
     /**
-     * When static IP configuration has been specified, configure the network
-     * interface according to the values supplied.
-     * @param interfaceName the name of the interface to configure
-     * @param ipInfo the IP address, default gateway, and DNS server addresses
-     * with which to configure the interface.
-     * @return {@code true} for success, {@code false} for failure
+     * Convert a IPv4 address from an integer to an InetAddress.
+     * @param hostAddress an int corresponding to the IPv4 address in network byte order
      */
-    public static boolean configureInterface(String interfaceName, DhcpInfo ipInfo) {
-        return configureNative(interfaceName,
-            ipInfo.ipAddress,
-            ipInfo.netmask,
-            ipInfo.gateway,
-            ipInfo.dns1,
-            ipInfo.dns2);
-    }
+    public static InetAddress intToInetAddress(int hostAddress) {
+        byte[] addressBytes = { (byte)(0xff & hostAddress),
+                                (byte)(0xff & (hostAddress >> 8)),
+                                (byte)(0xff & (hostAddress >> 16)),
+                                (byte)(0xff & (hostAddress >> 24)) };
 
-    private native static boolean configureNative(
-        String interfaceName, int ipAddress, int netmask, int gateway, int dns1, int dns2);
+        try {
+           return InetAddress.getByAddress(addressBytes);
+        } catch (UnknownHostException e) {
+           throw new AssertionError();
+        }
+    }
 
     /**
-     * Look up a host name and return the result as an int. Works if the argument
-     * is an IP address in dot notation. Obviously, this can only be used for IPv4
-     * addresses.
-     * @param hostname the name of the host (or the IP address)
-     * @return the IP address as an {@code int} in network byte order
+     * Convert a IPv4 address from an InetAddress to an integer
+     * @param inetAddr is an InetAddress corresponding to the IPv4 address
+     * @return the IP address as an integer in network byte order
      */
-    public static int lookupHost(String hostname) {
-        InetAddress inetAddress;
-        try {
-            inetAddress = InetAddress.getByName(hostname);
-        } catch (UnknownHostException e) {
-            return -1;
+    public static int inetAddressToInt(InetAddress inetAddr)
+            throws IllegalArgumentException {
+        byte [] addr = inetAddr.getAddress();
+        if (addr.length != 4) {
+            throw new IllegalArgumentException("Not an IPv4 address");
         }
-        byte[] addrBytes;
-        int addr;
-        addrBytes = inetAddress.getAddress();
-        addr = ((addrBytes[3] & 0xff) << 24)
-                | ((addrBytes[2] & 0xff) << 16)
-                | ((addrBytes[1] & 0xff) << 8)
-                |  (addrBytes[0] & 0xff);
-        return addr;
+        return ((addr[3] & 0xff) << 24) | ((addr[2] & 0xff) << 16) |
+                ((addr[1] & 0xff) << 8) | (addr[0] & 0xff);
     }
 
-    public static int v4StringToInt(String str) {
-        int result = 0;
-        String[] array = str.split("\\.");
-        if (array.length != 4) return 0;
+    /**
+     * Convert a network prefix length to an IPv4 netmask integer
+     * @param prefixLength
+     * @return the IPv4 netmask as an integer in network byte order
+     */
+    public static int prefixLengthToNetmaskInt(int prefixLength)
+            throws IllegalArgumentException {
+        if (prefixLength < 0 || prefixLength > 32) {
+            throw new IllegalArgumentException("Invalid prefix length (0 <= prefix <= 32)");
+        }
+        int value = 0xffffffff << (32 - prefixLength);
+        return Integer.reverseBytes(value);
+    }
+
+    /**
+     * Convert a IPv4 netmask integer to a prefix length
+     * @param netmask as an integer in network byte order
+     * @return the network prefix length
+     */
+    public static int netmaskIntToPrefixLength(int netmask) {
+        return Integer.bitCount(netmask);
+    }
+
+    /**
+     * Create an InetAddress from a string where the string must be a standard
+     * representation of a V4 or V6 address.  Avoids doing a DNS lookup on failure
+     * but it will throw an IllegalArgumentException in that case.
+     * @param addrString
+     * @return the InetAddress
+     * @hide
+     */
+    public static InetAddress numericToInetAddress(String addrString)
+            throws IllegalArgumentException {
+        return InetAddress.parseNumericAddress(addrString);
+    }
+
+    /**
+     * Get InetAddress masked with prefixLength.  Will never return null.
+     * @param IP address which will be masked with specified prefixLength
+     * @param prefixLength the prefixLength used to mask the IP
+     */
+    public static InetAddress getNetworkPart(InetAddress address, int prefixLength) {
+        if (address == null) {
+            throw new RuntimeException("getNetworkPart doesn't accept null address");
+        }
+
+        byte[] array = address.getAddress();
+
+        if (prefixLength < 0 || prefixLength > array.length * 8) {
+            throw new RuntimeException("getNetworkPart - bad prefixLength");
+        }
+
+        int offset = prefixLength / 8;
+        int reminder = prefixLength % 8;
+        byte mask = (byte)(0xFF << (8 - reminder));
+
+        if (offset < array.length) array[offset] = (byte)(array[offset] & mask);
+
+        offset++;
+
+        for (; offset < array.length; offset++) {
+            array[offset] = 0;
+        }
+
+        InetAddress netPart = null;
         try {
-            result = Integer.parseInt(array[3]);
-            result = (result << 8) + Integer.parseInt(array[2]);
-            result = (result << 8) + Integer.parseInt(array[1]);
-            result = (result << 8) + Integer.parseInt(array[0]);
-        } catch (NumberFormatException e) {
-            return 0;
+            netPart = InetAddress.getByAddress(array);
+        } catch (UnknownHostException e) {
+            throw new RuntimeException("getNetworkPart error - " + e.toString());
+        }
+        return netPart;
+    }
+
+    /**
+     * Check if IP address type is consistent between two InetAddress.
+     * @return true if both are the same type.  False otherwise.
+     */
+    public static boolean addressTypeMatches(InetAddress left, InetAddress right) {
+        return (((left instanceof Inet4Address) && (right instanceof Inet4Address)) ||
+                ((left instanceof Inet6Address) && (right instanceof Inet6Address)));
+    }
+
+    /**
+     * Convert a 32 char hex string into a Inet6Address.
+     * throws a runtime exception if the string isn't 32 chars, isn't hex or can't be
+     * made into an Inet6Address
+     * @param addrHexString a 32 character hex string representing an IPv6 addr
+     * @return addr an InetAddress representation for the string
+     */
+    public static InetAddress hexToInet6Address(String addrHexString)
+            throws IllegalArgumentException {
+        try {
+            return numericToInetAddress(String.format("%s:%s:%s:%s:%s:%s:%s:%s",
+                    addrHexString.substring(0,4),   addrHexString.substring(4,8),
+                    addrHexString.substring(8,12),  addrHexString.substring(12,16),
+                    addrHexString.substring(16,20), addrHexString.substring(20,24),
+                    addrHexString.substring(24,28), addrHexString.substring(28,32)));
+        } catch (Exception e) {
+            Log.e("NetworkUtils", "error in hexToInet6Address(" + addrHexString + "): " + e);
+            throw new IllegalArgumentException(e);
+        }
+    }
+
+    /**
+     * Create a string array of host addresses from a collection of InetAddresses
+     * @param addrs a Collection of InetAddresses
+     * @return an array of Strings containing their host addresses
+     */
+    public static String[] makeStrings(Collection<InetAddress> addrs) {
+        String[] result = new String[addrs.size()];
+        int i = 0;
+        for (InetAddress addr : addrs) {
+            result[i++] = addr.getHostAddress();
         }
         return result;
     }
-
-    /**
-     * Start the DHCP renew service for wimax,
-     * This call blocks until it obtains a result (either success
-     * or failure) from the daemon.
-     * @param interfaceName the name of the interface to configure
-     * @param ipInfo if the request succeeds, this object is filled in with
-     * the IP address information.
-     * @return {@code true} for success, {@code false} for failure
-     * {@hide}
-     */
-    public native static boolean runDhcpRenew(String interfaceName, DhcpInfo ipInfo);
 }

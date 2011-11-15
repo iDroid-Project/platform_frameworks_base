@@ -16,24 +16,6 @@
 
 package android.view.inputmethod;
 
-import android.content.Context;
-import android.graphics.Rect;
-import android.os.Bundle;
-import android.os.Handler;
-import android.os.IBinder;
-import android.os.Looper;
-import android.os.Message;
-import android.os.RemoteException;
-import android.os.ResultReceiver;
-import android.os.ServiceManager;
-import android.util.Log;
-import android.util.PrintWriterPrinter;
-import android.util.Printer;
-import android.view.KeyEvent;
-import android.view.MotionEvent;
-import android.view.View;
-import android.view.ViewRoot;
-
 import com.android.internal.os.HandlerCaller;
 import com.android.internal.view.IInputConnectionWrapper;
 import com.android.internal.view.IInputContext;
@@ -43,9 +25,32 @@ import com.android.internal.view.IInputMethodManager;
 import com.android.internal.view.IInputMethodSession;
 import com.android.internal.view.InputBindResult;
 
+import android.content.Context;
+import android.content.pm.PackageManager;
+import android.graphics.Rect;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.IBinder;
+import android.os.Looper;
+import android.os.Message;
+import android.os.RemoteException;
+import android.os.ResultReceiver;
+import android.os.ServiceManager;
+import android.text.style.SuggestionSpan;
+import android.util.Log;
+import android.util.PrintWriterPrinter;
+import android.util.Printer;
+import android.view.KeyEvent;
+import android.view.MotionEvent;
+import android.view.View;
+import android.view.ViewRootImpl;
+
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -91,7 +96,7 @@ import java.util.concurrent.TimeUnit;
  * be aware of are:</p>
  * 
  * <ul>
- * <li> Properly set the {@link android.R.attr#inputType} if your editable
+ * <li> Properly set the {@link android.R.attr#inputType} in your editable
  * text views, so that the input method will have enough context to help the
  * user in entering text into them.
  * <li> Deal well with losing screen space when the input method is
@@ -384,6 +389,7 @@ public final class InputMethodManager {
             super(mainLooper, conn);
         }
 
+        @Override
         public boolean isActive() {
             return mActive;
         }
@@ -501,6 +507,22 @@ public final class InputMethodManager {
         }
     }
 
+    /**
+     * Returns a list of enabled input method subtypes for the specified input method info.
+     * @param imi An input method info whose subtypes list will be returned.
+     * @param allowsImplicitlySelectedSubtypes A boolean flag to allow to return the implicitly
+     * selected subtypes. If an input method info doesn't have enabled subtypes, the framework
+     * will implicitly enable subtypes according to the current system language.
+     */
+    public List<InputMethodSubtype> getEnabledInputMethodSubtypeList(InputMethodInfo imi,
+            boolean allowsImplicitlySelectedSubtypes) {
+        try {
+            return mService.getEnabledInputMethodSubtypeList(imi, allowsImplicitlySelectedSubtypes);
+        } catch (RemoteException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     public void showStatusIcon(IBinder imeToken, String packageName, int iconId) {
         try {
             mService.updateStatusIcon(imeToken, packageName, iconId);
@@ -518,10 +540,37 @@ public final class InputMethodManager {
     }
 
     /** @hide */
+    public void setImeWindowStatus(IBinder imeToken, int vis, int backDisposition) {
+        try {
+            mService.setImeWindowStatus(imeToken, vis, backDisposition);
+        } catch (RemoteException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /** @hide */
     public void setFullscreenMode(boolean fullScreen) {
         mFullscreenMode = fullScreen;
     }
-    
+
+    /** @hide */
+    public void registerSuggestionSpansForNotification(SuggestionSpan[] spans) {
+        try {
+            mService.registerSuggestionSpansForNotification(spans);
+        } catch (RemoteException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /** @hide */
+    public void notifySuggestionPicked(SuggestionSpan span, String originalString, int index) {
+        try {
+            mService.notifySuggestionPicked(span, originalString, index);
+        } catch (RemoteException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     /**
      * Allows you to discover whether the attached input method is running
      * in fullscreen mode.  Return true if it is fullscreen, entirely covering
@@ -607,7 +656,7 @@ public final class InputMethodManager {
                 if (vh != null) {
                     // This will result in a call to reportFinishInputConnection()
                     // below.
-                    vh.sendMessage(vh.obtainMessage(ViewRoot.FINISH_INPUT_CONNECTION,
+                    vh.sendMessage(vh.obtainMessage(ViewRootImpl.FINISH_INPUT_CONNECTION,
                             mServedInputConnection));
                 }
             }
@@ -740,8 +789,7 @@ public final class InputMethodManager {
      * {@link #RESULT_UNCHANGED_HIDDEN}, {@link #RESULT_SHOWN}, or
      * {@link #RESULT_HIDDEN}.
      */
-    public boolean showSoftInput(View view, int flags,
-            ResultReceiver resultReceiver) {
+    public boolean showSoftInput(View view, int flags, ResultReceiver resultReceiver) {
         checkFocus();
         synchronized (mH) {
             if (mServedView != view && (mServedView == null
@@ -781,7 +829,7 @@ public final class InputMethodManager {
     public static final int HIDE_NOT_ALWAYS = 0x0002;
     
     /**
-     * Synonym for {@link #hideSoftInputFromWindow(IBinder, int, ResultReceiver)
+     * Synonym for {@link #hideSoftInputFromWindow(IBinder, int, ResultReceiver)}
      * without a result: request to hide the soft input window from the
      * context of the window that is currently accepting input.
      * 
@@ -977,13 +1025,13 @@ public final class InputMethodManager {
                 if (DEBUG) Log.v(TAG, "START INPUT: " + view + " ic="
                         + ic + " tba=" + tba + " initial=" + initial);
                 InputBindResult res = mService.startInput(mClient,
-                        servedContext, tba, initial, mCurMethod == null);
+                        servedContext, tba, initial, true);
                 if (DEBUG) Log.v(TAG, "Starting input: Bind result=" + res);
                 if (res != null) {
                     if (res.id != null) {
                         mBindSequence = res.sequence;
                         mCurMethod = res.method;
-                    } else {
+                    } else if (mCurMethod == null) {
                         // This means there is no input method available.
                         if (DEBUG) Log.v(TAG, "ABORT input: no input method!");
                         return;
@@ -1065,9 +1113,9 @@ public final class InputMethodManager {
 
     void scheduleCheckFocusLocked(View view) {
         Handler vh = view.getHandler();
-        if (vh != null && !vh.hasMessages(ViewRoot.CHECK_FOCUS)) {
+        if (vh != null && !vh.hasMessages(ViewRootImpl.CHECK_FOCUS)) {
             // This will result in a call to checkFocus() below.
-            vh.sendMessage(vh.obtainMessage(ViewRoot.CHECK_FOCUS));
+            vh.sendMessage(vh.obtainMessage(ViewRootImpl.CHECK_FOCUS));
         }
     }
     
@@ -1079,7 +1127,7 @@ public final class InputMethodManager {
         if (mServedView == mNextServedView && !mNextServedNeedsStart) {
             return;
         }
-        
+
         InputConnection ic = null;
         synchronized (mH) {
             if (mServedView == mNextServedView && !mNextServedNeedsStart) {
@@ -1122,7 +1170,7 @@ public final class InputMethodManager {
     }
     
     /**
-     * Called by ViewRoot when its window gets input focus.
+     * Called by ViewAncestor when its window gets input focus.
      * @hide
      */
     public void onWindowFocus(View rootView, View focusedView, int softInputMode,
@@ -1195,6 +1243,27 @@ public final class InputMethodManager {
     }
 
     /**
+     * Notify the event when the user tapped or clicked the text view.
+     */
+    public void viewClicked(View view) {
+        final boolean focusChanged = mServedView != mNextServedView;
+        checkFocus();
+        synchronized (mH) {
+            if ((mServedView != view && (mServedView == null
+                    || !mServedView.checkInputConnectionProxy(view)))
+                    || mCurrentTextBoxAttribute == null || mCurMethod == null) {
+                return;
+            }
+            try {
+                if (DEBUG) Log.v(TAG, "onViewClicked: " + focusChanged);
+                mCurMethod.viewClicked(focusChanged);
+            } catch (RemoteException e) {
+                Log.w(TAG, "IME died: " + mCurId, e);
+            }
+        }
+    }
+
+    /**
      * Returns true if the current input method wants to watch the location
      * of the input editor's cursor in its window.
      */
@@ -1256,10 +1325,10 @@ public final class InputMethodManager {
             }
         }
     }
-    
+
     /**
-     * Force switch to a new input method component.  This can only be called
-     * from the currently active input method, as validated by the given token.
+     * Force switch to a new input method component. This can only be called
+     * from an application or a service which has a token of the currently active input method.
      * @param token Supplies the identifying token given to an input method
      * when it was started, which allows it to perform this operation on
      * itself.
@@ -1272,7 +1341,24 @@ public final class InputMethodManager {
             throw new RuntimeException(e);
         }
     }
-    
+
+    /**
+     * Force switch to a new input method and subtype. This can only be called
+     * from an application or a service which has a token of the currently active input method.
+     * @param token Supplies the identifying token given to an input method
+     * when it was started, which allows it to perform this operation on
+     * itself.
+     * @param id The unique identifier for the new input method to be switched to.
+     * @param subtype The new subtype of the new input method to be switched to.
+     */
+    public void setInputMethodAndSubtype(IBinder token, String id, InputMethodSubtype subtype) {
+        try {
+            mService.setInputMethodAndSubtype(token, id, subtype);
+        } catch (RemoteException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     /**
      * Close/hide the input method's soft input area, so the user no longer
      * sees it or can interact with it.  This can only be called
@@ -1380,13 +1466,151 @@ public final class InputMethodManager {
             }
         }
     }
-    
+
     public void showInputMethodPicker() {
         synchronized (mH) {
             try {
                 mService.showInputMethodPickerFromClient(mClient);
             } catch (RemoteException e) {
                 Log.w(TAG, "IME died: " + mCurId, e);
+            }
+        }
+    }
+
+    /**
+     * Show the settings for enabling subtypes of the specified input method.
+     * @param imiId An input method, whose subtypes settings will be shown. If imiId is null,
+     * subtypes of all input methods will be shown.
+     */
+    public void showInputMethodAndSubtypeEnabler(String imiId) {
+        synchronized (mH) {
+            try {
+                mService.showInputMethodAndSubtypeEnablerFromClient(mClient, imiId);
+            } catch (RemoteException e) {
+                Log.w(TAG, "IME died: " + mCurId, e);
+            }
+        }
+    }
+
+    /**
+     * Returns the current input method subtype. This subtype is one of the subtypes in
+     * the current input method. This method returns null when the current input method doesn't
+     * have any input method subtype.
+     */
+    public InputMethodSubtype getCurrentInputMethodSubtype() {
+        synchronized (mH) {
+            try {
+                return mService.getCurrentInputMethodSubtype();
+            } catch (RemoteException e) {
+                Log.w(TAG, "IME died: " + mCurId, e);
+                return null;
+            }
+        }
+    }
+
+    /**
+     * Switch to a new input method subtype of the current input method.
+     * @param subtype A new input method subtype to switch.
+     * @return true if the current subtype was successfully switched. When the specified subtype is
+     * null, this method returns false.
+     */
+    public boolean setCurrentInputMethodSubtype(InputMethodSubtype subtype) {
+        synchronized (mH) {
+            try {
+                return mService.setCurrentInputMethodSubtype(subtype);
+            } catch (RemoteException e) {
+                Log.w(TAG, "IME died: " + mCurId, e);
+                return false;
+            }
+        }
+    }
+
+    /**
+     * Returns a map of all shortcut input method info and their subtypes.
+     */
+    public Map<InputMethodInfo, List<InputMethodSubtype>> getShortcutInputMethodsAndSubtypes() {
+        synchronized (mH) {
+            HashMap<InputMethodInfo, List<InputMethodSubtype>> ret =
+                    new HashMap<InputMethodInfo, List<InputMethodSubtype>>();
+            try {
+                // TODO: We should change the return type from List<Object> to List<Parcelable>
+                List<Object> info = mService.getShortcutInputMethodsAndSubtypes();
+                // "info" has imi1, subtype1, subtype2, imi2, subtype2, imi3, subtype3..in the list
+                ArrayList<InputMethodSubtype> subtypes = null;
+                final int N = info.size();
+                if (info != null && N > 0) {
+                    for (int i = 0; i < N; ++i) {
+                        Object o = info.get(i);
+                        if (o instanceof InputMethodInfo) {
+                            if (ret.containsKey(o)) {
+                                Log.e(TAG, "IMI list already contains the same InputMethod.");
+                                break;
+                            }
+                            subtypes = new ArrayList<InputMethodSubtype>();
+                            ret.put((InputMethodInfo)o, subtypes);
+                        } else if (subtypes != null && o instanceof InputMethodSubtype) {
+                            subtypes.add((InputMethodSubtype)o);
+                        }
+                    }
+                }
+            } catch (RemoteException e) {
+                Log.w(TAG, "IME died: " + mCurId, e);
+            }
+            return ret;
+        }
+    }
+
+    /**
+     * Force switch to the last used input method and subtype. If the last input method didn't have
+     * any subtypes, the framework will simply switch to the last input method with no subtype
+     * specified.
+     * @param imeToken Supplies the identifying token given to an input method when it was started,
+     * which allows it to perform this operation on itself.
+     * @return true if the current input method and subtype was successfully switched to the last
+     * used input method and subtype.
+     */
+    public boolean switchToLastInputMethod(IBinder imeToken) {
+        synchronized (mH) {
+            try {
+                return mService.switchToLastInputMethod(imeToken);
+            } catch (RemoteException e) {
+                Log.w(TAG, "IME died: " + mCurId, e);
+                return false;
+            }
+        }
+    }
+
+    /**
+     * Set additional input method subtypes. Only a process which shares the same uid with the IME
+     * can add additional input method subtypes to the IME.
+     * Please note that a subtype's status is stored in the system.
+     * For example, enabled subtypes are remembered by the framework even after they are removed
+     * by using this method. If you re-add the same subtypes again,
+     * they will just get enabled. If you want to avoid such conflicts, for instance, you may
+     * want to create a "different" new subtype even with the same locale and mode,
+     * by changing its extra value. The different subtype won't get affected by the stored past
+     * status. (You may want to take a look at {@link InputMethodSubtype#hashCode()} to refer
+     * to the current implementation.)
+     * @param imiId Id of InputMethodInfo which additional input method subtypes will be added to.
+     * @param subtypes subtypes will be added as additional subtypes of the current input method.
+     */
+    public void setAdditionalInputMethodSubtypes(String imiId, InputMethodSubtype[] subtypes) {
+        synchronized (mH) {
+            try {
+                mService.setAdditionalInputMethodSubtypes(imiId, subtypes);
+            } catch (RemoteException e) {
+                Log.w(TAG, "IME died: " + mCurId, e);
+            }
+        }
+    }
+
+    public InputMethodSubtype getLastInputMethodSubtype() {
+        synchronized (mH) {
+            try {
+                return mService.getLastInputMethodSubtype();
+            } catch (RemoteException e) {
+                Log.w(TAG, "IME died: " + mCurId, e);
+                return null;
             }
         }
     }

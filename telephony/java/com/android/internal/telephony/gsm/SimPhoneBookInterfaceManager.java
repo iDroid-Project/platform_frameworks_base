@@ -16,6 +16,8 @@
 
 package com.android.internal.telephony.gsm;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 import android.os.Message;
 import android.util.Log;
 
@@ -32,7 +34,7 @@ public class SimPhoneBookInterfaceManager extends IccPhoneBookInterfaceManager {
 
     public SimPhoneBookInterfaceManager(GSMPhone phone) {
         super(phone);
-        adnCache = phone.mSIMRecords.getAdnCache();
+        adnCache = phone.mIccRecords.getAdnCache();
         //NOTE service "simphonebook" added by IccSmsInterfaceManagerProxy
     }
 
@@ -56,14 +58,11 @@ public class SimPhoneBookInterfaceManager extends IccPhoneBookInterfaceManager {
             recordSize = new int[3];
 
             //Using mBaseHandler, no difference in EVENT_GET_SIZE_DONE handling
-            Message response = mBaseHandler.obtainMessage(EVENT_GET_SIZE_DONE);
+            AtomicBoolean status = new AtomicBoolean(false);
+            Message response = mBaseHandler.obtainMessage(EVENT_GET_SIZE_DONE, status);
 
             phone.getIccFileHandler().getEFLinearRecordSize(efid, response);
-            try {
-                mLock.wait();
-            } catch (InterruptedException e) {
-                logd("interrupted while trying to load from the SIM");
-            }
+            waitForResult(status);
         }
 
         return recordSize;

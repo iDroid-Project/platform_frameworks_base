@@ -18,12 +18,14 @@
 
 #define MP3_EXTRACTOR_H_
 
+#include <utils/Errors.h>
 #include <media/stagefright/MediaExtractor.h>
 
 namespace android {
 
 struct AMessage;
 class DataSource;
+struct MP3Seeker;
 class String8;
 
 class MP3Extractor : public MediaExtractor {
@@ -41,11 +43,10 @@ private:
     status_t mInitCheck;
 
     sp<DataSource> mDataSource;
-    off_t mFirstFramePos;
+    off64_t mFirstFramePos;
     sp<MetaData> mMeta;
     uint32_t mFixedHeader;
-    int32_t mByteNumber; // total number of bytes in this MP3
-    char mTableOfContents[99]; // TOC entries in XING header
+    sp<MP3Seeker> mSeeker;
 
     MP3Extractor(const MP3Extractor &);
     MP3Extractor &operator=(const MP3Extractor &);

@@ -15,30 +15,33 @@
  */
 
 #include "rsLocklessFifo.h"
+#include "utils/Timers.h"
+#include "utils/StopWatch.h"
 
 using namespace android;
+using namespace android::renderscript;
 
-
-LocklessCommandFifo::LocklessCommandFifo()
-{
+LocklessCommandFifo::LocklessCommandFifo() : mBuffer(0), mInitialized(false) {
+    mTimeoutCallback = NULL;
+    mTimeoutCallbackData = NULL;
+    mTimeoutWait = 0;
 }
 
-LocklessCommandFifo::~LocklessCommandFifo()
-{
-    if (!mInShutdown) {
+LocklessCommandFifo::~LocklessCommandFifo() {
+    if (!mInShutdown && mInitialized) {
         shutdown();
     }
-    free(mBuffer);
+    if (mBuffer) {
+        free(mBuffer);
+    }
 }
 
-void LocklessCommandFifo::shutdown()
-{
+void LocklessCommandFifo::shutdown() {
     mInShutdown = true;
     mSignalToWorker.set();
 }
 
-bool LocklessCommandFifo::init(uint32_t sizeInBytes)
-{
+bool LocklessCommandFifo::init(uint32_t sizeInBytes) {
     // Add room for a buffer reset command
     mBuffer = static_cast<uint8_t *>(malloc(sizeInBytes + 4));
     if (!mBuffer) {
@@ -58,11 +61,11 @@ bool LocklessCommandFifo::init(uint32_t sizeInBytes)
     mGet = mBuffer;
     mEnd = mBuffer + (sizeInBytes) - 1;
     //dumpState("init");
+    mInitialized = true;
     return true;
 }
 
-uint32_t LocklessCommandFifo::getFreeSpace() const
-{
+uint32_t LocklessCommandFifo::getFreeSpace() const {
     int32_t freeSpace = 0;
     //dumpState("getFreeSpace");
 
@@ -78,14 +81,13 @@ uint32_t LocklessCommandFifo::getFreeSpace() const
     return freeSpace;
 }
 
-bool LocklessCommandFifo::isEmpty() const
-{
-    return mPut == mGet;
+bool LocklessCommandFifo::isEmpty() const {
+    uint32_t p = android_atomic_acquire_load((int32_t *)&mPut);
+    return ((uint8_t *)p) == mGet;
 }
 
 
-void * LocklessCommandFifo::reserve(uint32_t sizeInBytes)
-{
+void * LocklessCommandFifo::reserve(uint32_t sizeInBytes) {
     // Add space for command header and loop token;
     sizeInBytes += 8;
 
@@ -97,50 +99,67 @@ void * LocklessCommandFifo::reserve(uint32_t sizeInBytes)
     return mPut + 4;
 }
 
-void LocklessCommandFifo::commit(uint32_t command, uint32_t sizeInBytes)
-{
+void LocklessCommandFifo::commit(uint32_t command, uint32_t sizeInBytes) {
     if (mInShutdown) {
         return;
     }
     //dumpState("commit 1");
     reinterpret_cast<uint16_t *>(mPut)[0] = command;
     reinterpret_cast<uint16_t *>(mPut)[1] = sizeInBytes;
-    mPut += ((sizeInBytes + 3) & ~3) + 4;
+
+    int32_t s = ((sizeInBytes + 3) & ~3) + 4;
+    android_atomic_add(s, (int32_t *)&mPut);
     //dumpState("commit 2");
     mSignalToWorker.set();
 }
 
-void LocklessCommandFifo::commitSync(uint32_t command, uint32_t sizeInBytes)
-{
+void LocklessCommandFifo::commitSync(uint32_t command, uint32_t sizeInBytes) {
     if (mInShutdown) {
         return;
     }
+
+    //char buf[1024];
+    //sprintf(buf, "RenderScript LocklessCommandFifo::commitSync  %p %i  %i", this, command, sizeInBytes);
+    //StopWatch compileTimer(buf);
     commit(command, sizeInBytes);
     flush();
 }
 
-void LocklessCommandFifo::flush()
-{
+void LocklessCommandFifo::flush() {
     //dumpState("flush 1");
-    while(mPut != mGet) {
-        mSignalToControl.wait();
+    while (mPut != mGet) {
+        while (!mSignalToControl.wait(mTimeoutWait)) {
+            if (mTimeoutCallback) {
+                mTimeoutCallback(mTimeoutCallbackData);
+            }
+        }
     }
     //dumpState("flush 2");
 }
 
-const void * LocklessCommandFifo::get(uint32_t *command, uint32_t *bytesData)
-{
-    while(1) {
-        //dumpState("get");
-        while(isEmpty() && !mInShutdown) {
-            mSignalToControl.set();
-            mSignalToWorker.wait();
-        }
+void LocklessCommandFifo::setTimoutCallback(void (*cbk)(void *), void *data, uint64_t timeout) {
+    mTimeoutCallback = cbk;
+    mTimeoutCallbackData = data;
+    mTimeoutWait = timeout;
+}
 
-        if (mInShutdown) {
+bool LocklessCommandFifo::wait(uint64_t timeout) {
+    while (isEmpty() && !mInShutdown) {
+        mSignalToControl.set();
+        return mSignalToWorker.wait(timeout);
+    }
+    return true;
+}
+
+const void * LocklessCommandFifo::get(uint32_t *command, uint32_t *bytesData, uint64_t timeout) {
+    while (1) {
+        //dumpState("get");
+        wait(timeout);
+
+        if (isEmpty() || mInShutdown) {
             *command = 0;
             *bytesData = 0;
-            return 0;
+            return NULL;
         }
 
         *command = reinterpret_cast<const uint16_t *>(mGet)[0];
@@ -155,22 +174,45 @@ const void * LocklessCommandFifo::get(uint32_t *command, uint32_t *bytesData)
     }
 }
 
-void LocklessCommandFifo::next()
-{
+void LocklessCommandFifo::next() {
     uint32_t bytes = reinterpret_cast<const uint16_t *>(mGet)[1];
-    mGet += ((bytes + 3) & ~3) + 4;
+
+    android_atomic_add(((bytes + 3) & ~3) + 4, (int32_t *)&mGet);
+    //mGet += ((bytes + 3) & ~3) + 4;
     if (isEmpty()) {
         mSignalToControl.set();
     }
     //dumpState("next");
 }
 
-void LocklessCommandFifo::makeSpace(uint32_t bytes)
-{
+bool LocklessCommandFifo::makeSpaceNonBlocking(uint32_t bytes) {
+    //dumpState("make space non-blocking");
+    if ((mPut+bytes) > mEnd) {
+        // Need to loop regardless of where get is.
+        if ((mGet > mPut) || (mBuffer+4 >= mGet)) {
+            return false;
+        }
+
+        // Toss in a reset then the normal wait for space will do the rest.
+        reinterpret_cast<uint16_t *>(mPut)[0] = 0;
+        reinterpret_cast<uint16_t *>(mPut)[1] = 0;
+        mPut = mBuffer;
+        mSignalToWorker.set();
+    }
+
+    // it will fit here so we just need to wait for space.
+    if (getFreeSpace() < bytes) {
+        return false;
+    }
+
+    return true;
+}
+
+void LocklessCommandFifo::makeSpace(uint32_t bytes) {
     //dumpState("make space");
     if ((mPut+bytes) > mEnd) {
         // Need to loop regardless of where get is.
-        while((mGet > mPut) && (mBuffer+4 >= mGet)) {
+        while ((mGet > mPut) || (mBuffer+4 >= mGet)) {
             usleep(100);
         }
 
@@ -178,93 +220,32 @@ void LocklessCommandFifo::makeSpace(uint32_t bytes)
         reinterpret_cast<uint16_t *>(mPut)[0] = 0;
         reinterpret_cast<uint16_t *>(mPut)[1] = 0;
         mPut = mBuffer;
+        mSignalToWorker.set();
     }
 
     // it will fit here so we just need to wait for space.
-    while(getFreeSpace() < bytes) {
+    while (getFreeSpace() < bytes) {
         usleep(100);
     }
 
 }
 
-void LocklessCommandFifo::dumpState(const char *s) const
-{
-    LOGV("%s  put %p, get %p,  buf %p,  end %p", s, mPut, mGet, mBuffer, mEnd);
+void LocklessCommandFifo::dumpState(const char *s) const {
+    LOGV("%s %p  put %p, get %p,  buf %p,  end %p", s, this, mPut, mGet, mBuffer, mEnd);
 }
 
-LocklessCommandFifo::Signal::Signal()
-{
-    mSet = true;
+void LocklessCommandFifo::printDebugData() const {
+    dumpState("printing fifo debug");
+    const uint32_t *pptr = (const uint32_t *)mGet;
+    pptr -= 8 * 4;
+    if (mGet < mBuffer) {
+        pptr = (const uint32_t *)mBuffer;
+    }
+
+
+    for (int ct=0; ct < 16; ct++) {
+        LOGV("fifo %p = 0x%08x  0x%08x  0x%08x  0x%08x", pptr, pptr[0], pptr[1], pptr[2], pptr[3]);
+        pptr += 4;
+    }
+
 }
-
-LocklessCommandFifo::Signal::~Signal()
-{
-    pthread_mutex_destroy(&mMutex);
-    pthread_cond_destroy(&mCondition);
-}
-
-bool LocklessCommandFifo::Signal::init()
-{
-    int status = pthread_mutex_init(&mMutex, NULL);
-    if (status) {
-        LOGE("LocklessFifo mutex init failure");
-        return false;
-    }
-
-    status = pthread_cond_init(&mCondition, NULL);
-    if (status) {
-        LOGE("LocklessFifo condition init failure");
-        pthread_mutex_destroy(&mMutex);
-        return false;
-    }
-
-    return true;
-}
-
-void LocklessCommandFifo::Signal::set()
-{
-    int status;
-
-    status = pthread_mutex_lock(&mMutex);
-    if (status) {
-        LOGE("LocklessCommandFifo: error %i locking for set condition.", status);
-        return;
-    }
-
-    mSet = true;
-
-    status = pthread_cond_signal(&mCondition);
-    if (status) {
-        LOGE("LocklessCommandFifo: error %i on set condition.", status);
-    }
-
-    status = pthread_mutex_unlock(&mMutex);
-    if (status) {
-        LOGE("LocklessCommandFifo: error %i unlocking for set condition.", status);
-    }
-}
-
-void LocklessCommandFifo::Signal::wait()
-{
-    int status;
-
-    status = pthread_mutex_lock(&mMutex);
-    if (status) {
-        LOGE("LocklessCommandFifo: error %i locking for condition.", status);
-        return;
-    }
-
-    if (!mSet) {
-        status = pthread_cond_wait(&mCondition, &mMutex);
-        if (status) {
-            LOGE("LocklessCommandFifo: error %i waiting on condition.", status);
-        }
-    }
-    mSet = false;
-
-    status = pthread_mutex_unlock(&mMutex);
-    if (status) {
-        LOGE("LocklessCommandFifo: error %i unlocking for condition.", status);
-    }
-}
-

@@ -20,15 +20,42 @@
 
 namespace android {
 
-int clz_impl(int32_t x);
-
-int inline clz(int32_t x)
-{
-#if defined(__arm__) && !defined(__thumb__)
+int inline clz(int32_t x) {
     return __builtin_clz(x);
-#else
-    return clz_impl(x);
-#endif
+}
+
+template <typename T>
+static inline T min(T a, T b) {
+    return a<b ? a : b;
+}
+template <typename T>
+static inline T min(T a, T b, T c) {
+    return min(a, min(b, c));
+}
+template <typename T>
+static inline T min(T a, T b, T c, T d) {
+    return min(a, b, min(c, d));
+}
+
+template <typename T>
+static inline T max(T a, T b) {
+    return a>b ? a : b;
+}
+template <typename T>
+static inline T max(T a, T b, T c) {
+    return max(a, max(b, c));
+}
+template <typename T>
+static inline T max(T a, T b, T c, T d) {
+    return max(a, b, max(c, d));
+}
+
+template <typename T>
+static inline
+void swap(T& a, T& b) {
+    T t(a);
+    a = b;
+    b = t;
 }
 
 

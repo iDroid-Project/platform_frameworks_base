@@ -17,6 +17,8 @@
 package android.database.sqlite;
 
 import android.content.Context;
+import android.database.DatabaseErrorHandler;
+import android.database.DefaultDatabaseErrorHandler;
 import android.database.sqlite.SQLiteDatabase.CursorFactory;
 import android.util.Log;
 
@@ -36,10 +38,7 @@ import android.util.Log;
  * in the <em>samples/</em> directory of the SDK.</p>
  *
  * <p class="note"><strong>Note:</strong> this class assumes
- * monotonically increasing version numbers for upgrades.  Also, there
- * is no concept of a database downgrade; installing a new version of
- * your app which uses a lower version number than a
- * previously-installed version will result in undefined behavior.</p>
+ * monotonically increasing version numbers for upgrades.</p>
  */
 public abstract class SQLiteOpenHelper {
     private static final String TAG = SQLiteOpenHelper.class.getSimpleName();
@@ -51,6 +50,7 @@ public abstract class SQLiteOpenHelper {
 
     private SQLiteDatabase mDatabase = null;
     private boolean mIsInitializing = false;
+    private final DatabaseErrorHandler mErrorHandler;
 
     /**
      * Create a helper object to create, open, and/or manage a database.
@@ -62,15 +62,49 @@ public abstract class SQLiteOpenHelper {
      * @param name of the database file, or null for an in-memory database
      * @param factory to use for creating cursor objects, or null for the default
      * @param version number of the database (starting at 1); if the database is older,
-     *     {@link #onUpgrade} will be used to upgrade the database
+     *     {@link #onUpgrade} will be used to upgrade the database; if the database is
+     *     newer, {@link #onDowngrade} will be used to downgrade the database
      */
     public SQLiteOpenHelper(Context context, String name, CursorFactory factory, int version) {
+        this(context, name, factory, version, new DefaultDatabaseErrorHandler());
+    }
+
+    /**
+     * Create a helper object to create, open, and/or manage a database.
+     * The database is not actually created or opened until one of
+     * {@link #getWritableDatabase} or {@link #getReadableDatabase} is called.
+     *
+     * <p>Accepts input param: a concrete instance of {@link DatabaseErrorHandler} to be
+     * used to handle corruption when sqlite reports database corruption.</p>
+     *
+     * @param context to use to open or create the database
+     * @param name of the database file, or null for an in-memory database
+     * @param factory to use for creating cursor objects, or null for the default
+     * @param version number of the database (starting at 1); if the database is older,
+     *     {@link #onUpgrade} will be used to upgrade the database
+     * @param errorHandler the {@link DatabaseErrorHandler} to be used when sqlite reports database
+     * corruption.
+     */
+    public SQLiteOpenHelper(Context context, String name, CursorFactory factory, int version,
+            DatabaseErrorHandler errorHandler) {
         if (version < 1) throw new IllegalArgumentException("Version must be >= 1, was " + version);
+        if (errorHandler == null) {
+            throw new IllegalArgumentException("DatabaseErrorHandler param value can't be null.");
+        }
 
         mContext = context;
         mName = name;
         mFactory = factory;
         mNewVersion = version;
+        mErrorHandler = errorHandler;
+    }
+
+    /**
+     * Return the name of the SQLite database being opened, as given tp
+     * the constructor.
+     */
+    public String getDatabaseName() {
+        return mName;
     }
 
     /**
@@ -93,8 +127,13 @@ public abstract class SQLiteOpenHelper {
      * @return a read/write database object valid until {@link #close} is called
      */
     public synchronized SQLiteDatabase getWritableDatabase() {
-        if (mDatabase != null && mDatabase.isOpen() && !mDatabase.isReadOnly()) {
-            return mDatabase;  // The database is already open for business
+        if (mDatabase != null) {
+            if (!mDatabase.isOpen()) {
+                // darn! the user closed the database by calling mDatabase.close()
+                mDatabase = null;
+            } else if (!mDatabase.isReadOnly()) {
+                return mDatabase;  // The database is already open for business
+            }
         }
 
         if (mIsInitializing) {
@@ -115,7 +154,7 @@ public abstract class SQLiteOpenHelper {
             if (mName == null) {
                 db = SQLiteDatabase.create(null);
             } else {
-                db = mContext.openOrCreateDatabase(mName, 0, mFactory);
+                db = mContext.openOrCreateDatabase(mName, 0, mFactory, mErrorHandler);
             }
 
             int version = db.getVersion();
@@ -126,10 +165,10 @@ public abstract class SQLiteOpenHelper {
                         onCreate(db);
                     } else {
                         if (version > mNewVersion) {
-                            Log.wtf(TAG, "Can't downgrade read-only database from version " +
-                                    version + " to " + mNewVersion + ": " + db.getPath());
+                            onDowngrade(db, version, mNewVersion);
+                        } else {
+                            onUpgrade(db, version, mNewVersion);
                         }
-                        onUpgrade(db, version, mNewVersion);
                     }
                     db.setVersion(mNewVersion);
                     db.setTransactionSuccessful();
@@ -175,8 +214,13 @@ public abstract class SQLiteOpenHelper {
      *     or {@link #close} is called.
      */
     public synchronized SQLiteDatabase getReadableDatabase() {
-        if (mDatabase != null && mDatabase.isOpen()) {
-            return mDatabase;  // The database is already open for business
+        if (mDatabase != null) {
+            if (!mDatabase.isOpen()) {
+                // darn! the user closed the database by calling mDatabase.close()
+                mDatabase = null;
+            } else {
+                return mDatabase;  // The database is already open for business
+            }
         }
 
         if (mIsInitializing) {
@@ -194,7 +238,8 @@ public abstract class SQLiteOpenHelper {
         try {
             mIsInitializing = true;
             String path = mContext.getDatabasePath(mName).getPath();
-            db = SQLiteDatabase.openDatabase(path, mFactory, SQLiteDatabase.OPEN_READONLY);
+            db = SQLiteDatabase.openDatabase(path, mFactory, SQLiteDatabase.OPEN_READONLY,
+                    mErrorHandler);
             if (db.getVersion() != mNewVersion) {
                 throw new SQLiteException("Can't upgrade read-only database from version " +
                         db.getVersion() + " to " + mNewVersion + ": " + path);
@@ -246,6 +291,22 @@ public abstract class SQLiteOpenHelper {
      * @param newVersion The new database version.
      */
     public abstract void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion);
+
+    /**
+     * Called when the database needs to be downgraded. This is stricly similar to
+     * onUpgrade() method, but is called whenever current version is newer than requested one.
+     * However, this method is not abstract, so it is not mandatory for a customer to
+     * implement it. If not overridden, default implementation will reject downgrade and
+     * throws SQLiteException
+     *
+     * @param db The database.
+     * @param oldVersion The old database version.
+     * @param newVersion The new database version.
+     */
+    public void onDowngrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+        throw new SQLiteException("Can't downgrade database from version " +
+                oldVersion + " to " + newVersion);
+    }
 
     /**
      * Called when the database has been opened.  The implementation

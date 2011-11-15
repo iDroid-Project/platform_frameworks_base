@@ -20,11 +20,13 @@
 
 #include <sys/types.h>
 
+#include <media/stagefright/MediaErrors.h>
 #include <utils/Errors.h>
 #include <utils/KeyedVector.h>
 #include <utils/List.h>
 #include <utils/RefBase.h>
 #include <utils/threads.h>
+#include <drm/DrmManagerClient.h>
 
 namespace android {
 
@@ -37,6 +39,7 @@ public:
         kWantsPrefetching      = 1,
         kStreamedFromLocalHost = 2,
         kIsCachingDataSource   = 4,
+        kIsHTTPBasedSource     = 8,
     };
 
     static sp<DataSource> CreateFromURI(
@@ -47,16 +50,20 @@ public:
 
     virtual status_t initCheck() const = 0;
 
-    virtual ssize_t readAt(off_t offset, void *data, size_t size) = 0;
+    virtual ssize_t readAt(off64_t offset, void *data, size_t size) = 0;
 
     // Convenience methods:
-    bool getUInt16(off_t offset, uint16_t *x);
+    bool getUInt16(off64_t offset, uint16_t *x);
 
     // May return ERROR_UNSUPPORTED.
-    virtual status_t getSize(off_t *size);
+    virtual status_t getSize(off64_t *size);
 
     virtual uint32_t flags() {
         return 0;
+    }
+
+    virtual status_t reconnectAtOffset(off64_t offset) {
+        return ERROR_UNSUPPORTED;
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -72,6 +79,18 @@ public:
 
     static void RegisterSniffer(SnifferFunc func);
     static void RegisterDefaultSniffers();
+
+    // for DRM
+    virtual sp<DecryptHandle> DrmInitialization() {
+        return NULL;
+    }
+    virtual void getDrmInfo(sp<DecryptHandle> &handle, DrmManagerClient **client) {};
+
+    virtual String8 getUri() {
+        return String8();
+    }
+
+    virtual String8 getMIMEType() const;
 
 protected:
     virtual ~DataSource() {}

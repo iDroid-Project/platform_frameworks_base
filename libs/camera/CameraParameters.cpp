@@ -59,6 +59,8 @@ const char CameraParameters::KEY_FLASH_MODE[] = "flash-mode";
 const char CameraParameters::KEY_SUPPORTED_FLASH_MODES[] = "flash-mode-values";
 const char CameraParameters::KEY_FOCUS_MODE[] = "focus-mode";
 const char CameraParameters::KEY_SUPPORTED_FOCUS_MODES[] = "focus-mode-values";
+const char CameraParameters::KEY_MAX_NUM_FOCUS_AREAS[] = "max-num-focus-areas";
+const char CameraParameters::KEY_FOCUS_AREAS[] = "focus-areas";
 const char CameraParameters::KEY_FOCAL_LENGTH[] = "focal-length";
 const char CameraParameters::KEY_HORIZONTAL_VIEW_ANGLE[] = "horizontal-view-angle";
 const char CameraParameters::KEY_VERTICAL_VIEW_ANGLE[] = "vertical-view-angle";
@@ -66,6 +68,12 @@ const char CameraParameters::KEY_EXPOSURE_COMPENSATION[] = "exposure-compensatio
 const char CameraParameters::KEY_MAX_EXPOSURE_COMPENSATION[] = "max-exposure-compensation";
 const char CameraParameters::KEY_MIN_EXPOSURE_COMPENSATION[] = "min-exposure-compensation";
 const char CameraParameters::KEY_EXPOSURE_COMPENSATION_STEP[] = "exposure-compensation-step";
+const char CameraParameters::KEY_AUTO_EXPOSURE_LOCK[] = "auto-exposure-lock";
+const char CameraParameters::KEY_AUTO_EXPOSURE_LOCK_SUPPORTED[] = "auto-exposure-lock-supported";
+const char CameraParameters::KEY_AUTO_WHITEBALANCE_LOCK[] = "auto-whitebalance-lock";
+const char CameraParameters::KEY_AUTO_WHITEBALANCE_LOCK_SUPPORTED[] = "auto-whitebalance-lock-supported";
+const char CameraParameters::KEY_MAX_NUM_METERING_AREAS[] = "max-num-metering-areas";
+const char CameraParameters::KEY_METERING_AREAS[] = "metering-areas";
 const char CameraParameters::KEY_ZOOM[] = "zoom";
 const char CameraParameters::KEY_MAX_ZOOM[] = "max-zoom";
 const char CameraParameters::KEY_ZOOM_RATIOS[] = "zoom-ratios";
@@ -73,8 +81,18 @@ const char CameraParameters::KEY_ZOOM_SUPPORTED[] = "zoom-supported";
 const char CameraParameters::KEY_SMOOTH_ZOOM_SUPPORTED[] = "smooth-zoom-supported";
 const char CameraParameters::KEY_FOCUS_DISTANCES[] = "focus-distances";
 const char CameraParameters::KEY_VIDEO_FRAME_FORMAT[] = "video-frame-format";
+const char CameraParameters::KEY_VIDEO_SIZE[] = "video-size";
+const char CameraParameters::KEY_SUPPORTED_VIDEO_SIZES[] = "video-size-values";
+const char CameraParameters::KEY_PREFERRED_PREVIEW_SIZE_FOR_VIDEO[] = "preferred-preview-size-for-video";
+const char CameraParameters::KEY_MAX_NUM_DETECTED_FACES_HW[] = "max-num-detected-faces-hw";
+const char CameraParameters::KEY_MAX_NUM_DETECTED_FACES_SW[] = "max-num-detected-faces-sw";
+const char CameraParameters::KEY_RECORDING_HINT[] = "recording-hint";
+const char CameraParameters::KEY_VIDEO_SNAPSHOT_SUPPORTED[] = "video-snapshot-supported";
+const char CameraParameters::KEY_VIDEO_STABILIZATION[] = "video-stabilization";
+const char CameraParameters::KEY_VIDEO_STABILIZATION_SUPPORTED[] = "video-stabilization-supported";
 
 const char CameraParameters::TRUE[] = "true";
+const char CameraParameters::FALSE[] = "false";
 const char CameraParameters::FOCUS_DISTANCE_INFINITY[] = "Infinity";
 
 // Values for white balance settings.
@@ -129,12 +147,14 @@ const char CameraParameters::SCENE_MODE_PARTY[] = "party";
 const char CameraParameters::SCENE_MODE_CANDLELIGHT[] = "candlelight";
 const char CameraParameters::SCENE_MODE_BARCODE[] = "barcode";
 
-// Formats for setPreviewFormat and setPictureFormat.
 const char CameraParameters::PIXEL_FORMAT_YUV422SP[] = "yuv422sp";
 const char CameraParameters::PIXEL_FORMAT_YUV420SP[] = "yuv420sp";
 const char CameraParameters::PIXEL_FORMAT_YUV422I[] = "yuv422i-yuyv";
+const char CameraParameters::PIXEL_FORMAT_YUV420P[]  = "yuv420p";
 const char CameraParameters::PIXEL_FORMAT_RGB565[] = "rgb565";
+const char CameraParameters::PIXEL_FORMAT_RGBA8888[] = "rgba8888";
 const char CameraParameters::PIXEL_FORMAT_JPEG[] = "jpeg";
+const char CameraParameters::PIXEL_FORMAT_BAYER_RGGB[] = "bayer-rggb";
 
 // Values for focus mode settings.
 const char CameraParameters::FOCUS_MODE_AUTO[] = "auto";
@@ -143,6 +163,7 @@ const char CameraParameters::FOCUS_MODE_MACRO[] = "macro";
 const char CameraParameters::FOCUS_MODE_FIXED[] = "fixed";
 const char CameraParameters::FOCUS_MODE_EDOF[] = "edof";
 const char CameraParameters::FOCUS_MODE_CONTINUOUS_VIDEO[] = "continuous-video";
+const char CameraParameters::FOCUS_MODE_CONTINUOUS_PICTURE[] = "continuous-picture";
 
 CameraParameters::CameraParameters()
                 : mMap()
@@ -331,10 +352,39 @@ void CameraParameters::getPreviewSize(int *width, int *height) const
     parse_pair(p, width, height, 'x');
 }
 
+void CameraParameters::getPreferredPreviewSizeForVideo(int *width, int *height) const
+{
+    *width = *height = -1;
+    const char *p = get(KEY_PREFERRED_PREVIEW_SIZE_FOR_VIDEO);
+    if (p == 0)  return;
+    parse_pair(p, width, height, 'x');
+}
+
 void CameraParameters::getSupportedPreviewSizes(Vector<Size> &sizes) const
 {
     const char *previewSizesStr = get(KEY_SUPPORTED_PREVIEW_SIZES);
     parseSizesList(previewSizesStr, sizes);
+}
+
+void CameraParameters::setVideoSize(int width, int height)
+{
+    char str[32];
+    sprintf(str, "%dx%d", width, height);
+    set(KEY_VIDEO_SIZE, str);
+}
+
+void CameraParameters::getVideoSize(int *width, int *height) const
+{
+    *width = *height = -1;
+    const char *p = get(KEY_VIDEO_SIZE);
+    if (p == 0) return;
+    parse_pair(p, width, height, 'x');
+}
+
+void CameraParameters::getSupportedVideoSizes(Vector<Size> &sizes) const
+{
+    const char *videoSizesStr = get(KEY_SUPPORTED_VIDEO_SIZES);
+    parseSizesList(videoSizesStr, sizes);
 }
 
 void CameraParameters::setPreviewFrameRate(int fps)

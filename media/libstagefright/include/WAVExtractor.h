@@ -18,6 +18,7 @@
 
 #define WAV_EXTRACTOR_H_
 
+#include <utils/Errors.h>
 #include <media/stagefright/MediaExtractor.h>
 
 namespace android {
@@ -48,7 +49,7 @@ private:
     uint16_t mNumChannels;
     uint32_t mSampleRate;
     uint16_t mBitsPerSample;
-    off_t mDataOffset;
+    off64_t mDataOffset;
     size_t mDataSize;
     sp<MetaData> mTrackMeta;
 

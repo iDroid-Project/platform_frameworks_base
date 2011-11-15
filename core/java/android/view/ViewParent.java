@@ -17,6 +17,7 @@
 package android.view;
 
 import android.graphics.Rect;
+import android.view.accessibility.AccessibilityEvent;
 
 /**
  * Defines the responsibilities for a class that will be a parent of a View.
@@ -162,6 +163,20 @@ public interface ViewParent {
     public void createContextMenu(ContextMenu menu);
 
     /**
+     * Start an action mode for the specified view.
+     * <p>
+     * In most cases, a subclass does not need to override this. However, if the
+     * subclass is added directly to the window manager (for example,
+     * {@link ViewManager#addView(View, android.view.ViewGroup.LayoutParams)})
+     * then it should override this and start the action mode.
+     *
+     * @param originalView The source view where the action mode was first invoked
+     * @param callback The callback that will handle lifecycle events for the action mode
+     * @return The new action mode if it was started, null otherwise
+     */
+    public ActionMode startActionModeForChild(View originalView, ActionMode.Callback callback);
+
+    /**
      * This method is called on the parent when a child's drawable state
      * has changed.
      *
@@ -208,4 +223,22 @@ public interface ViewParent {
      */
     public boolean requestChildRectangleOnScreen(View child, Rect rectangle,
             boolean immediate);
+
+    /**
+     * Called by a child to request from its parent to send an {@link AccessibilityEvent}.
+     * The child has already populated a record for itself in the event and is delegating
+     * to its parent to send the event. The parent can optionally add a record for itself.
+     * <p>
+     * Note: An accessibility event is fired by an individual view which populates the
+     *       event with a record for its state and requests from its parent to perform
+     *       the sending. The parent can optionally add a record for itself before
+     *       dispatching the request to its parent. A parent can also choose not to
+     *       respect the request for sending the event. The accessibility event is sent
+     *       by the topmost view in the view tree.
+     *
+     * @param child The child which requests sending the event.
+     * @param event The event to be sent.
+     * @return True if the event was sent.
+     */
+    public boolean requestSendAccessibilityEvent(View child, AccessibilityEvent event);
 }

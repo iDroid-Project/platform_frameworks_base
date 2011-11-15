@@ -54,6 +54,12 @@ import android.view.SurfaceView;
  * <li>Optionally wraps, traces, and/or error-checks the renderer's OpenGL calls.
  * </ul>
  *
+ * <div class="special reference">
+ * <h3>Developer Guides</h3>
+ * <p>For more information about how to use OpenGL, read the
+ * <a href="{@docRoot}guide/topics/graphics/opengl.html">OpenGL</a> developer guide.</p>
+ * </div>
+ *
  * <h3>Using GLSurfaceView</h3>
  * <p>
  * Typically you use GLSurfaceView by subclassing it and overriding one or more of the
@@ -88,7 +94,7 @@ import android.view.SurfaceView;
  * well as how many bits are allocated to each channel. Therefore, the first thing
  * GLSurfaceView has to do when starting to render is choose what EGLConfig to use.
  * <p>
- * By default GLSurfaceView chooses a EGLConfig that has an RGB_656 pixel format,
+ * By default GLSurfaceView chooses a EGLConfig that has an RGB_565 pixel format,
  * with at least a 16-bit depth buffer and no stencil.
  * <p>
  * If you would prefer a different EGLConfig
@@ -155,6 +161,8 @@ import android.view.SurfaceView;
  *
  */
 public class GLSurfaceView extends SurfaceView implements SurfaceHolder.Callback {
+    private final static String TAG = "GLSurfaceView";
+    private final static boolean LOG_ATTACH_DETACH = false;
     private final static boolean LOG_THREADS = false;
     private final static boolean LOG_PAUSE_RESUME = false;
     private final static boolean LOG_SURFACE = false;
@@ -270,6 +278,35 @@ public class GLSurfaceView extends SurfaceView implements SurfaceHolder.Callback
     }
 
     /**
+     * Control whether the EGL context is preserved when the GLSurfaceView is paused and
+     * resumed.
+     * <p>
+     * If set to true, then the EGL context may be preserved when the GLSurfaceView is paused.
+     * Whether the EGL context is actually preserved or not depends upon whether the
+     * Android device that the program is running on can support an arbitrary number of EGL
+     * contexts or not. Devices that can only support a limited number of EGL contexts must
+     * release the  EGL context in order to allow multiple applications to share the GPU.
+     * <p>
+     * If set to false, the EGL context will be released when the GLSurfaceView is paused,
+     * and recreated when the GLSurfaceView is resumed.
+     * <p>
+     *
+     * The default is false.
+     *
+     * @param preserveOnPause preserve the EGL context when paused
+     */
+    public void setPreserveEGLContextOnPause(boolean preserveOnPause) {
+        mPreserveEGLContextOnPause = preserveOnPause;
+    }
+
+    /**
+     * @return true if the EGL context will be preserved when paused
+     */
+    public boolean getPreserveEGLContextOnPause() {
+        return mPreserveEGLContextOnPause;
+    }
+
+    /**
      * Set the renderer associated with this view. Also starts the thread that
      * will call the renderer, which in turn causes the rendering to start.
      * <p>This method should be called once and only once in the life-cycle of
@@ -306,6 +343,7 @@ public class GLSurfaceView extends SurfaceView implements SurfaceHolder.Callback
         if (mEGLWindowSurfaceFactory == null) {
             mEGLWindowSurfaceFactory = new DefaultWindowSurfaceFactory();
         }
+        mRenderer = renderer;
         mGLThread = new GLThread(renderer);
         mGLThread.start();
     }
@@ -525,12 +563,42 @@ public class GLSurfaceView extends SurfaceView implements SurfaceHolder.Callback
     /**
      * This method is used as part of the View class and is not normally
      * called or subclassed by clients of GLSurfaceView.
+     */
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        if (LOG_ATTACH_DETACH) {
+            Log.d(TAG, "onAttachedToWindow reattach =" + mDetached);
+        }
+        if (mDetached && (mRenderer != null)) {
+            int renderMode = RENDERMODE_CONTINUOUSLY;
+            if (mGLThread != null) {
+                renderMode = mGLThread.getRenderMode();
+            }
+            mGLThread = new GLThread(mRenderer);
+            if (renderMode != RENDERMODE_CONTINUOUSLY) {
+                mGLThread.setRenderMode(renderMode);
+            }
+            mGLThread.start();
+        }
+        mDetached = false;
+    }
+
+    /**
+     * This method is used as part of the View class and is not normally
+     * called or subclassed by clients of GLSurfaceView.
      * Must not be called before a renderer has been set.
      */
     @Override
     protected void onDetachedFromWindow() {
+        if (LOG_ATTACH_DETACH) {
+            Log.d(TAG, "onDetachedFromWindow");
+        }
+        if (mGLThread != null) {
+            mGLThread.requestExitAndWait();
+        }
+        mDetached = true;
         super.onDetachedFromWindow();
-        mGLThread.requestExitAndWait();
     }
 
     // ----------------------------------------------------------------------
@@ -574,6 +642,13 @@ public class GLSurfaceView extends SurfaceView implements SurfaceHolder.Callback
      * this interface, and then call {@link GLSurfaceView#setRenderer} to
      * register the renderer with the GLSurfaceView.
      * <p>
+     *
+     * <div class="special reference">
+     * <h3>Developer Guides</h3>
+     * <p>For more information about how to use OpenGL, read the
+     * <a href="{@docRoot}guide/topics/graphics/opengl.html">OpenGL</a> developer guide.</p>
+     * </div>
+     *
      * <h3>Threading</h3>
      * The renderer will be called on a separate thread, so that rendering
      * performance is decoupled from the UI thread. Clients typically need to
@@ -1011,6 +1086,15 @@ public class GLSurfaceView extends SurfaceView implements SurfaceHolder.Callback
             return gl;
         }
 
+        public void purgeBuffers() {
+            mEgl.eglMakeCurrent(mEglDisplay,
+                    EGL10.EGL_NO_SURFACE, EGL10.EGL_NO_SURFACE,
+                    EGL10.EGL_NO_CONTEXT);
+            mEgl.eglMakeCurrent(mEglDisplay,
+                    mEglSurface, mEglSurface,
+                    mEglContext);
+        }
+
         /**
          * Display the current render surface.
          * @return false if the context has been lost.
@@ -1207,7 +1291,7 @@ public class GLSurfaceView extends SurfaceView implements SurfaceHolder.Callback
                                     Log.i("GLThread", "releasing EGL surface because paused tid=" + getId());
                                 }
                                 stopEglSurfaceLocked();
-                                if (sGLThreadManager.shouldReleaseEGLContextWhenPausing()) {
+                                if (!mPreserveEGLContextOnPause || sGLThreadManager.shouldReleaseEGLContextWhenPausing()) {
                                     stopEglContextLocked();
                                     if (LOG_SURFACE) {
                                         Log.i("GLThread", "releasing EGL context because paused tid=" + getId());
@@ -1353,6 +1437,7 @@ public class GLSurfaceView extends SurfaceView implements SurfaceHolder.Callback
                         if (LOG_RENDERER) {
                             Log.w("GLThread", "onSurfaceChanged(" + w + ", " + h + ")");
                         }
+                        mEglHelper.purgeBuffers();
                         mRenderer.onSurfaceChanged(gl, w, h);
                         sizeChanged = false;
                     }
@@ -1672,7 +1757,7 @@ public class GLSurfaceView extends SurfaceView implements SurfaceHolder.Callback
             // Release the EGL context when pausing even if
             // the hardware supports multiple EGL contexts.
             // Otherwise the device could run out of EGL contexts.
-            return true;
+            return mLimitedGLESContexts;
         }
 
         public synchronized boolean shouldTerminateEGLWhenPausing() {
@@ -1683,15 +1768,17 @@ public class GLSurfaceView extends SurfaceView implements SurfaceHolder.Callback
         public synchronized void checkGLDriver(GL10 gl) {
             if (! mGLESDriverCheckComplete) {
                 checkGLESVersion();
+                String renderer = gl.glGetString(GL10.GL_RENDERER);
                 if (mGLESVersion < kGLES_20) {
-                    String renderer = gl.glGetString(GL10.GL_RENDERER);
                     mMultipleGLESContextsAllowed =
                         ! renderer.startsWith(kMSM7K_RENDERER_PREFIX);
-                    if (LOG_SURFACE) {
-                        Log.w(TAG, "checkGLDriver renderer = \"" + renderer + "\" multipleContextsAllowed = "
-                            + mMultipleGLESContextsAllowed);
-                    }
                     notifyAll();
+                }
+                mLimitedGLESContexts = !mMultipleGLESContextsAllowed || renderer.startsWith(kADRENO);
+                if (LOG_SURFACE) {
+                    Log.w(TAG, "checkGLDriver renderer = \"" + renderer + "\" multipleContextsAllowed = "
+                        + mMultipleGLESContextsAllowed
+                        + " mLimitedGLESContexts = " + mLimitedGLESContexts);
                 }
                 mGLESDriverCheckComplete = true;
             }
@@ -1717,9 +1804,11 @@ public class GLSurfaceView extends SurfaceView implements SurfaceHolder.Callback
         private int mGLESVersion;
         private boolean mGLESDriverCheckComplete;
         private boolean mMultipleGLESContextsAllowed;
+        private boolean mLimitedGLESContexts;
         private static final int kGLES_20 = 0x20000;
         private static final String kMSM7K_RENDERER_PREFIX =
             "Q3Dimension MSM7500 ";
+        private static final String kADRENO = "Adreno";
         private GLThread mEglOwner;
     }
 
@@ -1727,10 +1816,13 @@ public class GLSurfaceView extends SurfaceView implements SurfaceHolder.Callback
     private boolean mSizeChanged = true;
 
     private GLThread mGLThread;
+    private Renderer mRenderer;
+    private boolean mDetached;
     private EGLConfigChooser mEGLConfigChooser;
     private EGLContextFactory mEGLContextFactory;
     private EGLWindowSurfaceFactory mEGLWindowSurfaceFactory;
     private GLWrapper mGLWrapper;
     private int mDebugFlags;
     private int mEGLContextClientVersion;
+    private boolean mPreserveEGLContextOnPause;
 }

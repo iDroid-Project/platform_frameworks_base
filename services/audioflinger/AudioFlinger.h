@@ -32,14 +32,18 @@
 #include <utils/Errors.h>
 #include <utils/threads.h>
 #include <utils/SortedVector.h>
+#include <utils/TypeHelpers.h>
 #include <utils/Vector.h>
 
 #include <binder/BinderService.h>
 #include <binder/MemoryDealer.h>
 
-#include <hardware_legacy/AudioHardwareInterface.h>
+#include <system/audio.h>
+#include <hardware/audio.h>
 
 #include "AudioBufferProvider.h"
+
+#include <powermanager/IPowerManager.h>
 
 namespace android {
 
@@ -48,7 +52,6 @@ class effect_param_cblk_t;
 class AudioMixer;
 class AudioBuffer;
 class AudioResampler;
-
 
 // ----------------------------------------------------------------------------
 
@@ -75,8 +78,8 @@ public:
                                 pid_t pid,
                                 int streamType,
                                 uint32_t sampleRate,
-                                int format,
-                                int channelCount,
+                                uint32_t format,
+                                uint32_t channelMask,
                                 int frameCount,
                                 uint32_t flags,
                                 const sp<IMemory>& sharedBuffer,
@@ -86,7 +89,7 @@ public:
 
     virtual     uint32_t    sampleRate(int output) const;
     virtual     int         channelCount(int output) const;
-    virtual     int         format(int output) const;
+    virtual     uint32_t    format(int output) const;
     virtual     size_t      frameCount(int output) const;
     virtual     uint32_t    latency(int output) const;
 
@@ -106,8 +109,6 @@ public:
 
     virtual     status_t    setMicMute(bool state);
     virtual     bool        getMicMute() const;
-
-    virtual     bool        isStreamActive(int stream) const;
 
     virtual     status_t    setParameters(int ioHandle, const String8& keyValuePairs);
     virtual     String8     getParameters(int ioHandle, const String8& keys);
@@ -148,9 +149,9 @@ public:
 
     virtual int newAudioSessionId();
 
-    virtual status_t loadEffectLibrary(const char *libPath, int *handle);
+    virtual void acquireAudioSessionId(int audioSession);
 
-    virtual status_t unloadEffectLibrary(int handle);
+    virtual void releaseAudioSessionId(int audioSession);
 
     virtual status_t queryNumberEffects(uint32_t *numEffects);
 
@@ -162,13 +163,13 @@ public:
                         effect_descriptor_t *pDesc,
                         const sp<IEffectClient>& effectClient,
                         int32_t priority,
-                        int output,
+                        int io,
                         int sessionId,
                         status_t *status,
                         int *id,
                         int *enabled);
 
-    virtual status_t moveEffects(int session, int srcOutput, int dstOutput);
+    virtual status_t moveEffects(int sessionId, int srcOutput, int dstOutput);
 
     enum hardware_call_state {
         AUDIO_HW_IDLE = 0,
@@ -194,8 +195,8 @@ public:
                                 pid_t pid,
                                 int input,
                                 uint32_t sampleRate,
-                                int format,
-                                int channelCount,
+                                uint32_t format,
+                                uint32_t channelMask,
                                 int frameCount,
                                 uint32_t flags,
                                 int *sessionId,
@@ -209,10 +210,16 @@ public:
 
                 uint32_t    getMode() { return mMode; }
 
+                bool        btNrecIsOff() { return mBtNrecIsOff; }
+
 private:
                             AudioFlinger();
     virtual                 ~AudioFlinger();
 
+    status_t                initCheck() const;
+    virtual     void        onFirstRef();
+    audio_hw_device_t*      findSuitableHwDev_l(uint32_t devices);
+    void                    purgeStaleEffects_l();
 
     // Internal dump utilites.
     status_t dumpPermissionDenial(int fd, const Vector<String16>& args);
@@ -270,13 +277,26 @@ private:
     class EffectModule;
     class EffectHandle;
     class EffectChain;
+    struct AudioStreamOut;
+    struct AudioStreamIn;
 
     class ThreadBase : public Thread {
     public:
-        ThreadBase (const sp<AudioFlinger>& audioFlinger, int id);
+        ThreadBase (const sp<AudioFlinger>& audioFlinger, int id, uint32_t device);
         virtual             ~ThreadBase();
 
+
+        enum type {
+            MIXER,              // Thread class is MixerThread
+            DIRECT,             // Thread class is DirectOutputThread
+            DUPLICATING,        // Thread class is DuplicatingThread
+            RECORD              // Thread class is RecordThread
+        };
+
         status_t dumpBase(int fd, const Vector<String16>& args);
+        status_t dumpEffectChains(int fd, const Vector<String16>& args);
+
+        void clearPowerManager();
 
         // base for record and playback
         class TrackBase : public AudioBufferProvider, public RefBase {
@@ -301,8 +321,8 @@ private:
                                 TrackBase(const wp<ThreadBase>& thread,
                                         const sp<Client>& client,
                                         uint32_t sampleRate,
-                                        int format,
-                                        int channelCount,
+                                        uint32_t format,
+                                        uint32_t channelMask,
                                         int frameCount,
                                         uint32_t flags,
                                         const sp<IMemory>& sharedBuffer,
@@ -329,11 +349,13 @@ private:
             virtual status_t getNextBuffer(AudioBufferProvider::Buffer* buffer) = 0;
             virtual void releaseBuffer(AudioBufferProvider::Buffer* buffer);
 
-            int format() const {
+            uint32_t format() const {
                 return mFormat;
             }
 
             int channelCount() const ;
+
+            uint32_t channelMask() const;
 
             int sampleRate() const;
 
@@ -360,9 +382,11 @@ private:
             // we don't really need a lock for these
             int                 mState;
             int                 mClientTid;
-            uint8_t             mFormat;
+            uint32_t            mFormat;
             uint32_t            mFlags;
             int                 mSessionId;
+            uint8_t             mChannelCount;
+            uint32_t            mChannelMask;
         };
 
         class ConfigEvent {
@@ -373,9 +397,26 @@ private:
             int mParam;
         };
 
+        class PMDeathRecipient : public IBinder::DeathRecipient {
+        public:
+                        PMDeathRecipient(const wp<ThreadBase>& thread) : mThread(thread) {}
+            virtual     ~PMDeathRecipient() {}
+
+            // IBinder::DeathRecipient
+            virtual     void        binderDied(const wp<IBinder>& who);
+
+        private:
+                        PMDeathRecipient(const PMDeathRecipient&);
+                        PMDeathRecipient& operator = (const PMDeathRecipient&);
+
+            wp<ThreadBase> mThread;
+        };
+
+        virtual     status_t    initCheck() const = 0;
+                    int         type() const { return mType; }
                     uint32_t    sampleRate() const;
                     int         channelCount() const;
-                    int         format() const;
+                    uint32_t    format() const;
                     size_t      frameCount() const;
                     void        wakeUp()    { mWaitWorkCV.broadcast(); }
                     void        exit();
@@ -388,11 +429,103 @@ private:
                     void        processConfigEvents();
                     int         id() const { return mId;}
                     bool        standby() { return mStandby; }
+                    uint32_t    device() { return mDevice; }
+        virtual     audio_stream_t* stream() = 0;
 
+                    sp<EffectHandle> createEffect_l(
+                                        const sp<AudioFlinger::Client>& client,
+                                        const sp<IEffectClient>& effectClient,
+                                        int32_t priority,
+                                        int sessionId,
+                                        effect_descriptor_t *desc,
+                                        int *enabled,
+                                        status_t *status);
+                    void disconnectEffect(const sp< EffectModule>& effect,
+                                          const wp<EffectHandle>& handle,
+                                          bool unpiniflast);
+
+                    // return values for hasAudioSession (bit field)
+                    enum effect_state {
+                        EFFECT_SESSION = 0x1,   // the audio session corresponds to at least one
+                                                // effect
+                        TRACK_SESSION = 0x2     // the audio session corresponds to at least one
+                                                // track
+                    };
+
+                    // get effect chain corresponding to session Id.
+                    sp<EffectChain> getEffectChain(int sessionId);
+                    // same as getEffectChain() but must be called with ThreadBase mutex locked
+                    sp<EffectChain> getEffectChain_l(int sessionId);
+                    // add an effect chain to the chain list (mEffectChains)
+        virtual     status_t addEffectChain_l(const sp<EffectChain>& chain) = 0;
+                    // remove an effect chain from the chain list (mEffectChains)
+        virtual     size_t removeEffectChain_l(const sp<EffectChain>& chain) = 0;
+                    // lock mall effect chains Mutexes. Must be called before releasing the
+                    // ThreadBase mutex before processing the mixer and effects. This guarantees the
+                    // integrity of the chains during the process.
+                    void lockEffectChains_l(Vector<sp <EffectChain> >& effectChains);
+                    // unlock effect chains after process
+                    void unlockEffectChains(Vector<sp <EffectChain> >& effectChains);
+                    // set audio mode to all effect chains
+                    void setMode(uint32_t mode);
+                    // get effect module with corresponding ID on specified audio session
+                    sp<AudioFlinger::EffectModule> getEffect_l(int sessionId, int effectId);
+                    // add and effect module. Also creates the effect chain is none exists for
+                    // the effects audio session
+                    status_t addEffect_l(const sp< EffectModule>& effect);
+                    // remove and effect module. Also removes the effect chain is this was the last
+                    // effect
+                    void removeEffect_l(const sp< EffectModule>& effect);
+                    // detach all tracks connected to an auxiliary effect
+        virtual     void detachAuxEffect_l(int effectId) {}
+                    // returns either EFFECT_SESSION if effects on this audio session exist in one
+                    // chain, or TRACK_SESSION if tracks on this audio session exist, or both
+                    virtual uint32_t hasAudioSession(int sessionId) = 0;
+                    // the value returned by default implementation is not important as the
+                    // strategy is only meaningful for PlaybackThread which implements this method
+                    virtual uint32_t getStrategyForSession_l(int sessionId) { return 0; }
+
+                    // suspend or restore effect according to the type of effect passed. a NULL
+                    // type pointer means suspend all effects in the session
+                    void setEffectSuspended(const effect_uuid_t *type,
+                                            bool suspend,
+                                            int sessionId = AUDIO_SESSION_OUTPUT_MIX);
+                    // check if some effects must be suspended/restored when an effect is enabled
+                    // or disabled
+                    void checkSuspendOnEffectEnabled(const sp<EffectModule>& effect,
+                                                     bool enabled,
+                                                     int sessionId = AUDIO_SESSION_OUTPUT_MIX);
+                    void checkSuspendOnEffectEnabled_l(const sp<EffectModule>& effect,
+                                                       bool enabled,
+                                                       int sessionId = AUDIO_SESSION_OUTPUT_MIX);
         mutable     Mutex                   mLock;
 
     protected:
 
+                    // entry describing an effect being suspended in mSuspendedSessions keyed vector
+                    class SuspendedSessionDesc : public RefBase {
+                    public:
+                        SuspendedSessionDesc() : mRefCount(0) {}
+
+                        int mRefCount;          // number of active suspend requests
+                        effect_uuid_t mType;    // effect type UUID
+                    };
+
+                    void        acquireWakeLock();
+                    void        acquireWakeLock_l();
+                    void        releaseWakeLock();
+                    void        releaseWakeLock_l();
+                    void setEffectSuspended_l(const effect_uuid_t *type,
+                                              bool suspend,
+                                              int sessionId = AUDIO_SESSION_OUTPUT_MIX);
+                    // updated mSuspendedSessions when an effect suspended or restored
+                    void        updateSuspendedSessions_l(const effect_uuid_t *type,
+                                                          bool suspend,
+                                                          int sessionId);
+                    // check if some effects must be suspended when an effect chain is added
+                    void checkSuspendOnAddEffectChain_l(const sp<EffectChain>& chain);
+
+        friend class AudioFlinger;
         friend class Track;
         friend class TrackBase;
         friend class PlaybackThread;
@@ -402,14 +535,15 @@ private:
         friend class RecordThread;
         friend class RecordTrack;
 
+                    int                     mType;
                     Condition               mWaitWorkCV;
                     sp<AudioFlinger>        mAudioFlinger;
                     uint32_t                mSampleRate;
                     size_t                  mFrameCount;
-                    uint32_t                mChannels;
+                    uint32_t                mChannelMask;
                     uint16_t                mChannelCount;
                     uint16_t                mFrameSize;
-                    int                     mFormat;
+                    uint32_t                mFormat;
                     Condition               mParamCond;
                     Vector<String8>         mNewParameters;
                     status_t                mParamStatus;
@@ -417,17 +551,22 @@ private:
                     bool                    mStandby;
                     int                     mId;
                     bool                    mExiting;
+                    Vector< sp<EffectChain> > mEffectChains;
+                    uint32_t                mDevice;    // output device for PlaybackThread
+                                                        // input + output devices for RecordThread
+                    static const int        kNameLength = 32;
+                    char                    mName[kNameLength];
+                    sp<IPowerManager>       mPowerManager;
+                    sp<IBinder>             mWakeLockToken;
+                    sp<PMDeathRecipient>    mDeathRecipient;
+                    // list of suspended effects per session and per type. The first vector is
+                    // keyed by session ID, the second by type UUID timeLow field
+                    KeyedVector< int, KeyedVector< int, sp<SuspendedSessionDesc> > >  mSuspendedSessions;
     };
 
     // --- PlaybackThread ---
     class PlaybackThread : public ThreadBase {
     public:
-
-        enum type {
-            MIXER,
-            DIRECT,
-            DUPLICATING
-        };
 
         enum mixer_state {
             MIXER_IDLE,
@@ -442,8 +581,8 @@ private:
                                         const sp<Client>& client,
                                         int streamType,
                                         uint32_t sampleRate,
-                                        int format,
-                                        int channelCount,
+                                        uint32_t format,
+                                        uint32_t channelMask,
                                         int frameCount,
                                         const sp<IMemory>& sharedBuffer,
                                         int sessionId);
@@ -475,7 +614,6 @@ private:
 
         protected:
             friend class ThreadBase;
-            friend class AudioFlinger;
             friend class TrackHandle;
             friend class PlaybackThread;
             friend class MixerThread;
@@ -497,7 +635,7 @@ private:
             void reset();
 
             bool isOutputTrack() const {
-                return (mStreamType == AudioSystem::NUM_STREAM_TYPES);
+                return (mStreamType == AUDIO_STREAM_CNT);
             }
 
             // we don't really need a lock for these
@@ -530,8 +668,8 @@ private:
                                 OutputTrack(  const wp<ThreadBase>& thread,
                                         DuplicatingThread *sourceThread,
                                         uint32_t sampleRate,
-                                        int format,
-                                        int channelCount,
+                                        uint32_t format,
+                                        uint32_t channelMask,
                                         int frameCount);
                                 ~OutputTrack();
 
@@ -565,6 +703,8 @@ private:
         virtual     status_t    readyToRun();
         virtual     void        onFirstRef();
 
+        virtual     status_t    initCheck() const { return (mOutput == 0) ? NO_INIT : NO_ERROR; }
+
         virtual     uint32_t    latency() const;
 
         virtual     status_t    setMasterVolume(float value);
@@ -579,22 +719,21 @@ private:
         virtual     float       streamVolume(int stream) const;
         virtual     bool        streamMute(int stream) const;
 
-                    bool        isStreamActive(int stream) const;
-
                     sp<Track>   createTrack_l(
                                     const sp<AudioFlinger::Client>& client,
                                     int streamType,
                                     uint32_t sampleRate,
-                                    int format,
-                                    int channelCount,
+                                    uint32_t format,
+                                    uint32_t channelMask,
                                     int frameCount,
                                     const sp<IMemory>& sharedBuffer,
                                     int sessionId,
                                     status_t *status);
 
-                    AudioStreamOut* getOutput() { return mOutput; }
+                    AudioStreamOut* getOutput();
+                    AudioStreamOut* clearOutput();
+                    virtual audio_stream_t* stream();
 
-        virtual     int         type() const { return mType; }
                     void        suspend() { mSuspended++; }
                     void        restore() { if (mSuspended) mSuspended--; }
                     bool        isSuspended() { return (mSuspended != 0); }
@@ -603,58 +742,32 @@ private:
         virtual     status_t    getRenderPosition(uint32_t *halFrames, uint32_t *dspFrames);
                     int16_t     *mixBuffer() { return mMixBuffer; };
 
-                    sp<EffectHandle> createEffect_l(
-                                        const sp<AudioFlinger::Client>& client,
-                                        const sp<IEffectClient>& effectClient,
-                                        int32_t priority,
-                                        int sessionId,
-                                        effect_descriptor_t *desc,
-                                        int *enabled,
-                                        status_t *status);
-                    void disconnectEffect(const sp< EffectModule>& effect,
-                                          const wp<EffectHandle>& handle);
-
-                    // return values for hasAudioSession (bit field)
-                    enum effect_state {
-                        EFFECT_SESSION = 0x1,   // the audio session corresponds to at least one
-                                                // effect
-                        TRACK_SESSION = 0x2     // the audio session corresponds to at least one
-                                                // track
-                    };
-
-                    uint32_t hasAudioSession(int sessionId);
-                    sp<EffectChain> getEffectChain(int sessionId);
-                    sp<EffectChain> getEffectChain_l(int sessionId);
-                    status_t addEffectChain_l(const sp<EffectChain>& chain);
-                    size_t removeEffectChain_l(const sp<EffectChain>& chain);
-                    void lockEffectChains_l(Vector<sp <EffectChain> >& effectChains);
-                    void unlockEffectChains(Vector<sp <EffectChain> >& effectChains);
-
-                    sp<AudioFlinger::EffectModule> getEffect_l(int sessionId, int effectId);
-                    void detachAuxEffect_l(int effectId);
+        virtual     void detachAuxEffect_l(int effectId);
                     status_t attachAuxEffect(const sp<AudioFlinger::PlaybackThread::Track> track,
                             int EffectId);
                     status_t attachAuxEffect_l(const sp<AudioFlinger::PlaybackThread::Track> track,
                             int EffectId);
-                    void setMode(uint32_t mode);
 
-                    status_t addEffect_l(const sp< EffectModule>& effect);
-                    void removeEffect_l(const sp< EffectModule>& effect);
+                    virtual status_t addEffectChain_l(const sp<EffectChain>& chain);
+                    virtual size_t removeEffectChain_l(const sp<EffectChain>& chain);
+                    virtual uint32_t hasAudioSession(int sessionId);
+                    virtual uint32_t getStrategyForSession_l(int sessionId);
 
-                    uint32_t getStrategyForSession_l(int sessionId);
+                            void setStreamValid(int streamType, bool valid);
 
         struct  stream_type_t {
             stream_type_t()
                 :   volume(1.0f),
-                    mute(false)
+                    mute(false),
+                    valid(true)
             {
             }
             float       volume;
             bool        mute;
+            bool        valid;
         };
 
     protected:
-        int                             mType;
         int16_t*                        mMixBuffer;
         int                             mSuspended;
         int                             mBytesWritten;
@@ -682,26 +795,22 @@ private:
 
         status_t    addTrack_l(const sp<Track>& track);
         void        destroyTrack_l(const sp<Track>& track);
+        void        removeTrack_l(const sp<Track>& track);
 
         void        readOutputParameters();
 
-        uint32_t    device() { return mDevice; }
-
         virtual status_t    dumpInternals(int fd, const Vector<String16>& args);
         status_t    dumpTracks(int fd, const Vector<String16>& args);
-        status_t    dumpEffectChains(int fd, const Vector<String16>& args);
 
         SortedVector< sp<Track> >       mTracks;
         // mStreamTypes[] uses 1 additionnal stream type internally for the OutputTrack used by DuplicatingThread
-        stream_type_t                   mStreamTypes[AudioSystem::NUM_STREAM_TYPES + 1];
+        stream_type_t                   mStreamTypes[AUDIO_STREAM_CNT + 1];
         AudioStreamOut*                 mOutput;
         float                           mMasterVolume;
         nsecs_t                         mLastWriteTime;
         int                             mNumWrites;
         int                             mNumDelayedWrites;
         bool                            mInWrite;
-        Vector< sp<EffectChain> >       mEffectChains;
-        uint32_t                        mDevice;
     };
 
     class MixerThread : public PlaybackThread {
@@ -785,11 +894,13 @@ private:
               float streamVolumeInternal(int stream) const { return mStreamTypes[stream].volume; }
               void audioConfigChanged_l(int event, int ioHandle, void *param2);
 
-              int  nextUniqueId();
-              status_t moveEffectChain_l(int session,
+              uint32_t nextUniqueId();
+              status_t moveEffectChain_l(int sessionId,
                                      AudioFlinger::PlaybackThread *srcThread,
                                      AudioFlinger::PlaybackThread *dstThread,
                                      bool reRegister);
+              PlaybackThread *primaryPlaybackThread_l();
+              uint32_t primaryOutputDevice_l();
 
     friend class AudioBuffer;
 
@@ -830,8 +941,8 @@ private:
                                 RecordTrack(const wp<ThreadBase>& thread,
                                         const sp<Client>& client,
                                         uint32_t sampleRate,
-                                        int format,
-                                        int channelCount,
+                                        uint32_t format,
+                                        uint32_t channelMask,
                                         int frameCount,
                                         uint32_t flags,
                                         int sessionId);
@@ -844,6 +955,7 @@ private:
                     bool        setOverflow() { bool tmp = mOverflow; mOverflow = true; return tmp; }
 
                     void        dump(char* buffer, size_t size);
+
         private:
             friend class AudioFlinger;
             friend class RecordThread;
@@ -861,17 +973,31 @@ private:
                         AudioStreamIn *input,
                         uint32_t sampleRate,
                         uint32_t channels,
-                        int id);
+                        int id,
+                        uint32_t device);
                 ~RecordThread();
 
         virtual bool        threadLoop();
-        virtual status_t    readyToRun() { return NO_ERROR; }
+        virtual status_t    readyToRun();
         virtual void        onFirstRef();
+
+        virtual status_t    initCheck() const { return (mInput == 0) ? NO_INIT : NO_ERROR; }
+                sp<AudioFlinger::RecordThread::RecordTrack>  createRecordTrack_l(
+                        const sp<AudioFlinger::Client>& client,
+                        uint32_t sampleRate,
+                        int format,
+                        int channelMask,
+                        int frameCount,
+                        uint32_t flags,
+                        int sessionId,
+                        status_t *status);
 
                 status_t    start(RecordTrack* recordTrack);
                 void        stop(RecordTrack* recordTrack);
                 status_t    dump(int fd, const Vector<String16>& args);
-                AudioStreamIn* getInput() { return mInput; }
+                AudioStreamIn* getInput();
+                AudioStreamIn* clearInput();
+                virtual audio_stream_t* stream();
 
         virtual status_t    getNextBuffer(AudioBufferProvider::Buffer* buffer);
         virtual void        releaseBuffer(AudioBufferProvider::Buffer* buffer);
@@ -881,9 +1007,15 @@ private:
                 void        readInputParameters();
         virtual unsigned int  getInputFramesLost();
 
+        virtual status_t addEffectChain_l(const sp<EffectChain>& chain);
+        virtual size_t removeEffectChain_l(const sp<EffectChain>& chain);
+        virtual uint32_t hasAudioSession(int sessionId);
+                RecordTrack* track();
+
     private:
                 RecordThread();
                 AudioStreamIn                       *mInput;
+                RecordTrack*                        mTrack;
                 sp<RecordTrack>                     mActiveTrack;
                 Condition                           mStartStopCond;
                 AudioResampler                      *mResampler;
@@ -940,7 +1072,8 @@ private:
             STARTING,
             ACTIVE,
             STOPPING,
-            STOPPED
+            STOPPED,
+            DESTROYED
         };
 
         int         id() { return mId; }
@@ -974,9 +1107,10 @@ private:
         int16_t     *outBuffer() { return mConfig.outputCfg.buffer.s16; }
         void        setChain(const wp<EffectChain>& chain) { mChain = chain; }
         void        setThread(const wp<ThreadBase>& thread) { mThread = thread; }
+        wp<ThreadBase>& thread() { return mThread; }
 
         status_t addHandle(sp<EffectHandle>& handle);
-        void disconnect(const wp<EffectHandle>& handle);
+        void disconnect(const wp<EffectHandle>& handle, bool unpiniflast);
         size_t removeHandle (const wp<EffectHandle>& handle);
 
         effect_descriptor_t& desc() { return mDescriptor; }
@@ -985,10 +1119,22 @@ private:
         status_t         setDevice(uint32_t device);
         status_t         setVolume(uint32_t *left, uint32_t *right, bool controller);
         status_t         setMode(uint32_t mode);
+        status_t         start();
+        status_t         stop();
+        void             setSuspended(bool suspended);
+        bool             suspended();
+
+        sp<EffectHandle> controlHandle();
+
+        bool             isPinned() { return mPinned; }
+        void             unPin() { mPinned = false; }
 
         status_t         dump(int fd, const Vector<String16>& args);
 
     protected:
+        friend class EffectHandle;
+        friend class AudioFlinger;
+        bool                mPinned;
 
         // Maximum time allocated to effect engines to complete the turn off sequence
         static const uint32_t MAX_DISABLE_TIME_MS = 10000;
@@ -999,14 +1145,6 @@ private:
         status_t start_l();
         status_t stop_l();
 
-        // update this table when AudioSystem::audio_devices or audio_device_e (in EffectApi.h) are modified
-        static const uint32_t sDeviceConvTable[];
-        static uint32_t deviceAudioSystemToEffectApi(uint32_t device);
-
-        // update this table when AudioSystem::audio_mode or audio_mode_e (in EffectApi.h) are modified
-        static const uint32_t sModeConvTable[];
-        static int modeAudioSystemToEffectApi(uint32_t mode);
-
         Mutex               mLock;      // mutex for process, commands and handles list protection
         wp<ThreadBase>      mThread;    // parent thread
         wp<EffectChain>     mChain;     // parent effect chain
@@ -1014,13 +1152,14 @@ private:
         int                 mSessionId; // audio session ID
         effect_descriptor_t mDescriptor;// effect descriptor received from effect engine
         effect_config_t     mConfig;    // input and output audio configuration
-        effect_interface_t  mEffectInterface; // Effect module C API
+        effect_handle_t  mEffectInterface; // Effect module C API
         status_t mStatus;               // initialization status
         uint32_t mState;                // current activation state (effect_state)
         Vector< wp<EffectHandle> > mHandles;    // list of client handles
         uint32_t mMaxDisableWaitCnt;    // maximum grace period before forcing an effect off after
                                         // sending disable command.
         uint32_t mDisableWaitCnt;       // current process() calls count during disable period.
+        bool     mSuspended;            // effect is suspended: temporarily disabled by framework
     };
 
     // The EffectHandle class implements the IEffect interface. It provides resources
@@ -1047,19 +1186,24 @@ private:
                                  uint32_t *replySize,
                                  void *pReplyData);
         virtual void disconnect();
+        virtual void disconnect(bool unpiniflast);
         virtual sp<IMemory> getCblk() const;
         virtual status_t onTransact(uint32_t code, const Parcel& data,
                 Parcel* reply, uint32_t flags);
 
 
         // Give or take control of effect module
-        void setControl(bool hasControl, bool signal);
+        // - hasControl: true if control is given, false if removed
+        // - signal: true client app should be signaled of change, false otherwise
+        // - enabled: state of the effect when control is passed
+        void setControl(bool hasControl, bool signal, bool enabled);
         void commandExecuted(uint32_t cmdCode,
                              uint32_t cmdSize,
                              void *pCmdData,
                              uint32_t replySize,
                              void *pReplyData);
         void setEnabled(bool enabled);
+        bool enabled() { return mEnabled; }
 
         // Getters
         int id() { return mEffect->id(); }
@@ -1070,7 +1214,8 @@ private:
         void dump(char* buffer, size_t size);
 
     protected:
-
+        friend class AudioFlinger;
+        friend class EffectModule;
         EffectHandle(const EffectHandle&);
         EffectHandle& operator =(const EffectHandle&);
 
@@ -1082,6 +1227,8 @@ private:
         uint8_t*            mBuffer;        // pointer to parameter area in shared memory
         int mPriority;                      // client application priority to control the effect
         bool mHasControl;                   // true if this handle is controlling the effect
+        bool mEnabled;                      // cached enable state: needed when the effect is
+                                            // restored after being suspended
     };
 
     // the EffectChain class represents a group of effects associated to one audio session.
@@ -1096,6 +1243,10 @@ private:
         EffectChain(const wp<ThreadBase>& wThread, int sessionId);
         ~EffectChain();
 
+        // special key used for an entry in mSuspendedEffects keyed vector
+        // corresponding to a suspend all request.
+        static const int        kKeyForSuspendAll = 0;
+
         void process_l();
 
         void lock() {
@@ -1108,12 +1259,12 @@ private:
         status_t addEffect_l(const sp<EffectModule>& handle);
         size_t removeEffect_l(const sp<EffectModule>& handle);
 
-        int sessionId() {
-            return mSessionId;
-        }
+        int sessionId() { return mSessionId; }
+        void setSessionId(int sessionId) { mSessionId = sessionId; }
 
         sp<EffectModule> getEffectFromDesc_l(effect_descriptor_t *descriptor);
         sp<EffectModule> getEffectFromId_l(int id);
+        sp<EffectModule> getEffectFromType_l(const effect_uuid_t *type);
         bool setVolume_l(uint32_t *left, uint32_t *right);
         void setDevice_l(uint32_t device);
         void setMode_l(uint32_t mode);
@@ -1132,20 +1283,52 @@ private:
             return mOutBuffer;
         }
 
-        void startTrack() {mActiveTrackCnt++;}
-        void stopTrack() {mActiveTrackCnt--;}
-        int activeTracks() { return mActiveTrackCnt;}
+        void incTrackCnt() { android_atomic_inc(&mTrackCnt); }
+        void decTrackCnt() { android_atomic_dec(&mTrackCnt); }
+        int32_t trackCnt() { return mTrackCnt;}
+
+        void incActiveTrackCnt() { android_atomic_inc(&mActiveTrackCnt); }
+        void decActiveTrackCnt() { android_atomic_dec(&mActiveTrackCnt); }
+        int32_t activeTrackCnt() { return mActiveTrackCnt;}
 
         uint32_t strategy() { return mStrategy; }
         void setStrategy(uint32_t strategy)
                  { mStrategy = strategy; }
 
+        // suspend effect of the given type
+        void setEffectSuspended_l(const effect_uuid_t *type,
+                                  bool suspend);
+        // suspend all eligible effects
+        void setEffectSuspendedAll_l(bool suspend);
+        // check if effects should be suspend or restored when a given effect is enable or disabled
+        void checkSuspendOnEffectEnabled(const sp<EffectModule>& effect,
+                                              bool enabled);
+
         status_t dump(int fd, const Vector<String16>& args);
 
     protected:
-
+        friend class AudioFlinger;
         EffectChain(const EffectChain&);
         EffectChain& operator =(const EffectChain&);
+
+        class SuspendedEffectDesc : public RefBase {
+        public:
+            SuspendedEffectDesc() : mRefCount(0) {}
+
+            int mRefCount;
+            effect_uuid_t mType;
+            wp<EffectModule> mEffect;
+        };
+
+        // get a list of effect modules to suspend when an effect of the type
+        // passed is enabled.
+        Vector< sp<EffectModule> > getSuspendEligibleEffects();
+        // get an effect module if it is currently enable
+        sp<EffectModule> getEffectIfEnabled(const effect_uuid_t *type);
+        // true if the effect whose descriptor is passed can be suspended
+        // OEMs can modify the rules implemented in this method to exclude specific effect
+        // types or implementations from the suspend/restore mechanism.
+        bool isEffectEligibleForSuspend(const effect_descriptor_t& desc);
 
         wp<ThreadBase> mThread;     // parent mixer thread
         Mutex mLock;                // mutex protecting effect list
@@ -1153,7 +1336,8 @@ private:
         int mSessionId;             // audio session ID
         int16_t *mInBuffer;         // chain input buffer
         int16_t *mOutBuffer;        // chain output buffer
-        int mActiveTrackCnt;        // number of active tracks connected
+        volatile int32_t mActiveTrackCnt;  // number of active tracks connected
+        volatile int32_t mTrackCnt;        // number of tracks connected
         bool mOwnInBuffer;          // true if the chain owns its input buffer
         int mVolumeCtrlIdx;         // index of insert effect having control over volume
         uint32_t mLeftVolume;       // previous volume on left channel
@@ -1161,23 +1345,49 @@ private:
         uint32_t mNewLeftVolume;       // new volume on left channel
         uint32_t mNewRightVolume;      // new volume on right channel
         uint32_t mStrategy; // strategy for this effect chain
+        // mSuspendedEffects lists all effect currently suspended in the chain
+        // use effect type UUID timelow field as key. There is no real risk of identical
+        // timeLow fields among effect type UUIDs.
+        KeyedVector< int, sp<SuspendedEffectDesc> > mSuspendedEffects;
+    };
+
+    struct AudioStreamOut {
+        audio_hw_device_t   *hwDev;
+        audio_stream_out_t  *stream;
+
+        AudioStreamOut(audio_hw_device_t *dev, audio_stream_out_t *out) :
+            hwDev(dev), stream(out) {}
+    };
+
+    struct AudioStreamIn {
+        audio_hw_device_t   *hwDev;
+        audio_stream_in_t   *stream;
+
+        AudioStreamIn(audio_hw_device_t *dev, audio_stream_in_t *in) :
+            hwDev(dev), stream(in) {}
+    };
+
+    struct AudioSessionRef {
+        int sessionid;
+        pid_t pid;
+        int cnt;
     };
 
     friend class RecordThread;
     friend class PlaybackThread;
-
 
     mutable     Mutex                               mLock;
 
                 DefaultKeyedVector< pid_t, wp<Client> >     mClients;
 
                 mutable     Mutex                   mHardwareLock;
-                AudioHardwareInterface*             mAudioHardware;
+                audio_hw_device_t*                  mPrimaryHardwareDev;
+                Vector<audio_hw_device_t*>          mAudioHwDevs;
     mutable     int                                 mHardwareStatus;
 
 
                 DefaultKeyedVector< int, sp<PlaybackThread> >  mPlaybackThreads;
-                PlaybackThread::stream_type_t       mStreamTypes[AudioSystem::NUM_STREAM_TYPES];
+                PlaybackThread::stream_type_t       mStreamTypes[AUDIO_STREAM_CNT];
                 float                               mMasterVolume;
                 bool                                mMasterMute;
 
@@ -1185,12 +1395,12 @@ private:
 
                 DefaultKeyedVector< pid_t, sp<NotificationClient> >    mNotificationClients;
                 volatile int32_t                    mNextUniqueId;
-#ifdef LVMX
-                int mLifeVibesClientPid;
-#endif
-                uint32_t mMode;
+                uint32_t                            mMode;
+                bool                                mBtNrecIsOff;
 
+                Vector<AudioSessionRef*> mAudioSessionRefs;
 };
+
 
 // ----------------------------------------------------------------------------
 

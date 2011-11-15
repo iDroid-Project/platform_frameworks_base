@@ -28,16 +28,17 @@ import android.provider.Telephony.Sms.Intents;
 import android.telephony.ServiceState;
 import android.telephony.SmsCbMessage;
 import android.telephony.gsm.GsmCellLocation;
-import android.util.Config;
 import android.util.Log;
 
-import com.android.internal.telephony.BaseCommands;
 import com.android.internal.telephony.CommandsInterface;
 import com.android.internal.telephony.IccUtils;
+import com.android.internal.telephony.PhoneBase;
 import com.android.internal.telephony.SMSDispatcher;
 import com.android.internal.telephony.SmsHeader;
 import com.android.internal.telephony.SmsMessageBase;
 import com.android.internal.telephony.SmsMessageBase.TextEncodingDetails;
+import com.android.internal.telephony.SmsStorageMonitor;
+import com.android.internal.telephony.SmsUsageMonitor;
 import com.android.internal.telephony.TelephonyProperties;
 
 import java.util.ArrayList;
@@ -46,16 +47,55 @@ import java.util.Iterator;
 
 import static android.telephony.SmsMessage.MessageClass;
 
-final class GsmSMSDispatcher extends SMSDispatcher {
+public final class GsmSMSDispatcher extends SMSDispatcher {
     private static final String TAG = "GSM";
 
-    private GSMPhone mGsmPhone;
+    /** Status report received */
+    private static final int EVENT_NEW_SMS_STATUS_REPORT = 100;
 
-    GsmSMSDispatcher(GSMPhone phone) {
-        super(phone);
-        mGsmPhone = phone;
+    /** New broadcast SMS */
+    private static final int EVENT_NEW_BROADCAST_SMS = 101;
 
-        ((BaseCommands)mCm).setOnNewGsmBroadcastSms(this, EVENT_NEW_BROADCAST_SMS, null);
+    public GsmSMSDispatcher(PhoneBase phone, SmsStorageMonitor storageMonitor,
+            SmsUsageMonitor usageMonitor) {
+        super(phone, storageMonitor, usageMonitor);
+        mCm.setOnNewGsmSms(this, EVENT_NEW_SMS, null);
+        mCm.setOnSmsStatus(this, EVENT_NEW_SMS_STATUS_REPORT, null);
+        mCm.setOnNewGsmBroadcastSms(this, EVENT_NEW_BROADCAST_SMS, null);
+    }
+
+    @Override
+    public void dispose() {
+        mCm.unSetOnNewGsmSms(this);
+        mCm.unSetOnSmsStatus(this);
+        mCm.unSetOnNewGsmBroadcastSms(this);
+    }
+
+    @Override
+    protected String getFormat() {
+        return android.telephony.SmsMessage.FORMAT_3GPP;
+    }
+
+    /**
+     * Handles 3GPP format-specific events coming from the phone stack.
+     * Other events are handled by {@link SMSDispatcher#handleMessage}.
+     *
+     * @param msg the message to handle
+     */
+    @Override
+    public void handleMessage(Message msg) {
+        switch (msg.what) {
+        case EVENT_NEW_SMS_STATUS_REPORT:
+            handleStatusReport((AsyncResult) msg.obj);
+            break;
+
+        case EVENT_NEW_BROADCAST_SMS:
+            handleBroadcastSms((AsyncResult)msg.obj);
+            break;
+
+        default:
+            super.handleMessage(msg);
+        }
     }
 
     /**
@@ -65,7 +105,7 @@ final class GsmSMSDispatcher extends SMSDispatcher {
      * @param ar AsyncResult passed into the message handler.  ar.result should
      *           be a String representing the status report PDU, as ASCII hex.
      */
-    protected void handleStatusReport(AsyncResult ar) {
+    private void handleStatusReport(AsyncResult ar) {
         String pduString = (String) ar.result;
         SmsMessage sms = SmsMessage.newFromCDS(pduString);
 
@@ -82,6 +122,7 @@ final class GsmSMSDispatcher extends SMSDispatcher {
                     PendingIntent intent = tracker.mDeliveryIntent;
                     Intent fillIn = new Intent();
                     fillIn.putExtra("pdu", IccUtils.hexStringToBytes(pduString));
+                    fillIn.putExtra("format", android.telephony.SmsMessage.FORMAT_3GPP);
                     try {
                         intent.send(mContext, Activity.RESULT_OK, fillIn);
                     } catch (CanceledException ex) {}
@@ -94,16 +135,17 @@ final class GsmSMSDispatcher extends SMSDispatcher {
         acknowledgeLastIncomingSms(true, Intents.RESULT_SMS_HANDLED, null);
     }
 
-
     /** {@inheritDoc} */
-    protected int dispatchMessage(SmsMessageBase smsb) {
+    @Override
+    public int dispatchMessage(SmsMessageBase smsb) {
 
         // If sms is null, means there was a parsing error.
         if (smsb == null) {
+            Log.e(TAG, "dispatchMessage: message is null");
             return Intents.RESULT_SMS_GENERIC_ERROR;
         }
+
         SmsMessage sms = (SmsMessage) smsb;
-        boolean handled = false;
 
         if (sms.isTypeZero()) {
             // As per 3GPP TS 23.040 9.2.3.9, Type Zero messages should not be
@@ -112,17 +154,25 @@ final class GsmSMSDispatcher extends SMSDispatcher {
             return Intents.RESULT_SMS_HANDLED;
         }
 
+        if (mSmsReceiveDisabled) {
+            // Device doesn't support SMS service,
+            Log.d(TAG, "Received short message on device which doesn't support "
+                    + "SMS service. Ignored.");
+            return Intents.RESULT_SMS_HANDLED;
+        }
+
         // Special case the message waiting indicator messages
+        boolean handled = false;
         if (sms.isMWISetMessage()) {
-            mGsmPhone.updateMessageWaitingIndicator(true);
+            mPhone.setVoiceMessageWaiting(1, -1);  // line 1: unknown number of msgs waiting
             handled = sms.isMwiDontStore();
-            if (Config.LOGD) {
+            if (false) {
                 Log.d(TAG, "Received voice mail indicator set SMS shouldStore=" + !handled);
             }
         } else if (sms.isMWIClearMessage()) {
-            mGsmPhone.updateMessageWaitingIndicator(false);
+            mPhone.setVoiceMessageWaiting(1, 0);   // line 1: no msgs waiting
             handled = sms.isMwiDontStore();
-            if (Config.LOGD) {
+            if (false) {
                 Log.d(TAG, "Received voice mail indicator clear SMS shouldStore=" + !handled);
             }
         }
@@ -131,38 +181,18 @@ final class GsmSMSDispatcher extends SMSDispatcher {
             return Intents.RESULT_SMS_HANDLED;
         }
 
-        if (!mStorageAvailable && (sms.getMessageClass() != MessageClass.CLASS_0)) {
+        if (!mStorageMonitor.isStorageAvailable() &&
+                sms.getMessageClass() != MessageClass.CLASS_0) {
             // It's a storable message and there's no storage available.  Bail.
             // (See TS 23.038 for a description of class 0 messages.)
             return Intents.RESULT_SMS_OUT_OF_MEMORY;
         }
 
-        SmsHeader smsHeader = sms.getUserDataHeader();
-         // See if message is partial or port addressed.
-        if ((smsHeader == null) || (smsHeader.concatRef == null)) {
-            // Message is not partial (not part of concatenated sequence).
-            byte[][] pdus = new byte[1][];
-            pdus[0] = sms.getPdu();
-
-            if (smsHeader != null && smsHeader.portAddrs != null) {
-                if (smsHeader.portAddrs.destPort == SmsHeader.PORT_WAP_PUSH) {
-                    return mWapPush.dispatchWapPdu(sms.getUserData());
-                } else {
-                    // The message was sent to a port, so concoct a URI for it.
-                    dispatchPortAddressedPdus(pdus, smsHeader.portAddrs.destPort);
-                }
-            } else {
-                // Normal short and non-port-addressed message, dispatch it.
-                dispatchPdus(pdus);
-            }
-            return Activity.RESULT_OK;
-        } else {
-            // Process the message part.
-            return processMessagePart(sms, smsHeader.concatRef, smsHeader.portAddrs);
-        }
+        return dispatchNormalMessage(smsb);
     }
 
     /** {@inheritDoc} */
+    @Override
     protected void sendData(String destAddr, String scAddr, int destPort,
             byte[] data, PendingIntent sentIntent, PendingIntent deliveryIntent) {
         SmsMessage.SubmitPdu pdu = SmsMessage.getSubmitPdu(
@@ -171,6 +201,7 @@ final class GsmSMSDispatcher extends SMSDispatcher {
     }
 
     /** {@inheritDoc} */
+    @Override
     protected void sendText(String destAddr, String scAddr, String text,
             PendingIntent sentIntent, PendingIntent deliveryIntent) {
         SmsMessage.SubmitPdu pdu = SmsMessage.getSubmitPdu(
@@ -179,207 +210,42 @@ final class GsmSMSDispatcher extends SMSDispatcher {
     }
 
     /** {@inheritDoc} */
-    protected void sendMultipartText(String destinationAddress, String scAddress,
-            ArrayList<String> parts, ArrayList<PendingIntent> sentIntents,
-            ArrayList<PendingIntent> deliveryIntents) {
-
-        int refNumber = getNextConcatenatedRef() & 0x00FF;
-        int msgCount = parts.size();
-        int encoding = android.telephony.SmsMessage.ENCODING_UNKNOWN;
-
-        mRemainingMessages = msgCount;
-
-        TextEncodingDetails[] encodingForParts = new TextEncodingDetails[msgCount];
-        for (int i = 0; i < msgCount; i++) {
-            TextEncodingDetails details = SmsMessage.calculateLength(parts.get(i), false);
-            if (encoding != details.codeUnitSize
-                    && (encoding == android.telephony.SmsMessage.ENCODING_UNKNOWN
-                            || encoding == android.telephony.SmsMessage.ENCODING_7BIT)) {
-                encoding = details.codeUnitSize;
-            }
-            encodingForParts[i] = details;
-        }
-
-        for (int i = 0; i < msgCount; i++) {
-            SmsHeader.ConcatRef concatRef = new SmsHeader.ConcatRef();
-            concatRef.refNumber = refNumber;
-            concatRef.seqNumber = i + 1;  // 1-based sequence
-            concatRef.msgCount = msgCount;
-            // TODO: We currently set this to true since our messaging app will never
-            // send more than 255 parts (it converts the message to MMS well before that).
-            // However, we should support 3rd party messaging apps that might need 16-bit
-            // references
-            // Note:  It's not sufficient to just flip this bit to true; it will have
-            // ripple effects (several calculations assume 8-bit ref).
-            concatRef.isEightBits = true;
-            SmsHeader smsHeader = new SmsHeader();
-            smsHeader.concatRef = concatRef;
-            if (encoding == android.telephony.SmsMessage.ENCODING_7BIT) {
-                smsHeader.languageTable = encodingForParts[i].languageTable;
-                smsHeader.languageShiftTable = encodingForParts[i].languageShiftTable;
-            }
-
-            PendingIntent sentIntent = null;
-            if (sentIntents != null && sentIntents.size() > i) {
-                sentIntent = sentIntents.get(i);
-            }
-
-            PendingIntent deliveryIntent = null;
-            if (deliveryIntents != null && deliveryIntents.size() > i) {
-                deliveryIntent = deliveryIntents.get(i);
-            }
-
-            SmsMessage.SubmitPdu pdus = SmsMessage.getSubmitPdu(scAddress, destinationAddress,
-                    parts.get(i), deliveryIntent != null, SmsHeader.toByteArray(smsHeader),
-                    encoding, smsHeader.languageTable, smsHeader.languageShiftTable);
-
-            sendRawPdu(pdus.encodedScAddress, pdus.encodedMessage, sentIntent, deliveryIntent);
-        }
-    }
-
-    /**
-     * Send a multi-part text based SMS which already passed SMS control check.
-     *
-     * It is the working function for sendMultipartText().
-     *
-     * @param destinationAddress the address to send the message to
-     * @param scAddress is the service center address or null to use
-     *   the current default SMSC
-     * @param parts an <code>ArrayList</code> of strings that, in order,
-     *   comprise the original message
-     * @param sentIntents if not null, an <code>ArrayList</code> of
-     *   <code>PendingIntent</code>s (one for each message part) that is
-     *   broadcast when the corresponding message part has been sent.
-     *   The result code will be <code>Activity.RESULT_OK<code> for success,
-     *   or one of these errors:
-     *   <code>RESULT_ERROR_GENERIC_FAILURE</code>
-     *   <code>RESULT_ERROR_RADIO_OFF</code>
-     *   <code>RESULT_ERROR_NULL_PDU</code>.
-     * @param deliveryIntents if not null, an <code>ArrayList</code> of
-     *   <code>PendingIntent</code>s (one for each message part) that is
-     *   broadcast when the corresponding message part has been delivered
-     *   to the recipient.  The raw pdu of the status report is in the
-     *   extended data ("pdu").
-     */
-    private void sendMultipartTextWithPermit(String destinationAddress,
-            String scAddress, ArrayList<String> parts,
-            ArrayList<PendingIntent> sentIntents,
-            ArrayList<PendingIntent> deliveryIntents) {
-
-        // check if in service
-        int ss = mPhone.getServiceState().getState();
-        if (ss != ServiceState.STATE_IN_SERVICE) {
-            for (int i = 0, count = parts.size(); i < count; i++) {
-                PendingIntent sentIntent = null;
-                if (sentIntents != null && sentIntents.size() > i) {
-                    sentIntent = sentIntents.get(i);
-                }
-                SmsTracker tracker = SmsTrackerFactory(null, sentIntent, null);
-                handleNotInService(ss, tracker);
-            }
-            return;
-        }
-
-        int refNumber = getNextConcatenatedRef() & 0x00FF;
-        int msgCount = parts.size();
-        int encoding = android.telephony.SmsMessage.ENCODING_UNKNOWN;
-
-        mRemainingMessages = msgCount;
-
-        TextEncodingDetails[] encodingForParts = new TextEncodingDetails[msgCount];
-        for (int i = 0; i < msgCount; i++) {
-            TextEncodingDetails details = SmsMessage.calculateLength(parts.get(i), false);
-            if (encoding != details.codeUnitSize
-                    && (encoding == android.telephony.SmsMessage.ENCODING_UNKNOWN
-                            || encoding == android.telephony.SmsMessage.ENCODING_7BIT)) {
-                encoding = details.codeUnitSize;
-            }
-            encodingForParts[i] = details;
-        }
-
-        for (int i = 0; i < msgCount; i++) {
-            SmsHeader.ConcatRef concatRef = new SmsHeader.ConcatRef();
-            concatRef.refNumber = refNumber;
-            concatRef.seqNumber = i + 1;  // 1-based sequence
-            concatRef.msgCount = msgCount;
-            concatRef.isEightBits = false;
-            SmsHeader smsHeader = new SmsHeader();
-            smsHeader.concatRef = concatRef;
-            if (encoding == android.telephony.SmsMessage.ENCODING_7BIT) {
-                smsHeader.languageTable = encodingForParts[i].languageTable;
-                smsHeader.languageShiftTable = encodingForParts[i].languageShiftTable;
-            }
-
-            PendingIntent sentIntent = null;
-            if (sentIntents != null && sentIntents.size() > i) {
-                sentIntent = sentIntents.get(i);
-            }
-
-            PendingIntent deliveryIntent = null;
-            if (deliveryIntents != null && deliveryIntents.size() > i) {
-                deliveryIntent = deliveryIntents.get(i);
-            }
-
-            SmsMessage.SubmitPdu pdus = SmsMessage.getSubmitPdu(scAddress, destinationAddress,
-                    parts.get(i), deliveryIntent != null, SmsHeader.toByteArray(smsHeader),
-                    encoding, smsHeader.languageTable, smsHeader.languageShiftTable);
-
-            HashMap<String, Object> map = new HashMap<String, Object>();
-            map.put("smsc", pdus.encodedScAddress);
-            map.put("pdu", pdus.encodedMessage);
-
-            SmsTracker tracker = SmsTrackerFactory(map, sentIntent, deliveryIntent);
-            sendSms(tracker);
-        }
+    @Override
+    protected TextEncodingDetails calculateLength(CharSequence messageBody,
+            boolean use7bitOnly) {
+        return SmsMessage.calculateLength(messageBody, use7bitOnly);
     }
 
     /** {@inheritDoc} */
+    @Override
+    protected void sendNewSubmitPdu(String destinationAddress, String scAddress,
+            String message, SmsHeader smsHeader, int encoding,
+            PendingIntent sentIntent, PendingIntent deliveryIntent, boolean lastPart) {
+        SmsMessage.SubmitPdu pdu = SmsMessage.getSubmitPdu(scAddress, destinationAddress,
+                message, deliveryIntent != null, SmsHeader.toByteArray(smsHeader),
+                encoding, smsHeader.languageTable, smsHeader.languageShiftTable);
+        sendRawPdu(pdu.encodedScAddress, pdu.encodedMessage, sentIntent, deliveryIntent);
+    }
+
+    /** {@inheritDoc} */
+    @Override
     protected void sendSms(SmsTracker tracker) {
-        HashMap map = tracker.mData;
+        HashMap<String, Object> map = tracker.mData;
 
         byte smsc[] = (byte[]) map.get("smsc");
         byte pdu[] = (byte[]) map.get("pdu");
 
         Message reply = obtainMessage(EVENT_SEND_SMS_COMPLETE, tracker);
-        mCm.sendSMS(IccUtils.bytesToHexString(smsc),
-                IccUtils.bytesToHexString(pdu), reply);
-    }
-
-    /**
-     * Send the multi-part SMS based on multipart Sms tracker
-     *
-     * @param tracker holds the multipart Sms tracker ready to be sent
-     */
-    @Override
-    protected void sendMultipartSms (SmsTracker tracker) {
-        ArrayList<String> parts;
-        ArrayList<PendingIntent> sentIntents;
-        ArrayList<PendingIntent> deliveryIntents;
-
-        HashMap map = tracker.mData;
-
-        String destinationAddress = (String) map.get("destination");
-        String scAddress = (String) map.get("scaddress");
-
-        parts = (ArrayList<String>) map.get("parts");
-        sentIntents = (ArrayList<PendingIntent>) map.get("sentIntents");
-        deliveryIntents = (ArrayList<PendingIntent>) map.get("deliveryIntents");
-
-        sendMultipartTextWithPermit(destinationAddress,
-                scAddress, parts, sentIntents, deliveryIntents);
-
+        mCm.sendSMS(IccUtils.bytesToHexString(smsc), IccUtils.bytesToHexString(pdu), reply);
     }
 
     /** {@inheritDoc} */
     @Override
-    protected void acknowledgeLastIncomingSms(boolean success, int result, Message response){
-        // FIXME unit test leaves cm == null. this should change
-        if (mCm != null) {
-            mCm.acknowledgeLastIncomingGsmSms(success, resultToCause(result), response);
-        }
+    protected void acknowledgeLastIncomingSms(boolean success, int result, Message response) {
+        mCm.acknowledgeLastIncomingGsmSms(success, resultToCause(result), response);
     }
 
-    private int resultToCause(int rc) {
+    private static int resultToCause(int rc) {
         switch (rc) {
             case Activity.RESULT_OK:
             case Intents.RESULT_SMS_HANDLED:
@@ -473,13 +339,15 @@ final class GsmSMSDispatcher extends SMSDispatcher {
     private final HashMap<SmsCbConcatInfo, byte[][]> mSmsCbPageMap =
             new HashMap<SmsCbConcatInfo, byte[][]>();
 
-    @Override
-    protected void handleBroadcastSms(AsyncResult ar) {
+    /**
+     * Handle 3GPP format SMS-CB message.
+     * @param ar the AsyncResult containing the received PDUs
+     */
+    private void handleBroadcastSms(AsyncResult ar) {
         try {
-            byte[][] pdus = null;
             byte[] receivedPdu = (byte[])ar.result;
 
-            if (Config.LOGD) {
+            if (false) {
                 for (int i = 0; i < receivedPdu.length; i += 8) {
                     StringBuilder sb = new StringBuilder("SMS CB pdu data: ");
                     for (int j = i; j < i + 8 && j < receivedPdu.length; j++) {
@@ -495,10 +363,11 @@ final class GsmSMSDispatcher extends SMSDispatcher {
 
             SmsCbHeader header = new SmsCbHeader(receivedPdu);
             String plmn = SystemProperties.get(TelephonyProperties.PROPERTY_OPERATOR_NUMERIC);
-            GsmCellLocation cellLocation = (GsmCellLocation)mGsmPhone.getCellLocation();
+            GsmCellLocation cellLocation = (GsmCellLocation) mPhone.getCellLocation();
             int lac = cellLocation.getLac();
             int cid = cellLocation.getCid();
 
+            byte[][] pdus;
             if (header.nrOfPages > 1) {
                 // Multi-page message
                 SmsCbConcatInfo concatInfo = new SmsCbConcatInfo(header, plmn, lac, cid);
@@ -551,5 +420,4 @@ final class GsmSMSDispatcher extends SMSDispatcher {
             Log.e(TAG, "Error in decoding SMS CB pdu", e);
         }
     }
-
 }

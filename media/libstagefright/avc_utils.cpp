@@ -14,6 +14,10 @@
  * limitations under the License.
  */
 
+//#define LOG_NDEBUG 0
+#define LOG_TAG "avc_utils"
+#include <utils/Log.h>
+
 #include "include/avc_utils.h"
 
 #include <media/stagefright/foundation/ABitReader.h>
@@ -184,7 +188,7 @@ status_t getNextNALUnit(
     }
 
     size_t endOffset = offset - 2;
-    while (data[endOffset - 1] == 0x00) {
+    while (endOffset > startOffset + 1 && data[endOffset - 1] == 0x00) {
         --endOffset;
     }
 
@@ -218,6 +222,28 @@ static sp<ABuffer> FindNAL(
     return NULL;
 }
 
+const char *AVCProfileToString(uint8_t profile) {
+    switch (profile) {
+        case kAVCProfileBaseline:
+            return "Baseline";
+        case kAVCProfileMain:
+            return "Main";
+        case kAVCProfileExtended:
+            return "Extended";
+        case kAVCProfileHigh:
+            return "High";
+        case kAVCProfileHigh10:
+            return "High 10";
+        case kAVCProfileHigh422:
+            return "High 422";
+        case kAVCProfileHigh444:
+            return "High 444";
+        case kAVCProfileCAVLC444Intra:
+            return "CAVLC 444 Intra";
+        default:   return "Unknown";
+    }
+}
+
 sp<MetaData> MakeAVCCodecSpecificData(const sp<ABuffer> &accessUnit) {
     const uint8_t *data = accessUnit->data();
     size_t size = accessUnit->size();
@@ -244,6 +270,10 @@ sp<MetaData> MakeAVCCodecSpecificData(const sp<ABuffer> &accessUnit) {
 
     *out++ = 0x01;  // configurationVersion
     memcpy(out, seqParamSet->data() + 1, 3);  // profile/level...
+
+    uint8_t profile = out[0];
+    uint8_t level = out[2];
+
     out += 3;
     *out++ = (0x3f << 2) | 1;  // lengthSize == 2 bytes
     *out++ = 0xe0 | 1;
@@ -267,11 +297,12 @@ sp<MetaData> MakeAVCCodecSpecificData(const sp<ABuffer> &accessUnit) {
     sp<MetaData> meta = new MetaData;
     meta->setCString(kKeyMIMEType, MEDIA_MIMETYPE_VIDEO_AVC);
 
-    meta->setData(kKeyAVCC, 0, csd->data(), csd->size());
+    meta->setData(kKeyAVCC, kTypeAVCC, csd->data(), csd->size());
     meta->setInt32(kKeyWidth, width);
     meta->setInt32(kKeyHeight, height);
 
-    LOGI("found AVC codec config (%d x %d)", width, height);
+    LOGI("found AVC codec config (%d x %d, %s-profile level %d.%d)",
+         width, height, AVCProfileToString(profile), level / 10, level % 10);
 
     return meta;
 }
@@ -296,6 +327,306 @@ bool IsIDR(const sp<ABuffer> &buffer) {
     }
 
     return foundIDR;
+}
+
+bool IsAVCReferenceFrame(const sp<ABuffer> &accessUnit) {
+    const uint8_t *data = accessUnit->data();
+    size_t size = accessUnit->size();
+
+    const uint8_t *nalStart;
+    size_t nalSize;
+    while (getNextNALUnit(&data, &size, &nalStart, &nalSize, true) == OK) {
+        CHECK_GT(nalSize, 0u);
+
+        unsigned nalType = nalStart[0] & 0x1f;
+
+        if (nalType == 5) {
+            return true;
+        } else if (nalType == 1) {
+            unsigned nal_ref_idc = (nalStart[0] >> 5) & 3;
+            return nal_ref_idc != 0;
+        }
+    }
+
+    return true;
+}
+
+sp<MetaData> MakeAACCodecSpecificData(
+        unsigned profile, unsigned sampling_freq_index,
+        unsigned channel_configuration) {
+    sp<MetaData> meta = new MetaData;
+    meta->setCString(kKeyMIMEType, MEDIA_MIMETYPE_AUDIO_AAC);
+
+    CHECK_LE(sampling_freq_index, 11u);
+    static const int32_t kSamplingFreq[] = {
+        96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050,
+        16000, 12000, 11025, 8000
+    };
+    meta->setInt32(kKeySampleRate, kSamplingFreq[sampling_freq_index]);
+    meta->setInt32(kKeyChannelCount, channel_configuration);
+
+    static const uint8_t kStaticESDS[] = {
+        0x03, 22,
+        0x00, 0x00,     // ES_ID
+        0x00,           // streamDependenceFlag, URL_Flag, OCRstreamFlag
+
+        0x04, 17,
+        0x40,                       // Audio ISO/IEC 14496-3
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+
+        0x05, 2,
+        // AudioSpecificInfo follows
+
+        // oooo offf fccc c000
+        // o - audioObjectType
+        // f - samplingFreqIndex
+        // c - channelConfig
+    };
+    sp<ABuffer> csd = new ABuffer(sizeof(kStaticESDS) + 2);
+    memcpy(csd->data(), kStaticESDS, sizeof(kStaticESDS));
+
+    csd->data()[sizeof(kStaticESDS)] =
+        ((profile + 1) << 3) | (sampling_freq_index >> 1);
+
+    csd->data()[sizeof(kStaticESDS) + 1] =
+        ((sampling_freq_index << 7) & 0x80) | (channel_configuration << 3);
+
+    meta->setData(kKeyESDS, 0, csd->data(), csd->size());
+
+    return meta;
+}
+
+bool ExtractDimensionsFromVOLHeader(
+        const uint8_t *data, size_t size, int32_t *width, int32_t *height) {
+    ABitReader br(&data[4], size - 4);
+    br.skipBits(1);  // random_accessible_vol
+    unsigned video_object_type_indication = br.getBits(8);
+
+    CHECK_NE(video_object_type_indication,
+             0x21u /* Fine Granularity Scalable */);
+
+    unsigned video_object_layer_verid;
+    unsigned video_object_layer_priority;
+    if (br.getBits(1)) {
+        video_object_layer_verid = br.getBits(4);
+        video_object_layer_priority = br.getBits(3);
+    }
+    unsigned aspect_ratio_info = br.getBits(4);
+    if (aspect_ratio_info == 0x0f /* extended PAR */) {
+        br.skipBits(8);  // par_width
+        br.skipBits(8);  // par_height
+    }
+    if (br.getBits(1)) {  // vol_control_parameters
+        br.skipBits(2);  // chroma_format
+        br.skipBits(1);  // low_delay
+        if (br.getBits(1)) {  // vbv_parameters
+            br.skipBits(15);  // first_half_bit_rate
+            CHECK(br.getBits(1));  // marker_bit
+            br.skipBits(15);  // latter_half_bit_rate
+            CHECK(br.getBits(1));  // marker_bit
+            br.skipBits(15);  // first_half_vbv_buffer_size
+            CHECK(br.getBits(1));  // marker_bit
+            br.skipBits(3);  // latter_half_vbv_buffer_size
+            br.skipBits(11);  // first_half_vbv_occupancy
+            CHECK(br.getBits(1));  // marker_bit
+            br.skipBits(15);  // latter_half_vbv_occupancy
+            CHECK(br.getBits(1));  // marker_bit
+        }
+    }
+    unsigned video_object_layer_shape = br.getBits(2);
+    CHECK_EQ(video_object_layer_shape, 0x00u /* rectangular */);
+
+    CHECK(br.getBits(1));  // marker_bit
+    unsigned vop_time_increment_resolution = br.getBits(16);
+    CHECK(br.getBits(1));  // marker_bit
+
+    if (br.getBits(1)) {  // fixed_vop_rate
+        // range [0..vop_time_increment_resolution)
+
+        // vop_time_increment_resolution
+        // 2 => 0..1, 1 bit
+        // 3 => 0..2, 2 bits
+        // 4 => 0..3, 2 bits
+        // 5 => 0..4, 3 bits
+        // ...
+
+        CHECK_GT(vop_time_increment_resolution, 0u);
+        --vop_time_increment_resolution;
+
+        unsigned numBits = 0;
+        while (vop_time_increment_resolution > 0) {
+            ++numBits;
+            vop_time_increment_resolution >>= 1;
+        }
+
+        br.skipBits(numBits);  // fixed_vop_time_increment
+    }
+
+    CHECK(br.getBits(1));  // marker_bit
+    unsigned video_object_layer_width = br.getBits(13);
+    CHECK(br.getBits(1));  // marker_bit
+    unsigned video_object_layer_height = br.getBits(13);
+    CHECK(br.getBits(1));  // marker_bit
+
+    unsigned interlaced = br.getBits(1);
+
+    *width = video_object_layer_width;
+    *height = video_object_layer_height;
+
+    return true;
+}
+
+bool GetMPEGAudioFrameSize(
+        uint32_t header, size_t *frame_size,
+        int *out_sampling_rate, int *out_channels,
+        int *out_bitrate, int *out_num_samples) {
+    *frame_size = 0;
+
+    if (out_sampling_rate) {
+        *out_sampling_rate = 0;
+    }
+
+    if (out_channels) {
+        *out_channels = 0;
+    }
+
+    if (out_bitrate) {
+        *out_bitrate = 0;
+    }
+
+    if (out_num_samples) {
+        *out_num_samples = 1152;
+    }
+
+    if ((header & 0xffe00000) != 0xffe00000) {
+        return false;
+    }
+
+    unsigned version = (header >> 19) & 3;
+
+    if (version == 0x01) {
+        return false;
+    }
+
+    unsigned layer = (header >> 17) & 3;
+
+    if (layer == 0x00) {
+        return false;
+    }
+
+    unsigned protection = (header >> 16) & 1;
+
+    unsigned bitrate_index = (header >> 12) & 0x0f;
+
+    if (bitrate_index == 0 || bitrate_index == 0x0f) {
+        // Disallow "free" bitrate.
+        return false;
+    }
+
+    unsigned sampling_rate_index = (header >> 10) & 3;
+
+    if (sampling_rate_index == 3) {
+        return false;
+    }
+
+    static const int kSamplingRateV1[] = { 44100, 48000, 32000 };
+    int sampling_rate = kSamplingRateV1[sampling_rate_index];
+    if (version == 2 /* V2 */) {
+        sampling_rate /= 2;
+    } else if (version == 0 /* V2.5 */) {
+        sampling_rate /= 4;
+    }
+
+    unsigned padding = (header >> 9) & 1;
+
+    if (layer == 3) {
+        // layer I
+
+        static const int kBitrateV1[] = {
+            32, 64, 96, 128, 160, 192, 224, 256,
+            288, 320, 352, 384, 416, 448
+        };
+
+        static const int kBitrateV2[] = {
+            32, 48, 56, 64, 80, 96, 112, 128,
+            144, 160, 176, 192, 224, 256
+        };
+
+        int bitrate =
+            (version == 3 /* V1 */)
+                ? kBitrateV1[bitrate_index - 1]
+                : kBitrateV2[bitrate_index - 1];
+
+        if (out_bitrate) {
+            *out_bitrate = bitrate;
+        }
+
+        *frame_size = (12000 * bitrate / sampling_rate + padding) * 4;
+
+        if (out_num_samples) {
+            *out_num_samples = 384;
+        }
+    } else {
+        // layer II or III
+
+        static const int kBitrateV1L2[] = {
+            32, 48, 56, 64, 80, 96, 112, 128,
+            160, 192, 224, 256, 320, 384
+        };
+
+        static const int kBitrateV1L3[] = {
+            32, 40, 48, 56, 64, 80, 96, 112,
+            128, 160, 192, 224, 256, 320
+        };
+
+        static const int kBitrateV2[] = {
+            8, 16, 24, 32, 40, 48, 56, 64,
+            80, 96, 112, 128, 144, 160
+        };
+
+        int bitrate;
+        if (version == 3 /* V1 */) {
+            bitrate = (layer == 2 /* L2 */)
+                ? kBitrateV1L2[bitrate_index - 1]
+                : kBitrateV1L3[bitrate_index - 1];
+
+            if (out_num_samples) {
+                *out_num_samples = 1152;
+            }
+        } else {
+            // V2 (or 2.5)
+
+            bitrate = kBitrateV2[bitrate_index - 1];
+            if (out_num_samples) {
+                *out_num_samples = 576;
+            }
+        }
+
+        if (out_bitrate) {
+            *out_bitrate = bitrate;
+        }
+
+        if (version == 3 /* V1 */) {
+            *frame_size = 144000 * bitrate / sampling_rate + padding;
+        } else {
+            // V2 or V2.5
+            *frame_size = 72000 * bitrate / sampling_rate + padding;
+        }
+    }
+
+    if (out_sampling_rate) {
+        *out_sampling_rate = sampling_rate;
+    }
+
+    if (out_channels) {
+        int channel_mode = (header >> 6) & 3;
+
+        *out_channels = (channel_mode == 3) ? 1 : 2;
+    }
+
+    return true;
 }
 
 }  // namespace android

@@ -16,8 +16,11 @@
 
 package android.media;
 
+import android.app.PendingIntent;
 import android.content.ComponentName;
 import android.media.IAudioFocusDispatcher;
+import android.media.IRemoteControlClient;
+import android.media.IRemoteControlDisplay;
 
 /**
  * {@hide}
@@ -35,11 +38,15 @@ interface IAudioService {
     void setStreamSolo(int streamType, boolean state, IBinder cb);
    	
     void setStreamMute(int streamType, boolean state, IBinder cb);
-    
+
+    boolean isStreamMute(int streamType);
+
     int getStreamVolume(int streamType);
     
     int getStreamMaxVolume(int streamType);
     
+    int getLastAudibleStreamVolume(int streamType);
+
     void setRingerMode(int ringerMode);
     
     int getRingerMode();
@@ -73,15 +80,23 @@ interface IAudioService {
     boolean isBluetoothScoOn();
 
     int requestAudioFocus(int mainStreamType, int durationHint, IBinder cb, IAudioFocusDispatcher l,
-            String clientId);
+            String clientId, String callingPackageName);
 
     int abandonAudioFocus(IAudioFocusDispatcher l, String clientId);
     
     void unregisterAudioFocusClient(String clientId);
 
-    void registerMediaButtonEventReceiver(in ComponentName eventReceiver);
+    oneway void registerMediaButtonIntent(in PendingIntent pi, in ComponentName c);
+    oneway void unregisterMediaButtonIntent(in PendingIntent pi,  in ComponentName c);
 
-    void unregisterMediaButtonEventReceiver(in ComponentName eventReceiver);
+    oneway void registerRemoteControlClient(in PendingIntent mediaIntent,
+           in IRemoteControlClient rcClient, in String callingPackageName);
+    oneway void unregisterRemoteControlClient(in PendingIntent mediaIntent,
+           in IRemoteControlClient rcClient);
+
+    oneway void   registerRemoteControlDisplay(in IRemoteControlDisplay rcd);
+    oneway void unregisterRemoteControlDisplay(in IRemoteControlDisplay rcd);
+    oneway void remoteControlDisplayUsesBitmapSize(in IRemoteControlDisplay rcd, int w, int h);
 
     void startBluetoothSco(IBinder cb);
 

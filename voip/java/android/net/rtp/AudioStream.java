@@ -27,17 +27,20 @@ import java.net.SocketException;
  * configured {@link AudioCodec}. On the other side, An {@link AudioGroup}
  * represents a local endpoint which mixes all the AudioStreams and optionally
  * interacts with the speaker and the microphone at the same time. The simplest
- * usage includes one for each endpoints. For other combinations, users should
- * be aware of the limitations described in {@link AudioGroup}.
+ * usage includes one for each endpoints. For other combinations, developers
+ * should be aware of the limitations described in {@link AudioGroup}.
  *
  * <p>An AudioStream becomes busy when it joins an AudioGroup. In this case most
  * of the setter methods are disabled. This is designed to ease the task of
  * managing native resources. One can always make an AudioStream leave its
  * AudioGroup by calling {@link #join(AudioGroup)} with {@code null} and put it
- * back after the modification is done.
+ * back after the modification is done.</p>
  *
+ * <p class="note">Using this class requires
+ * {@link android.Manifest.permission#INTERNET} permission.</p>
+ *
+ * @see RtpStream
  * @see AudioGroup
- * @hide
  */
 public class AudioStream extends RtpStream {
     private AudioCodec mCodec;
@@ -82,16 +85,18 @@ public class AudioStream extends RtpStream {
      * @see AudioGroup
      */
     public void join(AudioGroup group) {
-        if (mGroup == group) {
-            return;
-        }
-        if (mGroup != null) {
-            mGroup.remove(this);
-            mGroup = null;
-        }
-        if (group != null) {
-            group.add(this, mCodec, mDtmfType);
-            mGroup = group;
+        synchronized (this) {
+            if (mGroup == group) {
+                return;
+            }
+            if (mGroup != null) {
+                mGroup.remove(this);
+                mGroup = null;
+            }
+            if (group != null) {
+                group.add(this, mCodec, mDtmfType);
+                mGroup = group;
+            }
         }
     }
 

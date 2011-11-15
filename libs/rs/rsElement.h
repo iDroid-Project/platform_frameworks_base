@@ -25,13 +25,21 @@
 namespace android {
 namespace renderscript {
 
-
 // An element is a group of Components that occupies one cell in a structure.
-class Element : public ObjectBase
-{
+class Element : public ObjectBase {
 public:
-    ~Element();
-
+    class Builder {
+    public:
+        Builder();
+        void add(const Element *e, const char *nameStr, uint32_t arraySize);
+        ObjectBaseRef<const Element> create(Context *rsc);
+    private:
+        Vector<ObjectBaseRef<const Element> > mBuilderElementRefs;
+        Vector<const Element *> mBuilderElements;
+        Vector<const char*> mBuilderNameStrings;
+        Vector<size_t> mBuilderNameLengths;
+        Vector<uint32_t> mBuilderArrays;
+    };
     uint32_t getGLType() const;
     uint32_t getGLFormat() const;
 
@@ -40,30 +48,61 @@ public:
         return (getSizeBits() + 7) >> 3;
     }
 
-    size_t getFieldOffsetBits(uint32_t componentNumber) const;
+    size_t getFieldOffsetBits(uint32_t componentNumber) const {
+        return mFields[componentNumber].offsetBits;
+    }
     size_t getFieldOffsetBytes(uint32_t componentNumber) const {
-        return (getFieldOffsetBits(componentNumber) + 7) >> 3;
+        return mFields[componentNumber].offsetBits >> 3;
     }
 
     uint32_t getFieldCount() const {return mFieldCount;}
     const Element * getField(uint32_t idx) const {return mFields[idx].e.get();}
     const char * getFieldName(uint32_t idx) const {return mFields[idx].name.string();}
+    uint32_t getFieldArraySize(uint32_t idx) const {return mFields[idx].arraySize;}
 
     const Component & getComponent() const {return mComponent;}
     RsDataType getType() const {return mComponent.getType();}
     RsDataKind getKind() const {return mComponent.getKind();}
     uint32_t getBits() const {return mBits;}
 
-    String8 getCType(uint32_t indent=0) const;
-    String8 getCStructBody(uint32_t indent=0) const;
-    String8 getGLSLType(uint32_t indent=0) const;
-
     void dumpLOGV(const char *prefix) const;
+    virtual void serialize(OStream *stream) const;
+    virtual RsA3DClassID getClassId() const { return RS_A3D_CLASS_ID_ELEMENT; }
+    static Element *createFromStream(Context *rsc, IStream *stream);
 
-    static const Element * create(Context *rsc, RsDataType dt, RsDataKind dk,
-                            bool isNorm, uint32_t vecSize);
-    static const Element * create(Context *rsc, size_t count, const Element **,
-                            const char **, const size_t * lengths);
+    static ObjectBaseRef<const Element> createRef(Context *rsc,
+                                                  RsDataType dt,
+                                                  RsDataKind dk,
+                                                  bool isNorm,
+                                                  uint32_t vecSize);
+    static ObjectBaseRef<const Element> createRef(Context *rsc, size_t count,
+                                                  const Element **,
+                                                  const char **,
+                                                  const size_t * lengths,
+                                                  const uint32_t *asin);
+
+    static const Element* create(Context *rsc,
+                                 RsDataType dt,
+                                 RsDataKind dk,
+                                 bool isNorm,
+                                 uint32_t vecSize) {
+        ObjectBaseRef<const Element> elem = createRef(rsc, dt, dk, isNorm, vecSize);
+        elem->incUserRef();
+        return elem.get();
+    }
+    static const Element* create(Context *rsc, size_t count,
+                                 const Element **ein,
+                                 const char **nin,
+                                 const size_t * lengths,
+                                 const uint32_t *asin) {
+        ObjectBaseRef<const Element> elem = createRef(rsc, count, ein, nin, lengths, asin);
+        elem->incUserRef();
+        return elem.get();
+    }
+
+    void incRefs(const void *) const;
+    void decRefs(const void *) const;
+    bool getHasReferences() const {return mHasReference;}
 
 protected:
     // deallocate any components that are part of this element.
@@ -72,15 +111,23 @@ protected:
     typedef struct {
         String8 name;
         ObjectBaseRef<const Element> e;
+        uint32_t offsetBits;
+        uint32_t arraySize;
     } ElementField_t;
     ElementField_t *mFields;
     size_t mFieldCount;
+    bool mHasReference;
 
 
+    virtual ~Element();
     Element(Context *);
 
     Component mComponent;
     uint32_t mBits;
+
+    void compute();
+
+    virtual void preDestroy() const;
 };
 
 
@@ -90,7 +137,7 @@ public:
     ~ElementState();
 
     // Cache of all existing elements.
-    Vector<const Element *> mElements;
+    Vector<Element *> mElements;
 };
 
 

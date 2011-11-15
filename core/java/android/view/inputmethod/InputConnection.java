@@ -26,8 +26,9 @@ import android.view.KeyEvent;
  * is used to perform such things as reading text around the cursor,
  * committing text to the text box, and sending raw key events to the application.
  * 
- * <p>Implementations of this interface should generally be done by
- * subclassing {@link BaseInputConnection}.
+ * <p>Applications should never directly implement this interface, but instead
+ * subclass from {@link BaseInputConnection}.  This will ensure that the
+ * application does not break when new methods are added to the interface.
  */
 public interface InputConnection {
     /**
@@ -230,6 +231,16 @@ public interface InputConnection {
      * valid.
      */
     public boolean commitCompletion(CompletionInfo text);
+
+    /**
+     * Commit a correction automatically performed on the raw user's input. A typical example would
+     * be to correct typos using a dictionary.
+     *
+     * @param correctionInfo Detailed information about the correction.
+     *
+     * @return True on success, false if the input connection is no longer valid.
+     */
+    public boolean commitCorrection(CorrectionInfo correctionInfo);
 
     /**
      * Set the selection of the text editor.  To set the cursor position,

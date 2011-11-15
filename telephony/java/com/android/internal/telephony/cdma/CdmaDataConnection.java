@@ -20,9 +20,9 @@ import android.os.Message;
 import android.util.Log;
 
 import com.android.internal.telephony.DataConnection;
-import com.android.internal.telephony.gsm.ApnSetting;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.RILConstants;
+import com.android.internal.telephony.RetryManager;
 
 /**
  * {@hide}
@@ -31,29 +31,25 @@ public class CdmaDataConnection extends DataConnection {
 
     private static final String LOG_TAG = "CDMA";
 
-    /** Fail cause of last Data Call activate from RIL_LastDataCallActivateFailCause */
-    private final static int PS_NET_DOWN_REASON_OPERATOR_DETERMINED_BARRING         = 8;
-    private final static int PS_NET_DOWN_REASON_AUTH_FAILED                         = 29;
-    private final static int PS_NET_DOWN_REASON_OPTION_NOT_SUPPORTED                = 32;
-    private final static int PS_NET_DOWN_REASON_OPTION_UNSUBSCRIBED                 = 33;
-
-
     // ***** Constructor
-    private CdmaDataConnection(CDMAPhone phone, String name) {
-        super(phone, name);
+    private CdmaDataConnection(CDMAPhone phone, String name, int id, RetryManager rm) {
+        super(phone, name, id, rm);
     }
 
     /**
      * Create the connection object
      *
-     * @param phone
+     * @param phone the Phone
+     * @param id the connection id
+     * @param rm the RetryManager
      * @return CdmaDataConnection that was created.
      */
-    static CdmaDataConnection makeDataConnection(CDMAPhone phone) {
+    static CdmaDataConnection makeDataConnection(CDMAPhone phone, int id, RetryManager rm) {
         synchronized (mCountLock) {
             mCount += 1;
         }
-        CdmaDataConnection cdmaDc = new CdmaDataConnection(phone, "CdmaDataConnection-" + mCount);
+        CdmaDataConnection cdmaDc = new CdmaDataConnection(phone, "CdmaDC-" + mCount,
+                id, rm);
         cdmaDc.start();
         if (DBG) cdmaDc.log("Made " + cdmaDc.getName());
         return cdmaDc;
@@ -70,6 +66,7 @@ public class CdmaDataConnection extends DataConnection {
     protected void onConnect(ConnectionParams cp) {
         if (DBG) log("CdmaDataConnection Connecting...");
 
+        mApn = cp.apn;
         createTime = -1;
         lastFailTime = -1;
         lastFailCause = FailCause.NONE;
@@ -86,7 +83,7 @@ public class CdmaDataConnection extends DataConnection {
         Message msg = obtainMessage(EVENT_SETUP_DATA_CONNECTION_DONE, cp);
         msg.obj = cp;
         phone.mCM.setupDataCall(
-                Integer.toString(RILConstants.SETUP_DATA_TECH_CDMA),
+                Integer.toString(getRadioTechnology(RILConstants.SETUP_DATA_TECH_CDMA)),
                 Integer.toString(dataProfile),
                 null, null, null,
                 Integer.toString(RILConstants.SETUP_DATA_AUTH_PAP_CHAP),
@@ -100,33 +97,10 @@ public class CdmaDataConnection extends DataConnection {
     }
 
     @Override
-    protected FailCause getFailCauseFromRequest(int rilCause) {
-        FailCause cause;
-
-        switch (rilCause) {
-            case PS_NET_DOWN_REASON_OPERATOR_DETERMINED_BARRING:
-                cause = FailCause.OPERATOR_BARRED;
-                break;
-            case PS_NET_DOWN_REASON_AUTH_FAILED:
-                cause = FailCause.USER_AUTHENTICATION;
-                break;
-            case PS_NET_DOWN_REASON_OPTION_NOT_SUPPORTED:
-                cause = FailCause.SERVICE_OPTION_NOT_SUPPORTED;
-                break;
-            case PS_NET_DOWN_REASON_OPTION_UNSUBSCRIBED:
-                cause = FailCause.SERVICE_OPTION_NOT_SUBSCRIBED;
-                break;
-            default:
-                cause = FailCause.UNKNOWN;
-        }
-        return cause;
-    }
-
-    @Override
     protected boolean isDnsOk(String[] domainNameServers) {
-        if ((NULL_IP.equals(domainNameServers[0])
+        if (NULL_IP.equals(domainNameServers[0])
                 && NULL_IP.equals(domainNameServers[1])
-                && !((CDMAPhone) phone).isDnsCheckDisabled())) {
+                && !phone.isDnsCheckDisabled()) {
             return false;
         } else {
             return true;

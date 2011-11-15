@@ -17,10 +17,13 @@
 package com.android.internal.telephony;
 
 import android.content.res.Resources;
+import android.text.TextUtils;
 import android.util.SparseIntArray;
 
 import android.util.Log;
 
+import java.nio.ByteBuffer;
+import java.nio.charset.Charset;
 import com.android.internal.R;
 
 import java.util.ArrayList;
@@ -57,25 +60,25 @@ public class GsmAlphabet {
      * all combinations of header elements below will have at least one free bit
      * when padding to the nearest septet boundary.
      */
-    private static final int UDH_SEPTET_COST_LENGTH = 1;
+    public static final int UDH_SEPTET_COST_LENGTH = 1;
 
     /**
      * Using a non-default language locking shift table OR single shift table
      * requires a user data header of 3 octets, or 4 septets, plus UDH length.
      */
-    private static final int UDH_SEPTET_COST_ONE_SHIFT_TABLE = 4;
+    public static final int UDH_SEPTET_COST_ONE_SHIFT_TABLE = 4;
 
     /**
      * Using a non-default language locking shift table AND single shift table
      * requires a user data header of 6 octets, or 7 septets, plus UDH length.
      */
-    private static final int UDH_SEPTET_COST_TWO_SHIFT_TABLES = 7;
+    public static final int UDH_SEPTET_COST_TWO_SHIFT_TABLES = 7;
 
     /**
      * Multi-part messages require a user data header of 5 octets, or 6 septets,
      * plus UDH length.
      */
-    private static final int UDH_SEPTET_COST_CONCATENATED_MESSAGE = 6;
+    public static final int UDH_SEPTET_COST_CONCATENATED_MESSAGE = 6;
 
     /**
      * Converts a char to a GSM 7 bit table index.
@@ -199,6 +202,24 @@ public class GsmAlphabet {
         } else {
             return ' ';     // out of range
         }
+    }
+
+    /**
+     * Converts a String into a byte array containing the 7-bit packed
+     * GSM Alphabet representation of the string. If a header is provided,
+     * this is included in the returned byte array and padded to a septet
+     * boundary. This method is used by OEM code.
+     *
+     * @param data The text string to encode.
+     * @param header Optional header (including length byte) that precedes
+     * the encoded data, padded to septet boundary.
+     * @return Byte array containing header and encoded data.
+     * @throws EncodeException if String is too large to encode
+     * @see #stringToGsm7BitPackedWithHeader(String, byte[], int, int)
+     */
+    public static byte[] stringToGsm7BitPackedWithHeader(String data, byte[] header)
+            throws EncodeException {
+        return stringToGsm7BitPackedWithHeader(data, header, 0, 0);
     }
 
     /**
@@ -487,6 +508,33 @@ public class GsmAlphabet {
      */
     public static String
     gsm8BitUnpackedToString(byte[] data, int offset, int length) {
+        return gsm8BitUnpackedToString(data, offset, length, "");
+    }
+
+    /**
+     * Convert a GSM alphabet string that's stored in 8-bit unpacked
+     * format (as it often appears in SIM records) into a String
+     *
+     * Field may be padded with trailing 0xff's. The decode stops
+     * at the first 0xff encountered.
+     *
+     * Additionally, in some country(ex. Korea), there are non-ASCII or MBCS characters.
+     * If a character set is given, characters in data are treat as MBCS.
+     */
+    public static String
+    gsm8BitUnpackedToString(byte[] data, int offset, int length, String characterset) {
+        boolean isMbcs = false;
+        Charset charset = null;
+        ByteBuffer mbcsBuffer = null;
+
+        if (!TextUtils.isEmpty(characterset)
+                && !characterset.equalsIgnoreCase("us-ascii")
+                && Charset.isSupported(characterset)) {
+            isMbcs = true;
+            charset = Charset.forName(characterset);
+            mbcsBuffer = ByteBuffer.allocate(2);
+        }
+
         // Always use GSM 7 bit default alphabet table for this method
         String languageTableToChar = sLanguageTables[0];
         String shiftTableToChar = sLanguageShiftTables[0];
@@ -520,7 +568,15 @@ public class GsmAlphabet {
                         ret.append(shiftChar);
                     }
                 } else {
-                    ret.append(languageTableToChar.charAt(c));
+                    if (!isMbcs || c < 0x80 || i + 1 >= offset + length) {
+                        ret.append(languageTableToChar.charAt(c));
+                    } else {
+                        // isMbcs must be true. So both mbcsBuffer and charset are initialized.
+                        mbcsBuffer.clear();
+                        mbcsBuffer.put(data, i++, 2);
+                        mbcsBuffer.flip();
+                        ret.append(charset.decode(mbcsBuffer).toString());
+                    }
                 }
                 prevWasEscape = false;
             }

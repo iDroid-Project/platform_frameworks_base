@@ -134,6 +134,10 @@ public final class CdmaCallTracker extends CallTracker {
     public void registerForVoiceCallStarted(Handler h, int what, Object obj) {
         Registrant r = new Registrant(h, what, obj);
         voiceCallStartedRegistrants.add(r);
+        // Notify if in call when registering
+        if (state != Phone.State.IDLE) {
+            r.notifyRegistrant(new AsyncResult(null, null, null));
+        }
     }
     public void unregisterForVoiceCallStarted(Handler h) {
         voiceCallStartedRegistrants.remove(h);
@@ -186,7 +190,8 @@ public final class CdmaCallTracker extends CallTracker {
 
         String inEcm=SystemProperties.get(TelephonyProperties.PROPERTY_INECM_MODE, "false");
         boolean isPhoneInEcmMode = inEcm.equals("true");
-        boolean isEmergencyCall = PhoneNumberUtils.isEmergencyNumber(dialString);
+        boolean isEmergencyCall =
+                PhoneNumberUtils.isLocalEmergencyNumber(dialString, phone.getContext());
 
         // Cancel Ecm timer if a second emergency call is originating in Ecm mode
         if (isPhoneInEcmMode && isEmergencyCall) {
@@ -354,6 +359,24 @@ public final class CdmaCallTracker extends CallTracker {
                     || (foregroundCall.getState() == CdmaCall.State.ACTIVE)
                     || !backgroundCall.getState().isAlive());
 
+        if (!ret) {
+            log(String.format("canDial is false\n" +
+                              "((serviceState=%d) != ServiceState.STATE_POWER_OFF)::=%s\n" +
+                              "&& pendingMO == null::=%s\n" +
+                              "&& !ringingCall.isRinging()::=%s\n" +
+                              "&& !disableCall.equals(\"true\")::=%s\n" +
+                              "&& (!foregroundCall.getState().isAlive()::=%s\n" +
+                              "   || foregroundCall.getState() == CdmaCall.State.ACTIVE::=%s\n" +
+                              "   ||!backgroundCall.getState().isAlive())::=%s)",
+                    serviceState,
+                    serviceState != ServiceState.STATE_POWER_OFF,
+                    pendingMO == null,
+                    !ringingCall.isRinging(),
+                    !disableCall.equals("true"),
+                    !foregroundCall.getState().isAlive(),
+                    foregroundCall.getState() == CdmaCall.State.ACTIVE,
+                    !backgroundCall.getState().isAlive()));
+        }
         return ret;
     }
 
@@ -1037,10 +1060,10 @@ public final class CdmaCallTracker extends CallTracker {
      * Disable data call when emergency call is connected
      */
     private void disableDataCallInEmergencyCall(String dialString) {
-        if (PhoneNumberUtils.isEmergencyNumber(dialString)) {
+        if (PhoneNumberUtils.isLocalEmergencyNumber(dialString, phone.getContext())) {
             if (Phone.DEBUG_PHONE) log("disableDataCallInEmergencyCall");
             mIsInEmergencyCall = true;
-            phone.disableDataConnectivity();
+            phone.mDataConnectionTracker.setInternalDataEnabled(false);
         }
     }
 
@@ -1057,8 +1080,7 @@ public final class CdmaCallTracker extends CallTracker {
             }
             if (inEcm.compareTo("false") == 0) {
                 // Re-initiate data connection
-                // TODO - can this be changed to phone.enableDataConnectivity();
-                phone.mDataConnection.setDataEnabled(true);
+                phone.mDataConnectionTracker.setInternalDataEnabled(true);
             }
         }
     }

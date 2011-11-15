@@ -19,14 +19,13 @@ package com.android.server.am;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
-import android.os.SystemClock;
+import android.graphics.Bitmap;
 
 import java.io.PrintWriter;
 
-class TaskRecord {
+class TaskRecord extends ThumbnailHolder {
     final int taskId;       // Unique identifier for this task.
     final String affinity;  // The affinity name for this task, or null.
-    final boolean clearOnBackground; // As per the original activity.
     Intent intent;          // The original intent that started the task.
     Intent affinityIntent;  // Intent of affinity-moved activity that started this task.
     ComponentName origActivity; // The non-alias activity component of the intent.
@@ -35,14 +34,13 @@ class TaskRecord {
     long lastActiveTime;    // Last time this task was active, including sleep.
     boolean rootWasReset;   // True if the intent at the root of the task had
                             // the FLAG_ACTIVITY_RESET_TASK_IF_NEEDED flag.
+    boolean askedCompatMode;// Have asked the user about compat mode for this task.
 
     String stringName;      // caching of toString() result.
     
-    TaskRecord(int _taskId, ActivityInfo info, Intent _intent,
-            boolean _clearOnBackground) {
+    TaskRecord(int _taskId, ActivityInfo info, Intent _intent) {
         taskId = _taskId;
         affinity = info.taskAffinity;
-        clearOnBackground = _clearOnBackground;
         setIntent(_intent, info);
     }
 
@@ -86,9 +84,8 @@ class TaskRecord {
     }
     
     void dump(PrintWriter pw, String prefix) {
-        if (clearOnBackground || numActivities != 0 || rootWasReset) {
-            pw.print(prefix); pw.print("clearOnBackground="); pw.print(clearOnBackground);
-                    pw.print(" numActivities="); pw.print(numActivities);
+        if (numActivities != 0 || rootWasReset) {
+            pw.print(prefix); pw.print("numActivities="); pw.print(numActivities);
                     pw.print(" rootWasReset="); pw.println(rootWasReset);
         }
         if (affinity != null) {
@@ -97,14 +94,14 @@ class TaskRecord {
         if (intent != null) {
             StringBuilder sb = new StringBuilder(128);
             sb.append(prefix); sb.append("intent={");
-            intent.toShortString(sb, true, false);
+            intent.toShortString(sb, false, true, false);
             sb.append('}');
             pw.println(sb.toString());
         }
         if (affinityIntent != null) {
             StringBuilder sb = new StringBuilder(128);
             sb.append(prefix); sb.append("affinityIntent={");
-            affinityIntent.toShortString(sb, true, false);
+            affinityIntent.toShortString(sb, false, true, false);
             sb.append('}');
             pw.println(sb.toString());
         }
@@ -116,6 +113,11 @@ class TaskRecord {
             pw.print(prefix); pw.print("realActivity=");
             pw.println(realActivity.flattenToShortString());
         }
+        if (!askedCompatMode) {
+            pw.print(prefix); pw.print("askedCompatMode="); pw.println(askedCompatMode);
+        }
+        pw.print(prefix); pw.print("lastThumbnail="); pw.print(lastThumbnail);
+                pw.print(" lastDescription="); pw.println(lastDescription);
         pw.print(prefix); pw.print("lastActiveTime="); pw.print(lastActiveTime);
                 pw.print(" (inactive for ");
                 pw.print((getInactiveDuration()/1000)); pw.println("s)");

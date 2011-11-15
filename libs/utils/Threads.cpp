@@ -161,6 +161,7 @@ int androidCreateRawThreadEtc(android_thread_func_t entryFunction,
     pthread_t thread;
     int result = pthread_create(&thread, &attr,
                     (android_pthread_entry)entryFunction, userData);
+    pthread_attr_destroy(&attr);
     if (result != 0) {
         LOGE("androidCreateRawThreadEtc failed (entry=%p, res=%d, errno=%d)\n"
              "(android threadPriority=%d)",
@@ -168,6 +169,9 @@ int androidCreateRawThreadEtc(android_thread_func_t entryFunction,
         return 0;
     }
 
+    // Note that *threadID is directly available to the parent only, as it is
+    // assigned after the child starts.  Use memory barrier / lock if the child
+    // or other threads also need access.
     if (threadId != NULL) {
         *threadId = (android_thread_id_t)thread; // XXX: this is not portable
     }
@@ -313,6 +317,10 @@ int androidSetThreadSchedulingGroup(pid_t tid, int grp)
 #if defined(HAVE_PTHREADS)
     pthread_once(&gDoSchedulingGroupOnce, checkDoSchedulingGroup);
     if (gDoSchedulingGroup) {
+        // set_sched_policy does not support tid == 0
+        if (tid == 0) {
+            tid = androidGetTid();
+        }
         if (set_sched_policy(tid, (grp == ANDROID_TGROUP_BG_NONINTERACT) ?
                                           SP_BACKGROUND : SP_FOREGROUND)) {
             return PERMISSION_DENIED;
@@ -332,10 +340,17 @@ int androidSetThreadPriority(pid_t tid, int pri)
 
     pthread_once(&gDoSchedulingGroupOnce, checkDoSchedulingGroup);
     if (gDoSchedulingGroup) {
+        // set_sched_policy does not support tid == 0
+        int policy_tid;
+        if (tid == 0) {
+            policy_tid = androidGetTid();
+        } else {
+            policy_tid = tid;
+        }
         if (pri >= ANDROID_PRIORITY_BACKGROUND) {
-            rc = set_sched_policy(tid, SP_BACKGROUND);
+            rc = set_sched_policy(policy_tid, SP_BACKGROUND);
         } else if (getpriority(PRIO_PROCESS, tid) >= ANDROID_PRIORITY_BACKGROUND) {
-            rc = set_sched_policy(tid, SP_FOREGROUND);
+            rc = set_sched_policy(policy_tid, SP_FOREGROUND);
         }
     }
 
@@ -351,6 +366,49 @@ int androidSetThreadPriority(pid_t tid, int pri)
 #endif
     
     return rc;
+}
+
+int androidGetThreadPriority(pid_t tid) {
+#if defined(HAVE_PTHREADS)
+    return getpriority(PRIO_PROCESS, tid);
+#else
+    return ANDROID_PRIORITY_NORMAL;
+#endif
+}
+
+int androidGetThreadSchedulingGroup(pid_t tid)
+{
+    int ret = ANDROID_TGROUP_DEFAULT;
+
+#if defined(HAVE_PTHREADS)
+    // convention is to not call get/set_sched_policy methods if disabled by property
+    pthread_once(&gDoSchedulingGroupOnce, checkDoSchedulingGroup);
+    if (gDoSchedulingGroup) {
+        SchedPolicy policy;
+        // get_sched_policy does not support tid == 0
+        if (tid == 0) {
+            tid = androidGetTid();
+        }
+        if (get_sched_policy(tid, &policy) < 0) {
+            ret = INVALID_OPERATION;
+        } else {
+            switch (policy) {
+            case SP_BACKGROUND:
+                ret = ANDROID_TGROUP_BG_NONINTERACT;
+                break;
+            case SP_FOREGROUND:
+                ret = ANDROID_TGROUP_FG_BOOST;
+                break;
+            default:
+                // should not happen, as enum SchedPolicy does not have any other values
+                ret = INVALID_OPERATION;
+                break;
+            }
+        }
+    }
+#endif
+
+    return ret;
 }
 
 namespace android {
@@ -675,6 +733,9 @@ Thread::Thread(bool canCallJava)
         mLock("Thread::mLock"),
         mStatus(NO_ERROR),
         mExitPending(false), mRunning(false)
+#ifdef HAVE_ANDROID_OS
+        , mTid(-1)
+#endif
 {
 }
 
@@ -730,16 +791,19 @@ status_t Thread::run(const char* name, int32_t priority, size_t stack)
     // here merely indicates successfully starting the thread and does not
     // imply successful termination/execution.
     return NO_ERROR;
+
+    // Exiting scope of mLock is a memory barrier and allows new thread to run
 }
 
 int Thread::_threadLoop(void* user)
 {
     Thread* const self = static_cast<Thread*>(user);
+
     sp<Thread> strong(self->mHoldSelf);
     wp<Thread> weak(strong);
     self->mHoldSelf.clear();
 
-#if HAVE_ANDROID_OS
+#ifdef HAVE_ANDROID_OS
     // this is very useful for debugging with gdb
     self->mTid = gettid();
 #endif
@@ -753,7 +817,7 @@ int Thread::_threadLoop(void* user)
             self->mStatus = self->readyToRun();
             result = (self->mStatus == NO_ERROR);
 
-            if (result && !self->mExitPending) {
+            if (result && !self->exitPending()) {
                 // Binder threads (and maybe others) rely on threadLoop
                 // running at least once after a successful ::readyToRun()
                 // (unless, of course, the thread has already been asked to exit
@@ -770,17 +834,20 @@ int Thread::_threadLoop(void* user)
             result = self->threadLoop();
         }
 
+        // establish a scope for mLock
+        {
+        Mutex::Autolock _l(self->mLock);
         if (result == false || self->mExitPending) {
             self->mExitPending = true;
-            self->mLock.lock();
             self->mRunning = false;
             // clear thread ID so that requestExitAndWait() does not exit if
             // called by a new thread using the same thread ID as this one.
             self->mThread = thread_id_t(-1);
+            // note that interested observers blocked in requestExitAndWait are
+            // awoken by broadcast, but blocked on mLock until break exits scope
             self->mThreadExitedCondition.broadcast();
-            self->mThread = thread_id_t(-1); // thread id could be reused
-            self->mLock.unlock();
             break;
+        }
         }
         
         // Release our strong reference, to let a chance to the thread
@@ -795,11 +862,13 @@ int Thread::_threadLoop(void* user)
 
 void Thread::requestExit()
 {
+    Mutex::Autolock _l(mLock);
     mExitPending = true;
 }
 
 status_t Thread::requestExitAndWait()
 {
+    Mutex::Autolock _l(mLock);
     if (mThread == getThreadId()) {
         LOGW(
         "Thread (this=%p): don't call waitForExit() from this "
@@ -809,19 +878,40 @@ status_t Thread::requestExitAndWait()
         return WOULD_BLOCK;
     }
     
-    requestExit();
+    mExitPending = true;
 
-    Mutex::Autolock _l(mLock);
     while (mRunning == true) {
         mThreadExitedCondition.wait(mLock);
     }
+    // This next line is probably not needed any more, but is being left for
+    // historical reference. Note that each interested party will clear flag.
     mExitPending = false;
+
+    return mStatus;
+}
+
+status_t Thread::join()
+{
+    Mutex::Autolock _l(mLock);
+    if (mThread == getThreadId()) {
+        LOGW(
+        "Thread (this=%p): don't call join() from this "
+        "Thread object's thread. It's a guaranteed deadlock!",
+        this);
+
+        return WOULD_BLOCK;
+    }
+
+    while (mRunning == true) {
+        mThreadExitedCondition.wait(mLock);
+    }
 
     return mStatus;
 }
 
 bool Thread::exitPending() const
 {
+    Mutex::Autolock _l(mLock);
     return mExitPending;
 }
 

@@ -23,6 +23,7 @@ import com.android.tools.layoutlib.annotations.LayoutlibDelegate;
 
 import android.graphics.Paint.FontMetrics;
 import android.graphics.Paint.FontMetricsInt;
+import android.text.TextUtils;
 
 import java.awt.BasicStroke;
 import java.awt.Font;
@@ -81,6 +82,7 @@ public class Paint_Delegate {
     private float mTextSize;
     private float mTextScaleX;
     private float mTextSkewX;
+    private int mHintingMode = Paint.HINTING_ON;
 
     private Xfermode_Delegate mXfermode;
     private ColorFilter_Delegate mColorFilter;
@@ -88,6 +90,7 @@ public class Paint_Delegate {
     private PathEffect_Delegate mPathEffect;
     private MaskFilter_Delegate mMaskFilter;
     private Rasterizer_Delegate mRasterizer;
+
 
     // ---- Public Helper methods ----
 
@@ -268,6 +271,28 @@ public class Paint_Delegate {
     }
 
     @LayoutlibDelegate
+    /*package*/ static int getHinting(Paint thisPaint) {
+        // get the delegate from the native int.
+        Paint_Delegate delegate = sManager.getDelegate(thisPaint.mNativePaint);
+        if (delegate == null) {
+            return Paint.HINTING_ON;
+        }
+
+        return delegate.mHintingMode;
+    }
+
+    @LayoutlibDelegate
+    /*package*/ static void setHinting(Paint thisPaint, int mode) {
+        // get the delegate from the native int.
+        Paint_Delegate delegate = sManager.getDelegate(thisPaint.mNativePaint);
+        if (delegate == null) {
+            return;
+        }
+
+        delegate.mHintingMode = mode;
+    }
+
+    @LayoutlibDelegate
     /*package*/ static void setAntiAlias(Paint thisPaint, boolean aa) {
         setFlag(thisPaint, Paint.ANTI_ALIAS_FLAG, aa);
     }
@@ -391,7 +416,7 @@ public class Paint_Delegate {
     }
 
     @LayoutlibDelegate
-    /*package*/ static void setShadowLayer(Paint thisPaint, float radius, float dx, float dy,
+    /*package*/ static void nSetShadowLayer(Paint thisPaint, float radius, float dx, float dy,
             int color) {
         // FIXME
         Bridge.getLog().fidelityWarning(LayoutLog.TAG_UNSUPPORTED,
@@ -938,7 +963,89 @@ public class Paint_Delegate {
     }
 
     @LayoutlibDelegate
-    /*package*/ static void native_getTextPath(int native_object,
+    /* package */static int native_getTextGlyphs(int native_object, String text, int start,
+            int end, int contextStart, int contextEnd, int flags, char[] glyphs) {
+        // FIXME
+        return 0;
+    }
+
+    @LayoutlibDelegate
+    /*package*/ static float native_getTextRunAdvances(int native_object,
+            char[] text, int index, int count, int contextIndex, int contextCount,
+            int flags, float[] advances, int advancesIndex, int reserved) {
+        // get the delegate from the native int.
+        Paint_Delegate delegate = sManager.getDelegate(native_object);
+        if (delegate == null) {
+            return 0.f;
+        }
+
+        if (delegate.mFonts.size() > 0) {
+            // FIXME: handle multi-char characters (see measureText)
+            float totalAdvance = 0;
+            for (int i = 0; i < count; i++) {
+                char c = text[i + index];
+                boolean found = false;
+                for (FontInfo info : delegate.mFonts) {
+                    if (info.mFont.canDisplay(c)) {
+                        float adv = info.mMetrics.charWidth(c);
+                        totalAdvance += adv;
+                        if (advances != null) {
+                            advances[i] = adv;
+                        }
+
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (found == false) {
+                    // no advance for this char.
+                    if (advances != null) {
+                        advances[i] = 0.f;
+                    }
+                }
+            }
+
+            return totalAdvance;
+        }
+
+        return 0;
+
+    }
+
+    @LayoutlibDelegate
+    /*package*/ static float native_getTextRunAdvances(int native_object,
+            String text, int start, int end, int contextStart, int contextEnd,
+            int flags, float[] advances, int advancesIndex, int reserved) {
+        // FIXME: support contextStart, contextEnd and direction flag
+        int count = end - start;
+        char[] buffer = TemporaryBuffer.obtain(count);
+        TextUtils.getChars(text, start, end, buffer, 0);
+
+        return native_getTextRunAdvances(native_object, buffer, 0, count, contextStart,
+                contextEnd - contextStart, flags, advances, advancesIndex, reserved);
+    }
+
+    @LayoutlibDelegate
+    /*package*/ static int native_getTextRunCursor(Paint thisPaint, int native_object, char[] text,
+            int contextStart, int contextLength, int flags, int offset, int cursorOpt) {
+        // FIXME
+        Bridge.getLog().fidelityWarning(LayoutLog.TAG_UNSUPPORTED,
+                "Paint.getTextRunCursor is not supported.", null, null /*data*/);
+        return 0;
+    }
+
+    @LayoutlibDelegate
+    /*package*/ static int native_getTextRunCursor(Paint thisPaint, int native_object, String text,
+            int contextStart, int contextEnd, int flags, int offset, int cursorOpt) {
+        // FIXME
+        Bridge.getLog().fidelityWarning(LayoutLog.TAG_UNSUPPORTED,
+                "Paint.getTextRunCursor is not supported.", null, null /*data*/);
+        return 0;
+    }
+
+    @LayoutlibDelegate
+    /*package*/ static void native_getTextPath(int native_object, int bidiFlags,
                 char[] text, int index, int count, float x, float y, int path) {
         // FIXME
         Bridge.getLog().fidelityWarning(LayoutLog.TAG_UNSUPPORTED,
@@ -946,7 +1053,7 @@ public class Paint_Delegate {
     }
 
     @LayoutlibDelegate
-    /*package*/ static void native_getTextPath(int native_object,
+    /*package*/ static void native_getTextPath(int native_object, int bidiFlags,
             String text, int start, int end, float x, float y, int path) {
         // FIXME
         Bridge.getLog().fidelityWarning(LayoutLog.TAG_UNSUPPORTED,
@@ -1014,6 +1121,7 @@ public class Paint_Delegate {
         mPathEffect = paint.mPathEffect;
         mMaskFilter = paint.mMaskFilter;
         mRasterizer = paint.mRasterizer;
+        mHintingMode = paint.mHintingMode;
         updateFontObject();
     }
 
@@ -1037,6 +1145,7 @@ public class Paint_Delegate {
         mMaskFilter = null;
         mRasterizer = null;
         updateFontObject();
+        mHintingMode = Paint.HINTING_ON;
     }
 
     /**
@@ -1057,7 +1166,7 @@ public class Paint_Delegate {
                 if (mTextScaleX != 1.0 || mTextSkewX != 0) {
                     // TODO: support skew
                     info.mFont = info.mFont.deriveFont(new AffineTransform(
-                            mTextScaleX, mTextSkewX, 0, 0, 1, 0));
+                            mTextScaleX, mTextSkewX, 0, 1, 0, 0));
                 }
                 info.mMetrics = Toolkit.getDefaultToolkit().getFontMetrics(info.mFont);
 

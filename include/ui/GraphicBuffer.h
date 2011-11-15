@@ -26,9 +26,7 @@
 #include <utils/Flattenable.h>
 #include <pixelflinger/pixelflinger.h>
 
-#include <hardware/hardware.h>
-
-struct android_native_buffer_t;
+struct ANativeWindowBuffer;
 
 namespace android {
 
@@ -40,7 +38,7 @@ class GraphicBufferMapper;
 
 class GraphicBuffer
     : public EGLNativeBase<
-        android_native_buffer_t, 
+        ANativeWindowBuffer,
         GraphicBuffer, 
         LightRefBase<GraphicBuffer> >, public Flattenable
 {
@@ -56,20 +54,16 @@ public:
         USAGE_SW_WRITE_RARELY   = GRALLOC_USAGE_SW_WRITE_RARELY,
         USAGE_SW_WRITE_OFTEN    = GRALLOC_USAGE_SW_WRITE_OFTEN,
         USAGE_SW_WRITE_MASK     = GRALLOC_USAGE_SW_WRITE_MASK,
-        
+
         USAGE_SOFTWARE_MASK     = USAGE_SW_READ_MASK|USAGE_SW_WRITE_MASK,
-        
+
+        USAGE_PROTECTED         = GRALLOC_USAGE_PROTECTED,
+
         USAGE_HW_TEXTURE        = GRALLOC_USAGE_HW_TEXTURE,
         USAGE_HW_RENDER         = GRALLOC_USAGE_HW_RENDER,
         USAGE_HW_2D             = GRALLOC_USAGE_HW_2D,
+        USAGE_HW_COMPOSER       = GRALLOC_USAGE_HW_COMPOSER,
         USAGE_HW_MASK           = GRALLOC_USAGE_HW_MASK
-    };
-
-    enum {
-        TRANSFORM_IDENTITY      = 0,
-        TRANSFORM_ROT_90        = HAL_TRANSFORM_ROT_90,
-        TRANSFORM_ROT_180       = HAL_TRANSFORM_ROT_180,
-        TRANSFORM_ROT_270       = HAL_TRANSFORM_ROT_270
     };
 
     GraphicBuffer();
@@ -81,6 +75,9 @@ public:
     GraphicBuffer(uint32_t w, uint32_t h, PixelFormat format, uint32_t usage,
             uint32_t stride, native_handle_t* handle, bool keepOwnership);
 
+    // create a buffer from an existing ANativeWindowBuffer
+    GraphicBuffer(ANativeWindowBuffer* buffer, bool keepOwnership);
+
     // return status
     status_t initCheck() const;
 
@@ -88,7 +85,6 @@ public:
     uint32_t getHeight() const          { return height; }
     uint32_t getStride() const          { return stride; }
     uint32_t getUsage() const           { return usage; }
-    uint32_t getTransform() const       { return transform; }
     PixelFormat getPixelFormat() const  { return format; }
     Rect getBounds() const              { return Rect(width, height); }
     
@@ -99,7 +95,7 @@ public:
     status_t lock(GGLSurface* surface, uint32_t usage);
     status_t unlock();
 
-    android_native_buffer_t* getNativeBuffer() const;
+    ANativeWindowBuffer* getNativeBuffer() const;
     
     void setIndex(int index);
     int getIndex() const;
@@ -128,6 +124,7 @@ private:
     friend class Surface;
     friend class BpSurface;
     friend class BnSurface;
+    friend class SurfaceTextureClient;
     friend class LightRefBase<GraphicBuffer>;
     GraphicBuffer(const GraphicBuffer& rhs);
     GraphicBuffer& operator = (const GraphicBuffer& rhs);
@@ -150,6 +147,10 @@ private:
     GraphicBufferMapper& mBufferMapper;
     ssize_t mInitCheck;
     int mIndex;
+
+    // If we're wrapping another buffer then this reference will make sure it
+    // doesn't get freed.
+    sp<ANativeWindowBuffer> mWrappedBuffer;
 };
 
 }; // namespace android

@@ -154,110 +154,12 @@ public class SmsMessage {
     @Deprecated
     public static SmsMessage createFromPdu(byte[] pdu) {
         SmsMessageBase wrappedMessage;
-        int activePhone = TelephonyManager.getDefault().getPhoneType();
+        int activePhone = TelephonyManager.getDefault().getCurrentPhoneType();
 
         if (PHONE_TYPE_CDMA == activePhone) {
             wrappedMessage = com.android.internal.telephony.cdma.SmsMessage.createFromPdu(pdu);
         } else {
             wrappedMessage = com.android.internal.telephony.gsm.SmsMessage.createFromPdu(pdu);
-        }
-
-        return new SmsMessage(wrappedMessage);
-    }
-
-    /**
-     * TS 27.005 3.4.1 lines[0] and lines[1] are the two lines read from the
-     * +CMT unsolicited response (PDU mode, of course)
-     *  +CMT: [&lt;alpha>],<length><CR><LF><pdu>
-     *
-     * Only public for debugging and for RIL
-     * @deprecated Use android.telephony.SmsMessage.
-     * {@hide}
-     */
-    @Deprecated
-    public static SmsMessage newFromCMT(String[] lines){
-        SmsMessageBase wrappedMessage;
-        int activePhone = TelephonyManager.getDefault().getPhoneType();
-
-        if (PHONE_TYPE_CDMA == activePhone) {
-            wrappedMessage = com.android.internal.telephony.cdma.SmsMessage.newFromCMT(lines);
-        } else {
-            wrappedMessage = com.android.internal.telephony.gsm.SmsMessage.newFromCMT(lines);
-        }
-
-        return new SmsMessage(wrappedMessage);
-    }
-
-    /** @deprecated Use android.telephony.SmsMessage.
-     *  @hide */
-    @Deprecated
-    protected static SmsMessage newFromCMTI(String line) {
-        SmsMessageBase wrappedMessage;
-        int activePhone = TelephonyManager.getDefault().getPhoneType();
-
-        if (PHONE_TYPE_CDMA == activePhone) {
-            wrappedMessage = com.android.internal.telephony.cdma.SmsMessage.newFromCMTI(line);
-        } else {
-            wrappedMessage = com.android.internal.telephony.gsm.SmsMessage.newFromCMTI(line);
-        }
-
-        return new SmsMessage(wrappedMessage);
-    }
-
-    /** @deprecated Use android.telephony.SmsMessage.
-     *  @hide */
-    @Deprecated
-    public static SmsMessage newFromCDS(String line) {
-        SmsMessageBase wrappedMessage;
-        int activePhone = TelephonyManager.getDefault().getPhoneType();
-
-        if (PHONE_TYPE_CDMA == activePhone) {
-            wrappedMessage = com.android.internal.telephony.cdma.SmsMessage.newFromCDS(line);
-        } else {
-            wrappedMessage = com.android.internal.telephony.gsm.SmsMessage.newFromCDS(line);
-        }
-
-        return new SmsMessage(wrappedMessage);
-    }
-
-    /** @deprecated Use android.telephony.SmsMessage.
-     *  @hide */
-    @Deprecated
-    public static SmsMessage newFromParcel(Parcel p) {
-        SmsMessageBase wrappedMessage;
-        int activePhone = TelephonyManager.getDefault().getPhoneType();
-
-        if (PHONE_TYPE_CDMA == activePhone) {
-            wrappedMessage = com.android.internal.telephony.cdma.SmsMessage.newFromParcel(p);
-        } else {
-            wrappedMessage = com.android.internal.telephony.gsm.SmsMessage.newFromParcel(p);
-        }
-
-        return new SmsMessage(wrappedMessage);
-    }
-
-    /**
-     * Create an SmsMessage from an SMS EF record.
-     *
-     * @param index Index of SMS record. This should be index in ArrayList
-     *              returned by SmsManager.getAllMessagesFromSim + 1.
-     * @param data Record data.
-     * @return An SmsMessage representing the record.
-     *
-     * @deprecated Use android.telephony.SmsMessage.
-     * @hide
-     */
-    @Deprecated
-    public static SmsMessage createFromEfRecord(int index, byte[] data) {
-        SmsMessageBase wrappedMessage;
-        int activePhone = TelephonyManager.getDefault().getPhoneType();
-
-        if (PHONE_TYPE_CDMA == activePhone) {
-            wrappedMessage = com.android.internal.telephony.cdma.SmsMessage.createFromEfRecord(
-                    index, data);
-        } else {
-            wrappedMessage = com.android.internal.telephony.gsm.SmsMessage.createFromEfRecord(
-                    index, data);
         }
 
         return new SmsMessage(wrappedMessage);
@@ -270,7 +172,7 @@ public class SmsMessage {
      */
     @Deprecated
     public static int getTPLayerLengthForPDU(String pdu) {
-        int activePhone = TelephonyManager.getDefault().getPhoneType();
+        int activePhone = TelephonyManager.getDefault().getCurrentPhoneType();
 
         if (PHONE_TYPE_CDMA == activePhone) {
             return com.android.internal.telephony.cdma.SmsMessage.getTPLayerLengthForPDU(pdu);
@@ -344,7 +246,7 @@ public class SmsMessage {
             String destinationAddress, String message,
             boolean statusReportRequested, byte[] header) {
         SubmitPduBase spb;
-        int activePhone = TelephonyManager.getDefault().getPhoneType();
+        int activePhone = TelephonyManager.getDefault().getCurrentPhoneType();
 
         if (PHONE_TYPE_CDMA == activePhone) {
             spb = com.android.internal.telephony.cdma.SmsMessage.getSubmitPdu(scAddress,
@@ -371,7 +273,7 @@ public class SmsMessage {
     public static SubmitPdu getSubmitPdu(String scAddress,
             String destinationAddress, String message, boolean statusReportRequested) {
         SubmitPduBase spb;
-        int activePhone = TelephonyManager.getDefault().getPhoneType();
+        int activePhone = TelephonyManager.getDefault().getCurrentPhoneType();
 
         if (PHONE_TYPE_CDMA == activePhone) {
             spb = com.android.internal.telephony.cdma.SmsMessage.getSubmitPdu(scAddress,
@@ -402,7 +304,7 @@ public class SmsMessage {
             String destinationAddress, short destinationPort, byte[] data,
             boolean statusReportRequested) {
         SubmitPduBase spb;
-        int activePhone = TelephonyManager.getDefault().getPhoneType();
+        int activePhone = TelephonyManager.getDefault().getCurrentPhoneType();
 
         if (PHONE_TYPE_CDMA == activePhone) {
             spb = com.android.internal.telephony.cdma.SmsMessage.getSubmitPdu(scAddress,
@@ -716,7 +618,7 @@ public class SmsMessage {
      * @deprecated Use android.telephony.SmsMessage.
      */
     private static final SmsMessageBase getSmsFacility(){
-        int activePhone = TelephonyManager.getDefault().getPhoneType();
+        int activePhone = TelephonyManager.getDefault().getCurrentPhoneType();
         if (PHONE_TYPE_CDMA == activePhone) {
             return new com.android.internal.telephony.cdma.SmsMessage();
         } else {

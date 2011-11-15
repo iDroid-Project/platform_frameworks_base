@@ -21,7 +21,6 @@ import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
-import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.res.XmlResourceParser;
 import android.database.Cursor;
@@ -35,16 +34,16 @@ import android.os.SystemProperties;
 import android.provider.Settings;
 import android.provider.Settings.Secure;
 import android.text.TextUtils;
-import android.util.AttributeSet;
-import android.util.Config;
 import android.util.Log;
-import android.util.Xml;
 
 import com.android.internal.content.PackageHelper;
+import com.android.internal.telephony.BaseCommands;
+import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.RILConstants;
 import com.android.internal.util.XmlUtils;
 import com.android.internal.widget.LockPatternUtils;
 import com.android.internal.widget.LockPatternView;
+
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 
@@ -64,7 +63,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     // database gets upgraded properly. At a minimum, please confirm that 'upgradeVersion'
     // is properly propagated through your change.  Not doing so will result in a loss of user
     // settings.
-    private static final int DATABASE_VERSION = 57;
+    private static final int DATABASE_VERSION = 70;
 
     private Context mContext;
 
@@ -444,18 +443,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         }
 
         if (upgradeVersion == 39) {
-            db.beginTransaction();
-            try {
-                String value =
-                        mContext.getResources().getBoolean(
-                        R.bool.def_screen_brightness_automatic_mode) ? "1" : "0";
-                db.execSQL("INSERT OR IGNORE INTO system(name,value) values('" +
-                        Settings.System.SCREEN_BRIGHTNESS_MODE + "','" + value + "');");
-                db.setTransactionSuccessful();
-            } finally {
-                db.endTransaction();
-            }
-
+            upgradeAutoBrightness(db);
             upgradeVersion = 40;
         }
 
@@ -734,6 +722,220 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             }
             upgradeVersion = 57;
         }
+
+        if (upgradeVersion == 57) {
+            /*
+             * New settings to:
+             *  1. Enable injection of accessibility scripts in WebViews.
+             *  2. Define the key bindings for traversing web content in WebViews.
+             */
+            db.beginTransaction();
+            SQLiteStatement stmt = null;
+            try {
+                stmt = db.compileStatement("INSERT INTO secure(name,value)"
+                        + " VALUES(?,?);");
+                loadBooleanSetting(stmt, Settings.Secure.ACCESSIBILITY_SCRIPT_INJECTION,
+                        R.bool.def_accessibility_script_injection);
+                stmt.close();
+                stmt = db.compileStatement("INSERT INTO secure(name,value)"
+                        + " VALUES(?,?);");
+                loadStringSetting(stmt, Settings.Secure.ACCESSIBILITY_WEB_CONTENT_KEY_BINDINGS,
+                        R.string.def_accessibility_web_content_key_bindings);
+                db.setTransactionSuccessful();
+            } finally {
+                db.endTransaction();
+                if (stmt != null) stmt.close();
+            }
+            upgradeVersion = 58;
+        }
+
+        if (upgradeVersion == 58) {
+            /* Add default for new Auto Time Zone */
+            db.beginTransaction();
+            SQLiteStatement stmt = null;
+            try {
+                stmt = db.compileStatement("INSERT INTO secure(name,value)"
+                        + " VALUES(?,?);");
+                loadBooleanSetting(stmt, Settings.System.AUTO_TIME_ZONE,
+                        R.bool.def_auto_time_zone); // Sync timezone to NITZ
+                db.setTransactionSuccessful();
+            } finally {
+                db.endTransaction();
+                if (stmt != null) stmt.close();
+            }
+            upgradeVersion = 59;
+        }
+
+        if (upgradeVersion == 59) {
+            // Persistence for the rotation lock feature.
+            db.beginTransaction();
+            SQLiteStatement stmt = null;
+            try {
+                stmt = db.compileStatement("INSERT INTO system(name,value)"
+                        + " VALUES(?,?);");
+                loadBooleanSetting(stmt, Settings.System.USER_ROTATION,
+                        R.integer.def_user_rotation); // should be zero degrees
+                db.setTransactionSuccessful();
+            } finally {
+                db.endTransaction();
+                if (stmt != null) stmt.close();
+            }
+            upgradeVersion = 60;
+        }
+
+        if (upgradeVersion == 60) {
+            upgradeScreenTimeout(db);
+            upgradeVersion = 61;
+        }
+
+        if (upgradeVersion == 61) {
+            upgradeScreenTimeout(db);
+            upgradeVersion = 62;
+        }
+
+        // Change the default for screen auto-brightness mode
+        if (upgradeVersion == 62) {
+            upgradeAutoBrightness(db);
+            upgradeVersion = 63;
+        }
+
+        if (upgradeVersion == 63) {
+            // This upgrade adds the STREAM_MUSIC type to the list of
+             // types affected by ringer modes (silent, vibrate, etc.)
+             db.beginTransaction();
+             try {
+                 db.execSQL("DELETE FROM system WHERE name='"
+                         + Settings.System.MODE_RINGER_STREAMS_AFFECTED + "'");
+                 int newValue = (1 << AudioManager.STREAM_RING)
+                         | (1 << AudioManager.STREAM_NOTIFICATION)
+                         | (1 << AudioManager.STREAM_SYSTEM)
+                         | (1 << AudioManager.STREAM_SYSTEM_ENFORCED)
+                         | (1 << AudioManager.STREAM_MUSIC);
+                 db.execSQL("INSERT INTO system ('name', 'value') values ('"
+                         + Settings.System.MODE_RINGER_STREAMS_AFFECTED + "', '"
+                         + String.valueOf(newValue) + "')");
+                 db.setTransactionSuccessful();
+             } finally {
+                 db.endTransaction();
+             }
+             upgradeVersion = 64;
+         }
+
+        if (upgradeVersion == 64) {
+            // New setting to configure the long press timeout.
+            db.beginTransaction();
+            SQLiteStatement stmt = null;
+            try {
+                stmt = db.compileStatement("INSERT INTO secure(name,value)"
+                        + " VALUES(?,?);");
+                loadIntegerSetting(stmt, Settings.Secure.LONG_PRESS_TIMEOUT,
+                        R.integer.def_long_press_timeout_millis);
+                stmt.close();
+                db.setTransactionSuccessful();
+            } finally {
+                db.endTransaction();
+                if (stmt != null) stmt.close();
+            }
+            upgradeVersion = 65;
+        }
+
+        if (upgradeVersion == 65) {
+            /*
+             * Animations are removed from Settings. Turned on by default
+             */
+            db.beginTransaction();
+            SQLiteStatement stmt = null;
+            try {
+                db.execSQL("DELETE FROM system WHERE name='"
+                        + Settings.System.WINDOW_ANIMATION_SCALE + "'");
+                db.execSQL("DELETE FROM system WHERE name='"
+                        + Settings.System.TRANSITION_ANIMATION_SCALE + "'");
+                stmt = db.compileStatement("INSERT INTO system(name,value)"
+                        + " VALUES(?,?);");
+                loadDefaultAnimationSettings(stmt);
+                db.setTransactionSuccessful();
+            } finally {
+                db.endTransaction();
+                if (stmt != null) stmt.close();
+            }
+            upgradeVersion = 66;
+        }
+
+        if (upgradeVersion == 66) {
+            // This upgrade makes sure that MODE_RINGER_STREAMS_AFFECTED is set
+            // according to device voice capability
+            db.beginTransaction();
+            try {
+                int ringerModeAffectedStreams = (1 << AudioManager.STREAM_RING) |
+                                                (1 << AudioManager.STREAM_NOTIFICATION) |
+                                                (1 << AudioManager.STREAM_SYSTEM) |
+                                                (1 << AudioManager.STREAM_SYSTEM_ENFORCED);
+                if (!mContext.getResources().getBoolean(
+                        com.android.internal.R.bool.config_voice_capable)) {
+                    ringerModeAffectedStreams |= (1 << AudioManager.STREAM_MUSIC);
+                }
+                db.execSQL("DELETE FROM system WHERE name='"
+                        + Settings.System.MODE_RINGER_STREAMS_AFFECTED + "'");
+                db.execSQL("INSERT INTO system ('name', 'value') values ('"
+                        + Settings.System.MODE_RINGER_STREAMS_AFFECTED + "', '"
+                        + String.valueOf(ringerModeAffectedStreams) + "')");
+                db.setTransactionSuccessful();
+            } finally {
+                db.endTransaction();
+            }
+            upgradeVersion = 67;
+        }
+
+        if (upgradeVersion == 67) {
+            // New setting to enable touch exploration.
+            db.beginTransaction();
+            SQLiteStatement stmt = null;
+            try {
+                stmt = db.compileStatement("INSERT INTO secure(name,value)"
+                        + " VALUES(?,?);");
+                loadBooleanSetting(stmt, Settings.Secure.TOUCH_EXPLORATION_ENABLED,
+                        R.bool.def_touch_exploration_enabled);
+                stmt.close();
+                db.setTransactionSuccessful();
+            } finally {
+                db.endTransaction();
+                if (stmt != null) stmt.close();
+            }
+            upgradeVersion = 68;
+        }
+
+        if (upgradeVersion == 68) {
+            // Enable all system sounds by default
+            db.beginTransaction();
+            try {
+                db.execSQL("DELETE FROM system WHERE name='"
+                        + Settings.System.NOTIFICATIONS_USE_RING_VOLUME + "'");
+                db.setTransactionSuccessful();
+            } finally {
+                db.endTransaction();
+            }
+            upgradeVersion = 69;
+        }
+
+        if (upgradeVersion == 69) {
+            // Add RADIO_NFC to AIRPLANE_MODE_RADIO and AIRPLANE_MODE_TOGGLEABLE_RADIOS
+            String airplaneRadios = mContext.getResources().getString(
+                    R.string.def_airplane_mode_radios);
+            String toggleableRadios = mContext.getResources().getString(
+                    R.string.airplane_mode_toggleable_radios);
+            db.beginTransaction();
+            try {
+                db.execSQL("UPDATE system SET value='" + airplaneRadios + "' " +
+                        "WHERE name='" + Settings.System.AIRPLANE_MODE_RADIOS + "'");
+                db.execSQL("UPDATE system SET value='" + toggleableRadios + "' " +
+                        "WHERE name='" + Settings.System.AIRPLANE_MODE_TOGGLEABLE_RADIOS + "'");
+                db.setTransactionSuccessful();
+            } finally {
+                db.endTransaction();
+            }
+            upgradeVersion = 70;
+        }
+
         // *** Remember to update DATABASE_VERSION above!
 
         if (upgradeVersion != currentVersion) {
@@ -839,6 +1041,37 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         }
     }
 
+    private void upgradeScreenTimeout(SQLiteDatabase db) {
+        // Change screen timeout to current default
+        db.beginTransaction();
+        SQLiteStatement stmt = null;
+        try {
+            stmt = db.compileStatement("INSERT OR REPLACE INTO system(name,value)"
+                    + " VALUES(?,?);");
+            loadIntegerSetting(stmt, Settings.System.SCREEN_OFF_TIMEOUT,
+                    R.integer.def_screen_off_timeout);
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+            if (stmt != null)
+                stmt.close();
+        }
+    }
+
+    private void upgradeAutoBrightness(SQLiteDatabase db) {
+        db.beginTransaction();
+        try {
+            String value =
+                    mContext.getResources().getBoolean(
+                    R.bool.def_screen_brightness_automatic_mode) ? "1" : "0";
+            db.execSQL("INSERT OR REPLACE INTO system(name,value) values('" +
+                    Settings.System.SCREEN_BRIGHTNESS_MODE + "','" + value + "');");
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
+    }
+
     /**
      * Loads the default set of bookmarked shortcuts from an xml file.
      *
@@ -876,7 +1109,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 String cls = parser.getAttributeValue(null, "class");
                 String shortcutStr = parser.getAttributeValue(null, "shortcut");
 
-                int shortcutValue = (int) shortcutStr.charAt(0);
+                int shortcutValue = shortcutStr.charAt(0);
                 if (TextUtils.isEmpty(shortcutStr)) {
                     Log.w(TAG, "Unable to get shortcut for: " + pkg + "/" + cls);
                 }
@@ -963,11 +1196,22 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     
             loadVibrateSetting(db, false);
     
-            // By default, only the ring/notification and system streams are affected
+            // By default:
+            // - ringtones, notification, system and music streams are affected by ringer mode
+            // on non voice capable devices (tablets)
+            // - ringtones, notification and system streams are affected by ringer mode
+            // on voice capable devices (phones)
+            int ringerModeAffectedStreams = (1 << AudioManager.STREAM_RING) |
+                                            (1 << AudioManager.STREAM_NOTIFICATION) |
+                                            (1 << AudioManager.STREAM_SYSTEM) |
+                                            (1 << AudioManager.STREAM_SYSTEM_ENFORCED);
+            if (!mContext.getResources().getBoolean(
+                    com.android.internal.R.bool.config_voice_capable)) {
+                ringerModeAffectedStreams |= (1 << AudioManager.STREAM_MUSIC);
+            }
             loadSetting(stmt, Settings.System.MODE_RINGER_STREAMS_AFFECTED,
-                    (1 << AudioManager.STREAM_RING) | (1 << AudioManager.STREAM_NOTIFICATION) |
-                    (1 << AudioManager.STREAM_SYSTEM) | (1 << AudioManager.STREAM_SYSTEM_ENFORCED));
-    
+                    ringerModeAffectedStreams);
+
             loadSetting(stmt, Settings.System.MUTE_STREAMS_AFFECTED,
                     ((1 << AudioManager.STREAM_MUSIC) |
                      (1 << AudioManager.STREAM_RING) |
@@ -1044,7 +1288,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     
             loadBooleanSetting(stmt, Settings.System.AUTO_TIME,
                     R.bool.def_auto_time); // Sync time to NITZ
-    
+
+            loadBooleanSetting(stmt, Settings.System.AUTO_TIME_ZONE,
+                    R.bool.def_auto_time_zone); // Sync timezone to NITZ
+
             loadIntegerSetting(stmt, Settings.System.SCREEN_BRIGHTNESS,
                     R.integer.def_screen_brightness);
     
@@ -1063,15 +1310,14 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             loadSetting(stmt, Settings.Secure.SET_INSTALL_LOCATION, 0);
             loadSetting(stmt, Settings.Secure.DEFAULT_INSTALL_LOCATION,
                     PackageHelper.APP_INSTALL_AUTO);
-    
+
             loadUISoundEffectsSettings(stmt);
-    
+
             loadBooleanSetting(stmt, Settings.System.VIBRATE_IN_SILENT,
                     R.bool.def_vibrate_in_silent);
 
-            // Set notification volume to follow ringer volume by default
-            loadBooleanSetting(stmt, Settings.System.NOTIFICATIONS_USE_RING_VOLUME,
-                    R.bool.def_notifications_use_ring_volume);
+            loadIntegerSetting(stmt, Settings.System.POINTER_SPEED,
+                    R.integer.def_pointer_speed);
 
         } finally {
             if (stmt != null) stmt.close();
@@ -1083,6 +1329,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             R.integer.def_power_sounds_enabled);
         loadStringSetting(stmt, Settings.System.LOW_BATTERY_SOUND,
             R.string.def_low_battery_sound);
+        loadBooleanSetting(stmt, Settings.System.DTMF_TONE_WHEN_DIALING,
+                R.bool.def_dtmf_tones_enabled);
+        loadBooleanSetting(stmt, Settings.System.SOUND_EFFECTS_ENABLED,
+                R.bool.def_sound_effects_enabled);
+        loadBooleanSetting(stmt, Settings.System.HAPTIC_FEEDBACK_ENABLED,
+                R.bool.def_haptic_feedback);
 
         loadIntegerSetting(stmt, Settings.System.DOCK_SOUNDS_ENABLED,
             R.integer.def_dock_sounds_enabled);
@@ -1156,8 +1408,13 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             }
     
             // Set the preferred network mode to 0 = Global, CDMA default
-            int type = SystemProperties.getInt("ro.telephony.default_network",
-                    RILConstants.PREFERRED_NETWORK_MODE);
+            int type;
+            if (BaseCommands.getLteOnCdmaModeStatic() == Phone.LTE_ON_CDMA_TRUE) {
+                type = Phone.NT_MODE_GLOBAL;
+            } else {
+                type = SystemProperties.getInt("ro.telephony.default_network",
+                        RILConstants.PREFERRED_NETWORK_MODE);
+            }
             loadSetting(stmt, Settings.Secure.PREFERRED_NETWORK_MODE, type);
     
             // Enable or disable Cell Broadcast SMS
@@ -1189,6 +1446,32 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     
             loadBooleanSetting(stmt, Settings.Secure.MOUNT_UMS_NOTIFY_ENABLED,
                     R.bool.def_mount_ums_notify_enabled);
+
+            loadBooleanSetting(stmt, Settings.Secure.ACCESSIBILITY_SCRIPT_INJECTION,
+                    R.bool.def_accessibility_script_injection);
+
+            loadStringSetting(stmt, Settings.Secure.ACCESSIBILITY_WEB_CONTENT_KEY_BINDINGS,
+                    R.string.def_accessibility_web_content_key_bindings);
+
+            final int maxBytes = mContext.getResources().getInteger(
+                    R.integer.def_download_manager_max_bytes_over_mobile);
+            if (maxBytes > 0) {
+                loadSetting(stmt, Settings.Secure.DOWNLOAD_MAX_BYTES_OVER_MOBILE,
+                        Integer.toString(maxBytes));
+            }
+
+            final int recommendedMaxBytes = mContext.getResources().getInteger(
+                    R.integer.def_download_manager_recommended_max_bytes_over_mobile);
+            if (recommendedMaxBytes > 0) {
+                loadSetting(stmt, Settings.Secure.DOWNLOAD_RECOMMENDED_MAX_BYTES_OVER_MOBILE,
+                        Integer.toString(recommendedMaxBytes));
+            }
+
+            loadIntegerSetting(stmt, Settings.Secure.LONG_PRESS_TIMEOUT,
+                    R.integer.def_long_press_timeout_millis);
+
+            loadBooleanSetting(stmt, Settings.Secure.TOUCH_EXPLORATION_ENABLED,
+                    R.bool.def_touch_exploration_enabled);
         } finally {
             if (stmt != null) stmt.close();
         }

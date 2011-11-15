@@ -29,6 +29,7 @@
 #include <media/stagefright/DataSource.h>
 #include <media/stagefright/MediaBuffer.h>
 #include <media/stagefright/MediaDebug.h>
+#include <media/stagefright/MediaDefs.h>
 #include <media/stagefright/MediaErrors.h>
 #include <media/stagefright/MediaExtractor.h>
 #include <media/stagefright/MediaSource.h>
@@ -454,6 +455,7 @@ static const char *GetMimeFromComponentRole(const char *componentRole) {
         { "video_decoder.avc", "video/avc" },
         { "video_decoder.mpeg4", "video/mp4v-es" },
         { "video_decoder.h263", "video/3gpp" },
+        { "video_decoder.vpx", "video/x-vnd.on2.vp8" },
 
         // we appear to use this as a synonym to amrnb.
         { "audio_decoder.amr", "audio/3gpp" },
@@ -461,7 +463,10 @@ static const char *GetMimeFromComponentRole(const char *componentRole) {
         { "audio_decoder.amrnb", "audio/3gpp" },
         { "audio_decoder.amrwb", "audio/amr-wb" },
         { "audio_decoder.aac", "audio/mp4a-latm" },
-        { "audio_decoder.mp3", "audio/mpeg" }
+        { "audio_decoder.mp3", "audio/mpeg" },
+        { "audio_decoder.vorbis", "audio/vorbis" },
+        { "audio_decoder.g711alaw", MEDIA_MIMETYPE_AUDIO_G711_ALAW },
+        { "audio_decoder.g711mlaw", MEDIA_MIMETYPE_AUDIO_G711_MLAW },
     };
 
     for (size_t i = 0; i < sizeof(kRoleToMime) / sizeof(kRoleToMime[0]); ++i) {
@@ -480,21 +485,23 @@ static const char *GetURLForMime(const char *mime) {
     };
     static const MimeToURL kMimeToURL[] = {
         { "video/avc",
-          "file:///sdcard/media_api/video/H264_AAC.3gp" },
-        { "video/mp4v-es", "file:///sdcard/media_api/video/gingerkids.MP4" },
+          "file:///sdcard/media_api/video/H264_500_AAC_128.3gp" },
+        { "video/mp4v-es", "file:///sdcard/media_api/video/MPEG4_320_AAC_64.mp4" },
         { "video/3gpp",
           "file:///sdcard/media_api/video/H263_500_AMRNB_12.3gp" },
         { "audio/3gpp",
           "file:///sdcard/media_api/video/H263_500_AMRNB_12.3gp" },
-        { "audio/amr-wb",
-          "file:///sdcard/media_api/music_perf/AMRWB/"
-          "NIN_AMR-WB_15.85kbps_16kbps.amr" },
+        { "audio/amr-wb", NULL },
         { "audio/mp4a-latm",
-          "file:///sdcard/media_api/music_perf/AAC/"
-          "WC_AAC_80kbps_32khz_Stereo_1pCBR_SSE.mp4" },
+          "file:///sdcard/media_api/video/H263_56_AAC_24.3gp" },
         { "audio/mpeg",
-          "file:///sdcard/media_api/music_perf/MP3/"
-          "WC_256kbps_44.1khz_mono_CBR_DPA.mp3" }
+          "file:///sdcard/media_api/music/MP3_48KHz_128kbps_s_1_17_CBR.mp3" },
+        { "audio/vorbis", NULL },
+        { "video/x-vnd.on2.vp8",
+          "file:///sdcard/media_api/video/big-buck-bunny_trailer.webm" },
+        { MEDIA_MIMETYPE_AUDIO_G711_ALAW, "file:///sdcard/M1F1-Alaw-AFsp.wav" },
+        { MEDIA_MIMETYPE_AUDIO_G711_MLAW,
+          "file:///sdcard/M1F1-mulaw-AFsp.wav" },
     };
 
     for (size_t i = 0; i < sizeof(kMimeToURL) / sizeof(kMimeToURL[0]); ++i) {
@@ -626,8 +633,10 @@ status_t Harness::testSeek(
                      requestedSeekTimeUs, requestedSeekTimeUs / 1E6);
             }
 
-            MediaBuffer *buffer;
-            options.setSeekTo(requestedSeekTimeUs);
+            MediaBuffer *buffer = NULL;
+            options.setSeekTo(
+                    requestedSeekTimeUs, MediaSource::ReadOptions::SEEK_NEXT_SYNC);
+
             if (seekSource->read(&buffer, &options) != OK) {
                 CHECK_EQ(buffer, NULL);
                 actualSeekTimeUs = -1;
@@ -745,6 +754,10 @@ status_t Harness::testAll() {
          it != componentInfos.end(); ++it) {
         const IOMX::ComponentInfo &info = *it;
         const char *componentName = info.mName.string();
+
+        if (strncmp(componentName, "OMX.google.", 11)) {
+            continue;
+        }
 
         for (List<String8>::const_iterator role_it = info.mRoles.begin();
              role_it != info.mRoles.end(); ++role_it) {

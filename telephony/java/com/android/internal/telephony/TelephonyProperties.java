@@ -45,7 +45,7 @@ public interface TelephonyProperties
      *  CDMA networks.
      */
     static final String PROPERTY_OPERATOR_ALPHA = "gsm.operator.alpha";
-    //TODO: most of these proprieties are generic, substitute gsm. with phone. bug 1856959
+    //TODO: most of these properties are generic, substitute gsm. with phone. bug 1856959
 
     /** Numeric name (MCC+MNC) of current registered operator.<p>
      *  Availability: when registered to a network. Result may be unreliable on
@@ -72,6 +72,22 @@ public interface TelephonyProperties
      */
     static final String PROPERTY_OPERATOR_ISO_COUNTRY = "gsm.operator.iso-country";
 
+    /**
+     * The contents of this property is the value of the kernel command line
+     * product_type variable that corresponds to a product that supports LTE on CDMA.
+     * {@see BaseCommands#getLteOnCdmaMode()}
+     */
+    static final String PROPERTY_LTE_ON_CDMA_PRODUCT_TYPE = "telephony.lteOnCdmaProductType";
+
+    /**
+     * The contents of this property is the one of {@link Phone#LTE_ON_CDMA_TRUE} or
+     * {@link Phone#LTE_ON_CDMA_FALSE}. If absent the value will assumed to be false
+     * and the {@see #PROPERTY_LTE_ON_CDMA_PRODUCT_TYPE} will be used to determine its
+     * final value which could also be {@link Phone#LTE_ON_CDMA_FALSE}.
+     * {@see BaseCommands#getLteOnCdmaMode()}
+     */
+    static final String PROPERTY_LTE_ON_CDMA_DEVICE = "telephony.lteOnCdmaDevice";
+
     static final String CURRENT_ACTIVE_PHONE = "gsm.current.phone-type";
 
     //****** SIM Card
@@ -83,12 +99,12 @@ public interface TelephonyProperties
 
     /** The MCC+MNC (mobile country code+mobile network code) of the
      *  provider of the SIM. 5 or 6 decimal digits.
-     *  Availablity: SIM state must be "READY"
+     *  Availability: SIM state must be "READY"
      */
     static String PROPERTY_ICC_OPERATOR_NUMERIC = "gsm.sim.operator.numeric";
 
     /** PROPERTY_ICC_OPERATOR_ALPHA is also known as the SPN, or Service Provider Name.
-     *  Availablity: SIM state must be "READY"
+     *  Availability: SIM state must be "READY"
      */
     static String PROPERTY_ICC_OPERATOR_ALPHA = "gsm.sim.operator.alpha";
 
@@ -127,7 +143,7 @@ public interface TelephonyProperties
         "ro.telephony.call_ring.multiple";
 
     /**
-     * The number of milli-seconds between CALL_RING notifications.
+     * The number of milliseconds between CALL_RING notifications.
      */
     static final String PROPERTY_CALL_RING_DELAY = "ro.telephony.call_ring.delay";
 
@@ -147,4 +163,23 @@ public interface TelephonyProperties
      * when there is a radio technology change.
      */
     static final String PROPERTY_RESET_ON_RADIO_TECH_CHANGE = "persist.radio.reset_on_switch";
+
+    /**
+     * Set to false to disable SMS receiving, default is
+     * the value of config_sms_capable
+     */
+    static final String PROPERTY_SMS_RECEIVE = "telephony.sms.receive";
+
+    /**
+     * Set to false to disable SMS sending, default is
+     * the value of config_sms_capable
+     */
+    static final String PROPERTY_SMS_SEND = "telephony.sms.send";
+
+    /**
+     * Set to true to indicate a test CSIM card is used in the device.
+     * This property is for testing purpose only. This should not be defined
+     * in commercial configuration.
+     */
+    static final String PROPERTY_TEST_CSIM = "persist.radio.test-csim";
 }

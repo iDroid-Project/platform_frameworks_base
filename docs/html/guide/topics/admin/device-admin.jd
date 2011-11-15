@@ -27,6 +27,12 @@ page.title=Device Administration
       <li>{@link android.app.admin.DevicePolicyManager}</li>
       <li>{@link android.app.admin.DeviceAdminInfo}</li>
     </ol>
+    <h2>Related samples</h2>
+    <ol>
+      <li><a
+href="{@docRoot}resources/samples/ApiDemos/src/com/example/android/apis/app/DeviceAdminSample.html">
+DeviceAdminSample</a></li>
+</ol>
 </div>
 </div>
 
@@ -128,6 +134,60 @@ can require PIN or passwords to have at least six characters. </td> </tr>
 combination of letters and numbers. They may include symbolic characters.
     </td>
   </tr>
+  
+  <tr>
+    <td>Complex password required</td>
+    <td>Requires that passwords must contain at least a letter, a numerical digit, and a special symbol. Introduced in Android 3.0.
+    </td>
+  </tr>
+  
+<tr> 
+  <td>Minimum letters required in password</td> <td>The minimum number of
+letters required in the password for all admins or a particular one. Introduced in Android 3.0.</td> 
+</tr>
+  
+  
+  <tr> 
+  <td>Minimum lowercase letters required in password</td> 
+  <td>The minimum number of lowercase 
+letters required in the password for all admins or a particular one. Introduced in Android 3.0.</td> 
+</tr>
+  
+  <tr> 
+  <td>Minimum non-letter characters required in password</td> 
+  <td>The minimum number of
+non-letter characters required in the password for all admins or a particular one. Introduced in Android 3.0.</td> 
+</tr>
+  
+<tr> 
+  <td>Minimum numerical digits required in password</td> 
+  <td>The minimum number of numerical digits required in the password for all admins or a particular one. Introduced in Android 3.0.</td> 
+</tr>
+
+<tr> 
+  <td>Minimum symbols required in password</td> 
+  <td>The minimum number of symbols required in the password for all admins or a particular one. Introduced in Android 3.0.</td> 
+</tr>
+
+<tr> 
+  <td>Minimum uppercase letters required in password</td> 
+  <td>The minimum number of uppercase letters required in the password for all admins or a particular one. Introduced in Android 3.0.</td> 
+</tr>
+
+<tr> 
+  <td>Password expiration timeout</td> 
+  <td>When the password will expire, expressed as a delta in milliseconds from when a device admin sets the expiration timeout. Introduced in Android 3.0.</td> 
+</tr>
+
+<tr> 
+  <td>Password history restriction</td> 
+  <td>This policy prevents users from reusing the last <em>n</em> unique passwords.
+ This policy is typically used in conjunction with
+{@link android.app.admin.DevicePolicyManager#setPasswordExpirationTimeout(android.content.ComponentName,long) setPasswordExpirationTimeout()}, which forces
+users to update their passwords after a specified amount of time has elapsed.
+Introduced in Android 3.0.</td> 
+</tr>
+  
   <tr>
     <td>Maximum failed password attempts </td>
     <td>Specifies how many times a user can enter the wrong password before the
@@ -141,6 +201,22 @@ device is lost or stolen.</td>
 pressed a button before the device locks the screen. When this happens, users
 need to enter their PIN or passwords again before they can use their devices and
 access data.  The value can be between 1 and 60 minutes.</td> </tr>
+
+<tr> 
+<td>Require storage encryption</td> 
+<td>Specifies that the storage area should be encrypted, if the device supports it. 
+Introduced in Android 3.0.</td> </tr>
+
+<tr>
+  <td>Disable camera</td>
+  
+  <td>Specifies that the camera should be disabled. Note that this doesn't have
+to be a permanent disabling. The camera can be enabled/disabled dynamically
+based on context, time, and so on. Introduced in Android 4.0.</td>
+  
+</tr>
+
+
 </table>
 
 <h4>Other features</h4>
@@ -172,18 +248,29 @@ they've enabled the application, they can use the buttons in the user interface
 to do the following:</p>
 <ul>
   <li>Set password quality.</li>
-  <li>Specify the minimum length for the user's password.</li>
+  <li>Specify requirements for the user's password, such as minimum length, the minimum number of
+  numeric characters it must contain, and so on.</li>
   <li>Set the password. If the password does not conform to the specified
 policies, the system  returns an error.</li>
   <li>Set how many failed password attempts can occur before the device is wiped
 (that is, restored to factory settings).</li>
+<li>Set how long from now the password will expire.</li>
+<li>Set the password history length (<em>length</em> refers to number of old passwords stored in the history). 
+This prevents users from reusing 
+one of the last <em>n</em> passwords they previously used.</li>
+<li>Specify that the storage area should be encrypted, if the device supports it.</li>
   <li>Set the maximum amount of inactive time that can elapse before the device
 locks.</li>
   <li>Make the device lock immediately.</li>
   <li>Wipe the device's data (that is, restore factory settings).</li>
+  <li>Disable the camera.</li>
+  
 </ul>
 
+
+
 <img src="{@docRoot}images/admin/device-admin-app.png"/>
+
 <p class="img-caption"><strong>Figure 1.</strong> Screenshot of the Sample Application</p>
 
 
@@ -210,46 +297,38 @@ intent, expressed in the manifest as an intent filter.</li>
   <li>A declaration of security policies used in metadata.</li>
 </ul>
 <p>Here is an excerpt from the Device Administration sample manifest:</p>
-<pre>&lt;activity android:name=&quot;.app.DeviceAdminSample$Controller&quot;
-          android:label=&quot;&#64;string/activity_sample_device_admin&quot;&gt;
-    &lt;intent-filter&gt;
-        &lt;action android:name=&quot;android.intent.action.MAIN&quot; /&gt;
-        &lt;category android:name=&quot;android.intent.category.SAMPLE_CODE&quot; /&gt;
-    &lt;/intent-filter&gt;
+<pre>&lt;activity android:name=&quot;.app.DeviceAdminSample&quot;
+            android:label=&quot;&#64;string/activity_sample_device_admin&quot;&gt;
+    &lt;intent-filter&gt;
+        &lt;action android:name=&quot;android.intent.action.MAIN&quot; /&gt;
+        &lt;category android:name=&quot;android.intent.category.SAMPLE_CODE&quot; /&gt;
+    &lt;/intent-filter&gt;
 &lt;/activity&gt;
-
-&lt;receiver android:name=&quot;.app.DeviceAdminSample&quot;
-          android:label=&quot;&#64;string/sample_device_admin&quot;
-          android:description=&quot;&#64;string/sample_device_admin_description&quot;
-          android:permission=&quot;android.permission.BIND_DEVICE_ADMIN&quot;&gt;
-    &lt;meta-data android:name=&quot;android.app.device_admin&quot;
-               android:resource=&quot;&#64;xml/device_admin_sample&quot; /&gt;
-    &lt;intent-filter&gt;
-        &lt;action android:name=&quot;android.app.action.DEVICE_ADMIN_ENABLED&quot; /&gt;
-    &lt;/intent-filter&gt;
+&lt;receiver android:name=&quot;.app.DeviceAdminSample$DeviceAdminSampleReceiver&quot;
+        android:label=&quot;&#64;string/sample_device_admin&quot;
+        android:description=&quot;&#64;string/sample_device_admin_description&quot;
+        android:permission=&quot;android.permission.BIND_DEVICE_ADMIN&quot;&gt;
+    &lt;meta-data android:name=&quot;android.app.device_admin&quot;
+            android:resource=&quot;&#64;xml/device_admin_sample&quot; /&gt;
+    &lt;intent-filter&gt;
+        &lt;action android:name=&quot;android.app.action.DEVICE_ADMIN_ENABLED&quot; /&gt;
+    &lt;/intent-filter&gt;
 &lt;/receiver&gt;</pre>
 
  <p>Note that:</p>
 <ul>
-  <li>The activity in the sample application is an {@link android.app.Activity}
-subclass called <code>Controller</code>. The syntax
-<code>&quot;.app.DeviceAdminSample$Controller&quot;</code>  indicates that
-<code>Controller</code> is an inner class that is nested inside the
-<code>DeviceAdminSample</code> class. Note that an Activity does not need to be
-an inner class; it just is in this example.</li>
-
 <li>The following attributes refer to string resources that for the sample application reside in
 <code>ApiDemos/res/values/strings.xml</code>. For more information about resources, see
 <a
 href="{@docRoot}guide/topics/resources/index.html">Application Resources</a>.
 <ul>
-<li><code>android:label=&quot;@string/activity_sample_device_admin&quot;</code> refers to the
+<li><code>android:label=&quot;&#64;string/activity_sample_device_admin&quot;</code> refers to the
 user-readable label for the activity.</li>
 
-<li><code>android:label=&quot;@string/sample_device_admin&quot;</code> refers to the
+<li><code>android:label=&quot;&#64;string/sample_device_admin&quot;</code> refers to the
 user-readable label for the permission.</li>
 
-<li><code>android:description=&quot;@string/sample_device_admin_description&quot;</code> refers to
+<li><code>android:description=&quot;&#64;string/sample_device_admin_description&quot;</code> refers to
 the user-readable description of the permission. A descripton is typically longer and more
 informative than
 a label.</li>
@@ -287,6 +366,9 @@ android.app.admin.DeviceAdminInfo} class. Here are the contents of
     &lt;reset-password /&gt;
     &lt;force-lock /&gt;
     &lt;wipe-data /&gt;
+    &lt;expire-password /&gt;
+    &lt;encrypted-storage /&gt;
+    &lt;disable-camera /&gt;
   &lt;/uses-policies&gt;
 &lt;/device-admin&gt;
 </pre>
@@ -331,32 +413,33 @@ simply displays a {@link android.widget.Toast} notification in response to parti
 events. For example:</p>
 <pre>public class DeviceAdminSample extends DeviceAdminReceiver {
 
-...
+    void showToast(Context context, String msg) {
+        String status = context.getString(R.string.admin_receiver_status, msg);
+        Toast.makeText(context, status, Toast.LENGTH_SHORT).show();
+    }
+
     &#64;Override
-    public void onEnabled(Context context, Intent intent) {
-        showToast(context, &quot;Sample Device Admin: enabled&quot;);
-    }
+    public void onEnabled(Context context, Intent intent) {
+        showToast(context, context.getString(R.string.admin_receiver_status_enabled));
+    }
 
-    &#64;Override
-    public CharSequence onDisableRequested(Context context, Intent intent) {
-        return &quot;This is an optional message to warn the user about disabling.&quot;;
-    }
+    &#64;Override
+    public CharSequence onDisableRequested(Context context, Intent intent) {
+        return context.getString(R.string.admin_receiver_status_disable_warning);
+    }
 
-    &#64;Override
-    public void onDisabled(Context context, Intent intent) {
-        showToast(context, &quot;Sample Device Admin: disabled&quot;);
-    }
+    &#64;Override
+    public void onDisabled(Context context, Intent intent) {
+        showToast(context, context.getString(R.string.admin_receiver_status_disabled));
+    }
 
-    &#64;Override
-    public void onPasswordChanged(Context context, Intent intent) {
-        showToast(context, &quot;Sample Device Admin: pw changed&quot;);
-    }
-
-    void showToast(Context context, CharSequence msg) {
-        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show();
+    &#64;Override
+    public void onPasswordChanged(Context context, Intent intent) {
+        showToast(context, context.getString(R.string.admin_receiver_status_pw_changed));
     }
 ...
 }</pre>
+
 
 <h4 id="enabling">Enabling the application</h4>
 <p>One of the major events a device admin application has to handle is the user
@@ -368,43 +451,50 @@ get any of the application's benefits.</p>
 action that triggers the {@link android.app.admin.DevicePolicyManager#ACTION_ADD_DEVICE_ADMIN}
 intent. In the
 sample application, this happens when the user clicks the <strong>Enable
-Admin</strong> button. </p>
-<p>When the user clicks the <strong>Enable Admin</strong> button, the display
-changes to prompt the user to enable the device admin application, as shown in figure
+Admin</strong> checkbox. </p>
+<p>When the user clicks the <strong>Enable Admin</strong> checkbox, the display
+changes to prompt the user to activate the device admin application, as shown in figure
 2.</p>
 
 <img src="{@docRoot}images/admin/device-admin-activate-prompt.png"/>
 <p class="img-caption"><strong>Figure 2.</strong> Sample Application: Activating the Application</p>
-<p>Below  is the code that gets executed when the user clicks the <strong>Enable
-Admin</strong> button shown in figure 1. </p>
 
-<pre> private OnClickListener mEnableListener = new OnClickListener() {
-    public void onClick(View v) {
-        // Launch the activity to have the user enable our admin.
-        Intent intent = new Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN);
-        intent.putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN,
-               mDeviceAdminSample);
-        intent.putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-               &quot;Additional text explaining why this needs to be added.&quot;);
-        startActivityForResult(intent, RESULT_ENABLE);
-    }
-};
+<p>Below  is the code that gets executed when the user clicks the <strong>Enable Admin</strong> checkbox. This has the effect of triggering the 
+{@link android.preference.Preference.OnPreferenceChangeListener#onPreferenceChange(android.preference.Preference, java.lang.Object) onPreferenceChange()} 
+callback. This callback is invoked when the value of this  {@link android.preference.Preference} has been changed by the user and is about to be set and/or persisted. If the user is enabling the application, the display
+changes to prompt the user to activate the device admin application, as shown in figure
+2. Otherwise, the device admin application is disabled. </p>
 
-...
-// This code checks whether the device admin app was successfully enabled.
-&#64;Override
-protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-    switch (requestCode) {
-        case RESULT_ENABLE:
-            if (resultCode == Activity.RESULT_OK) {
-                Log.i(&quot;DeviceAdminSample&quot;, &quot;Administration enabled!&quot;);
-            } else {
-                Log.i(&quot;DeviceAdminSample&quot;, &quot;Administration enable FAILED!&quot;);
-            }
-            return;
-    }
-    super.onActivityResult(requestCode, resultCode, data);
-}</pre>
+<pre>&#64;Override
+        public boolean onPreferenceChange(Preference preference, Object newValue) {
+            if (super.onPreferenceChange(preference, newValue)) {
+                return true;
+            }
+            boolean value = (Boolean) newValue;
+            if (preference == mEnableCheckbox) {
+                if (value != mAdminActive) {
+                    if (value) {
+                        // Launch the activity to have the user enable our admin.
+                        Intent intent = new Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN);
+                        intent.putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, mDeviceAdminSample);
+                        intent.putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                                mActivity.getString(R.string.add_admin_extra_app_text));
+                        startActivityForResult(intent, REQUEST_CODE_ENABLE_ADMIN);
+                        // return false - don't update checkbox until we're really active
+                        return false;
+                    } else {
+                        mDPM.removeActiveAdmin(mDeviceAdminSample);
+                        enableDeviceCapabilitiesArea(false);
+                        mAdminActive = false;
+                    }
+                }
+            } else if (preference == mDisableCameraCheckbox) {
+                mDPM.setCameraDisabled(mDeviceAdminSample, value);
+                ...
+            }
+            return true;
+        }</pre>
+
 
 <p>The line
 <code>intent.putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN,
@@ -419,17 +509,16 @@ active. To do this it uses the {@link android.app.admin.DevicePolicyManager} met
 {@link android.app.admin.DevicePolicyManager#isAdminActive(android.content.ComponentName) isAdminActive()}. Notice that the {@link android.app.admin.DevicePolicyManager}
 method {@link android.app.admin.DevicePolicyManager#isAdminActive(android.content.ComponentName) isAdminActive()} takes a {@link android.app.admin.DeviceAdminReceiver}
 component as its argument:</p>
+
 <pre>
 DevicePolicyManager mDPM;
 ...
-boolean active = mDPM.isAdminActive(mDeviceAdminSample);
-if (active) {
-    // Admin app is active, so do some admin stuff
-               ...
-} else {
-    // do something else
+private boolean isActiveAdmin() {
+    return mDPM.isAdminActive(mDeviceAdminSample);
 }
 </pre>
+
+
 
 <h3 id="admin_ops">Managing policies</h3>
 <p>{@link android.app.admin.DevicePolicyManager} is a public class for managing policies
@@ -469,7 +558,13 @@ password containing at least <em>both</em> numeric <em>and</em> alphabetic (or
 other symbol) characters.</dd>
   <dt>{@link android.app.admin.DevicePolicyManager#PASSWORD_QUALITY_NUMERIC}</dt><dd>The user must enter a   password
 containing at least numeric characters.</dd>
-  <dt>{@link android.app.admin.DevicePolicyManager#PASSWORD_QUALITY_SOMETHING}</dt><dd>The policy requires some kind
+<dt>{@link
+android.app.admin.DevicePolicyManager#PASSWORD_QUALITY_COMPLEX}</dt><dd>The user
+must have entered a password containing at least a letter, a numerical digit and
+a special symbol.</dd> 
+<dt>{@link
+android.app.admin.DevicePolicyManager#PASSWORD_QUALITY_SOMETHING}</dt><dd>The
+policy requires some kind
 of password, but doesn't care what it is.</dd>
   <dt>{@link android.app.admin.DevicePolicyManager#PASSWORD_QUALITY_UNSPECIFIED}</dt><dd>
   The policy has no requirements   for the password. </dd>
@@ -481,6 +576,36 @@ ComponentName mDeviceAdminSample;
 ...
 mDPM.setPasswordQuality(mDeviceAdminSample, DevicePolicyManager.PASSWORD_QUALITY_ALPHANUMERIC);
 </pre>
+
+<h5>Set password content requirements</h5>
+
+<p>Beginning with Android 3.0, the {@link android.app.admin.DevicePolicyManager} class
+includes methods that let you fine-tune the contents of the password. For
+example, you could set a policy that states that passwords must contain at least
+<em>n</em> uppercase letters. Here are the methods for fine-tuning a password's
+contents:</p>
+<ul>
+
+<li>{@link android.app.admin.DevicePolicyManager#setPasswordMinimumLetters(android.content.ComponentName,int) setPasswordMinimumLetters()}</li> 
+
+<li>{@link android.app.admin.DevicePolicyManager#setPasswordMinimumLowerCase(android.content.ComponentName,int) setPasswordMinimumLowerCase()}</li>
+
+<li>{@link android.app.admin.DevicePolicyManager#setPasswordMinimumUpperCase(android.content.ComponentName,int) setPasswordMinimumUpperCase()}</li>
+
+<li>{@link android.app.admin.DevicePolicyManager#setPasswordMinimumNonLetter(android.content.ComponentName,int) setPasswordMinimumNonLetter()}</li>
+
+<li>{@link android.app.admin.DevicePolicyManager#setPasswordMinimumNumeric(android.content.ComponentName,int) setPasswordMinimumNumeric()}</li>
+
+<li>{@link android.app.admin.DevicePolicyManager#setPasswordMinimumSymbols(android.content.ComponentName,int) setPasswordMinimumSymbols()}</li>
+</ul>
+<p>For example, this snippet states that the password must have at least 2 uppercase letters:</p>
+<pre>
+DevicePolicyManager mDPM;
+ComponentName mDeviceAdminSample;
+int pwMinUppercase = 2;
+...
+mDPM.setPasswordMinimumUpperCase(mDeviceAdminSample, pwMinUppercase);</pre>
+
 
 <h5>Set the minimum password length</h5>
 <p>You can specify that a password must be at least the specified minimum
@@ -501,7 +626,43 @@ int maxFailedPw;
  ...
 mDPM.setMaximumFailedPasswordsForWipe(mDeviceAdminSample, maxFailedPw);</pre>
 
-<h4 id="lock">Set  device lock</h4>
+<h5 id="expiration">Set password expiration timeout</h5>
+<p>Beginning with Android 3.0, you can use the 
+{@link android.app.admin.DevicePolicyManager#setPasswordExpirationTimeout(android.content.ComponentName,long) setPasswordExpirationTimeout()} 
+method to set when a password will expire, expressed as a delta in milliseconds from when a device admin sets the expiration timeout. For example:</p>
+
+<pre>DevicePolicyManager mDPM;
+ComponentName mDeviceAdminSample;
+long pwExpiration;
+...
+mDPM.setPasswordExpirationTimeout(mDeviceAdminSample, pwExpiration);
+</pre>
+    
+<h5 id="history">Restrict password based on history</h5>
+
+<p>Beginning with Android 3.0, you can use the 
+{@link android.app.admin.DevicePolicyManager#setPasswordHistoryLength(android.content.ComponentName,int) setPasswordHistoryLength()} 
+method to limit users'
+ability to reuse old passwords. This method takes a <em>length</em>
+parameter, which specifies how many old
+passwords are stored. When this policy is active, users cannot enter a new
+password that matches the last <em>n</em> passwords. This prevents
+users from using the same password over and over. This policy is typically used
+in conjunction with 
+{@link android.app.admin.DevicePolicyManager#setPasswordExpirationTimeout(android.content.ComponentName,long) setPasswordExpirationTimeout()},
+which forces users
+to update their passwords after a specified amount of time has elapsed. </p>
+
+<p>For example, this snippet prohibits users from reusing any of their last 5 passwords:</p>
+
+<pre>DevicePolicyManager mDPM;
+ComponentName mDeviceAdminSample;
+int pwHistoryLength = 5;
+...
+mDPM.setPasswordHistoryLength(mDeviceAdminSample, pwHistoryLength);
+</pre>
+
+<h4 id="lock">Set device lock</h4>
 <p>You can set the maximum period of user inactivity that can occur before the
 device locks. For example:</p>
 <pre>
@@ -515,6 +676,8 @@ mDPM.setMaximumTimeToLock(mDeviceAdminSample, timeMs);
 <pre>
 DevicePolicyManager mDPM;
 mDPM.lockNow();</pre>
+
+
 
 <h4 id="wipe">Perform data wipe</h4>
 
@@ -530,3 +693,33 @@ DevicePolicyManager mDPM;
 mDPM.wipeData(0);</pre>
 <p>The {@link android.app.admin.DevicePolicyManager#wipeData wipeData()} method takes as its parameter a bit mask of
 additional options. Currently the value must be 0. </p>
+
+<h4>Disable camera</h4>
+<p>Beginning with Android 4.0, you can disable the camera. Note that this doesn't have to be a permanent disabling. The camera can be enabled/disabled dynamically based on context, time, and so on. </p>
+<p>You control whether the camera is disabled by using the 
+{@link android.app.admin.DevicePolicyManager#setCameraDisabled(android.content.ComponentName, boolean) setCameraDisabled()} method. For example, this snippet sets the camera to be enabled or disabled based on a checkbox setting:</p>
+
+<pre>private CheckBoxPreference mDisableCameraCheckbox;
+DevicePolicyManager mDPM;
+ComponentName mDeviceAdminSample;
+...
+mDPM.setCameraDisabled(mDeviceAdminSample, mDisableCameraCheckbox.isChecked());<br />
+</pre>
+
+
+<h4 id=storage">Storage encryption</h4>
+<p>Beginning with Android 3.0, you can use the 
+{@link android.app.admin.DevicePolicyManager#setStorageEncryption(android.content.ComponentName,boolean) setStorageEncryption()} 
+method to set a policy requiring encryption of the storage area, where supported.</p>
+
+<p>For example:</p>
+
+<pre>
+DevicePolicyManager mDPM;
+ComponentName mDeviceAdminSample;
+...
+mDPM.setStorageEncryption(mDeviceAdminSample, true);
+</pre>
+<p>
+See the <a href="{@docRoot}resources/samples/ApiDemos/src/com/example/android/apis/app/DeviceAdminSample.html"> Device Administration API sample</a> for a complete
+example of how to enable storage encryption.</p>

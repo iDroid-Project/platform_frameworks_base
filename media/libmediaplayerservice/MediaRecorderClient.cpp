@@ -31,18 +31,17 @@
 #include <binder/MemoryHeapBase.h>
 #include <binder/MemoryBase.h>
 
-#ifndef NO_OPENCORE
-#include <media/PVMediaRecorder.h>
-#endif
-
 #include <utils/String16.h>
 
 #include <media/AudioTrack.h>
+
+#include <system/audio.h>
 
 #include "MediaRecorderClient.h"
 #include "MediaPlayerService.h"
 
 #include "StagefrightRecorder.h"
+#include <gui/ISurfaceTexture.h>
 
 namespace android {
 
@@ -59,7 +58,22 @@ static bool checkPermission(const char* permissionString) {
     return ok;
 }
 
-status_t MediaRecorderClient::setCamera(const sp<ICamera>& camera)
+
+sp<ISurfaceTexture> MediaRecorderClient::querySurfaceMediaSource()
+{
+    LOGV("Query SurfaceMediaSource");
+    Mutex::Autolock lock(mLock);
+    if (mRecorder == NULL) {
+        LOGE("recorder is not initialized");
+        return NULL;
+    }
+    return mRecorder->querySurfaceMediaSource();
+}
+
+
+
+status_t MediaRecorderClient::setCamera(const sp<ICamera>& camera,
+                                        const sp<ICameraRecordingProxy>& proxy)
 {
     LOGV("setCamera");
     Mutex::Autolock lock(mLock);
@@ -67,10 +81,10 @@ status_t MediaRecorderClient::setCamera(const sp<ICamera>& camera)
         LOGE("recorder is not initialized");
         return NO_INIT;
     }
-    return mRecorder->setCamera(camera);
+    return mRecorder->setCamera(camera, proxy);
 }
 
-status_t MediaRecorderClient::setPreviewSurface(const sp<ISurface>& surface)
+status_t MediaRecorderClient::setPreviewSurface(const sp<Surface>& surface)
 {
     LOGV("setPreviewSurface");
     Mutex::Autolock lock(mLock);
@@ -106,7 +120,7 @@ status_t MediaRecorderClient::setAudioSource(int as)
         LOGE("recorder is not initialized");
         return NO_INIT;
     }
-    return mRecorder->setAudioSource((audio_source)as);
+    return mRecorder->setAudioSource((audio_source_t)as);
 }
 
 status_t MediaRecorderClient::setOutputFormat(int of)
@@ -293,22 +307,7 @@ MediaRecorderClient::MediaRecorderClient(const sp<MediaPlayerService>& service, 
 {
     LOGV("Client constructor");
     mPid = pid;
-
-    char value[PROPERTY_VALUE_MAX];
-    if (!property_get("media.stagefright.enable-record", value, NULL)
-        || !strcmp(value, "1") || !strcasecmp(value, "true")) {
-        mRecorder = new StagefrightRecorder;
-    } else
-#ifndef NO_OPENCORE
-    {
-        mRecorder = new PVMediaRecorder();
-    }
-#else
-    {
-        mRecorder = NULL;
-    }
-#endif
-
+    mRecorder = new StagefrightRecorder;
     mMediaPlayerService = service;
 }
 
@@ -337,4 +336,3 @@ status_t MediaRecorderClient::dump(int fd, const Vector<String16>& args) const {
 }
 
 }; // namespace android
-

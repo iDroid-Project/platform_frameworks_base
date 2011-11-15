@@ -17,7 +17,12 @@
 package android.bluetooth;
 
 import android.bluetooth.IBluetoothCallback;
+import android.bluetooth.IBluetoothStateChangeCallback;
+import android.bluetooth.IBluetoothHealthCallback;
+import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothHealthAppConfiguration;
 import android.os.ParcelUuid;
+import android.os.ParcelFileDescriptor;
 
 /**
  * System private API for talking with the Bluetooth service.
@@ -34,6 +39,7 @@ interface IBluetooth
     String getAddress();
     String getName();
     boolean setName(in String name);
+    ParcelUuid[] getUuids();
 
     int getScanMode();
     boolean setScanMode(int mode, int duration);
@@ -46,6 +52,12 @@ interface IBluetooth
     boolean isDiscovering();
     byte[] readOutOfBandData();
 
+    int getAdapterConnectionState();
+    int getProfileConnectionState(int profile);
+    boolean changeApplicationBluetoothState(boolean on,
+                                in IBluetoothStateChangeCallback callback, in
+                                IBinder b);
+
     boolean createBond(in String address);
     boolean createBondOutOfBand(in String address, in byte[] hash, in byte[] randomizer);
     boolean cancelBondProcess(in String address);
@@ -55,6 +67,8 @@ interface IBluetooth
     boolean setDeviceOutOfBandData(in String address, in byte[] hash, in byte[] randomizer);
 
     String getRemoteName(in String address);
+    String getRemoteAlias(in String address);
+    boolean setRemoteAlias(in String address, in String name);
     int getRemoteClass(in String address);
     ParcelUuid[] getRemoteUuids(in String address);
     boolean fetchRemoteUuids(in String address, in ParcelUuid uuid, in IBluetoothCallback callback);
@@ -72,8 +86,41 @@ interface IBluetooth
 
     int addRfcommServiceRecord(in String serviceName, in ParcelUuid uuid, int channel, IBinder b);
     void removeServiceRecord(int handle);
+    boolean allowIncomingProfileConnect(in BluetoothDevice device, boolean value);
 
     boolean connectHeadset(String address);
     boolean disconnectHeadset(String address);
     boolean notifyIncomingConnection(String address);
+
+    // HID profile APIs
+    boolean connectInputDevice(in BluetoothDevice device);
+    boolean disconnectInputDevice(in BluetoothDevice device);
+    List<BluetoothDevice> getConnectedInputDevices();
+    List<BluetoothDevice> getInputDevicesMatchingConnectionStates(in int[] states);
+    int getInputDeviceConnectionState(in BluetoothDevice device);
+    boolean setInputDevicePriority(in BluetoothDevice device, int priority);
+    int getInputDevicePriority(in BluetoothDevice device);
+
+    boolean isTetheringOn();
+    void setBluetoothTethering(boolean value);
+    int getPanDeviceConnectionState(in BluetoothDevice device);
+    List<BluetoothDevice> getConnectedPanDevices();
+    List<BluetoothDevice> getPanDevicesMatchingConnectionStates(in int[] states);
+    boolean connectPanDevice(in BluetoothDevice device);
+    boolean disconnectPanDevice(in BluetoothDevice device);
+
+    // HDP profile APIs
+    boolean registerAppConfiguration(in BluetoothHealthAppConfiguration config,
+        in IBluetoothHealthCallback callback);
+    boolean unregisterAppConfiguration(in BluetoothHealthAppConfiguration config);
+    boolean connectChannelToSource(in BluetoothDevice device, in BluetoothHealthAppConfiguration config);
+    boolean connectChannelToSink(in BluetoothDevice device, in BluetoothHealthAppConfiguration config,
+        int channelType);
+    boolean disconnectChannel(in BluetoothDevice device, in BluetoothHealthAppConfiguration config, int id);
+    ParcelFileDescriptor getMainChannelFd(in BluetoothDevice device, in BluetoothHealthAppConfiguration config);
+    List<BluetoothDevice> getConnectedHealthDevices();
+    List<BluetoothDevice> getHealthDevicesMatchingConnectionStates(in int[] states);
+    int getHealthDeviceConnectionState(in BluetoothDevice device);
+
+    void sendConnectionStateChange(in BluetoothDevice device, int profile, int state, int prevState);
 }

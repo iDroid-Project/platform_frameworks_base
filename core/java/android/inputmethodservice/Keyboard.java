@@ -97,11 +97,11 @@ public class Keyboard {
     private boolean mShifted;
     
     /** Key instance for the shift key, if present */
-    private Key mShiftKey;
-    
+    private Key[] mShiftKeys = { null, null };
+
     /** Key index for the shift key, if present */
-    private int mShiftKeyIndex = -1;
-    
+    private int[] mShiftKeyIndices = {-1, -1};
+
     /** Current key width, while loading the keyboard */
     private int mKeyWidth;
     
@@ -144,6 +144,8 @@ public class Keyboard {
     /** Number of key widths from current touch point to search for nearest keys. */
     private static float SEARCH_DISTANCE = 1.8f;
 
+    private ArrayList<Row> rows = new ArrayList<Row>();
+
     /**
      * Container for keys in the keyboard. All keys in a row are at the same Y-coordinate. 
      * Some of the key size defaults can be overridden per row from what the {@link Keyboard}
@@ -164,6 +166,9 @@ public class Keyboard {
         public int defaultHorizontalGap;
         /** Vertical gap following this row. */
         public int verticalGap;
+
+        ArrayList<Key> mKeys = new ArrayList<Key>();
+
         /**
          * Edge flags for this row of keys. Possible values that can be assigned are
          * {@link Keyboard#EDGE_TOP EDGE_TOP} and {@link Keyboard#EDGE_BOTTOM EDGE_BOTTOM}  
@@ -256,7 +261,7 @@ public class Keyboard {
         public CharSequence text;
         /** Popup characters */
         public CharSequence popupCharacters;
-        
+
         /** 
          * Flags that specify the anchoring to edges of the keyboard for detecting touch events
          * that are just out of the boundary of the key. This is a bit mask of 
@@ -504,7 +509,30 @@ public class Keyboard {
     public Keyboard(Context context, int xmlLayoutResId) {
         this(context, xmlLayoutResId, 0);
     }
-    
+
+    /**
+     * Creates a keyboard from the given xml key layout file. Weeds out rows
+     * that have a keyboard mode defined but don't match the specified mode.
+     * @param context the application or service context
+     * @param xmlLayoutResId the resource file that contains the keyboard layout and keys.
+     * @param modeId keyboard mode identifier
+     * @param width sets width of keyboard
+     * @param height sets height of keyboard
+     */
+    public Keyboard(Context context, int xmlLayoutResId, int modeId, int width, int height) {
+        mDisplayWidth = width;
+        mDisplayHeight = height;
+
+        mDefaultHorizontalGap = 0;
+        mDefaultWidth = mDisplayWidth / 10;
+        mDefaultVerticalGap = 0;
+        mDefaultHeight = mDefaultWidth;
+        mKeys = new ArrayList<Key>();
+        mModifierKeys = new ArrayList<Key>();
+        mKeyboardMode = modeId;
+        loadKeyboard(context, context.getResources().getXml(xmlLayoutResId));
+    }
+
     /**
      * Creates a keyboard from the given xml key layout file. Weeds out rows
      * that have a keyboard mode defined but don't match the specified mode. 
@@ -573,11 +601,44 @@ public class Keyboard {
             column++;
             x += key.width + key.gap;
             mKeys.add(key);
+            row.mKeys.add(key);
             if (x > mTotalWidth) {
                 mTotalWidth = x;
             }
         }
-        mTotalHeight = y + mDefaultHeight; 
+        mTotalHeight = y + mDefaultHeight;
+        rows.add(row);
+    }
+
+    final void resize(int newWidth, int newHeight) {
+        int numRows = rows.size();
+        for (int rowIndex = 0; rowIndex < numRows; ++rowIndex) {
+            Row row = rows.get(rowIndex);
+            int numKeys = row.mKeys.size();
+            int totalGap = 0;
+            int totalWidth = 0;
+            for (int keyIndex = 0; keyIndex < numKeys; ++keyIndex) {
+                Key key = row.mKeys.get(keyIndex);
+                if (keyIndex > 0) {
+                    totalGap += key.gap;
+                }
+                totalWidth += key.width;
+            }
+            if (totalGap + totalWidth > newWidth) {
+                int x = 0;
+                float scaleFactor = (float)(newWidth - totalGap) / totalWidth;
+                for (int keyIndex = 0; keyIndex < numKeys; ++keyIndex) {
+                    Key key = row.mKeys.get(keyIndex);
+                    key.width *= scaleFactor;
+                    key.x = x;
+                    x += key.width + key.gap;
+                }
+            }
+        }
+        mTotalWidth = newWidth;
+        // TODO: This does not adjust the vertical placement according to the new size.
+        // The main problem in the previous code was horizontal placement/size, but we should
+        // also recalculate the vertical sizes/positions when we get this resize call.
     }
     
     public List<Key> getKeys() {
@@ -633,8 +694,10 @@ public class Keyboard {
     }
 
     public boolean setShifted(boolean shiftState) {
-        if (mShiftKey != null) {
-            mShiftKey.on = shiftState;
+        for (Key shiftKey : mShiftKeys) {
+            if (shiftKey != null) {
+                shiftKey.on = shiftState;
+            }
         }
         if (mShifted != shiftState) {
             mShifted = shiftState;
@@ -647,8 +710,15 @@ public class Keyboard {
         return mShifted;
     }
 
+    /**
+     * @hide
+     */
+    public int[] getShiftKeyIndices() {
+        return mShiftKeyIndices;
+    }
+
     public int getShiftKeyIndex() {
-        return mShiftKeyIndex;
+        return mShiftKeyIndices[0];
     }
     
     private void computeNearestNeighbors() {
@@ -717,7 +787,7 @@ public class Keyboard {
         Row currentRow = null;
         Resources res = context.getResources();
         boolean skipRow = false;
-        
+
         try {
             int event;
             while ((event = parser.next()) != XmlResourceParser.END_DOCUMENT) {
@@ -727,6 +797,7 @@ public class Keyboard {
                         inRow = true;
                         x = 0;
                         currentRow = createRowFromXml(res, parser);
+                        rows.add(currentRow);
                         skipRow = currentRow.mode != 0 && currentRow.mode != mKeyboardMode;
                         if (skipRow) {
                             skipToEndOfRow(parser);
@@ -737,12 +808,19 @@ public class Keyboard {
                         key = createKeyFromXml(res, currentRow, x, y, parser);
                         mKeys.add(key);
                         if (key.codes[0] == KEYCODE_SHIFT) {
-                            mShiftKey = key;
-                            mShiftKeyIndex = mKeys.size()-1;
+                            // Find available shift key slot and put this shift key in it
+                            for (int i = 0; i < mShiftKeys.length; i++) {
+                                if (mShiftKeys[i] == null) {
+                                    mShiftKeys[i] = key;
+                                    mShiftKeyIndices[i] = mKeys.size()-1;
+                                    break;
+                                }
+                            }
                             mModifierKeys.add(key);
                         } else if (key.codes[0] == KEYCODE_ALT) {
                             mModifierKeys.add(key);
                         }
+                        currentRow.mKeys.add(key);
                     } else if (TAG_KEYBOARD.equals(tag)) {
                         parseKeyboardAttributes(res, parser);
                     }

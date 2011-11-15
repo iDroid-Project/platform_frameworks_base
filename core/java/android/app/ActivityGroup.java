@@ -20,13 +20,16 @@ import java.util.HashMap;
 
 import android.content.Intent;
 import android.os.Bundle;
-import android.util.Log;
 
 /**
  * A screen that contains and runs multiple embedded activities.
+ *
+ * @deprecated Use the new {@link Fragment} and {@link FragmentManager} APIs
+ * instead; these are also
+ * available on older platforms through the Android compatibility package.
  */
+@Deprecated
 public class ActivityGroup extends Activity {
-    private static final String TAG = "ActivityGroup";
     private static final String STATES_KEY = "android:states";
     static final String PARENT_NON_CONFIG_INSTANCE_KEY = "android:parent_non_config_instance";
 
@@ -110,7 +113,7 @@ public class ActivityGroup extends Activity {
         if (who != null) {
             Activity act = mLocalActivityManager.getActivity(who);
             /*
-            if (Config.LOGV) Log.v(
+            if (false) Log.v(
                 TAG, "Dispatching result: who=" + who + ", reqCode=" + requestCode
                 + ", resCode=" + resultCode + ", data=" + data
                 + ", rec=" + rec);

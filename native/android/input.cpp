@@ -92,6 +92,10 @@ int32_t AMotionEvent_getMetaState(const AInputEvent* motion_event) {
     return static_cast<const MotionEvent*>(motion_event)->getMetaState();
 }
 
+int32_t AMotionEvent_getButtonState(const AInputEvent* motion_event) {
+    return static_cast<const MotionEvent*>(motion_event)->getButtonState();
+}
+
 int32_t AMotionEvent_getEdgeFlags(const AInputEvent* motion_event) {
     return reinterpret_cast<const MotionEvent*>(motion_event)->getEdgeFlags();
 }
@@ -126,6 +130,10 @@ size_t AMotionEvent_getPointerCount(const AInputEvent* motion_event) {
 
 int32_t AMotionEvent_getPointerId(const AInputEvent* motion_event, size_t pointer_index) {
     return static_cast<const MotionEvent*>(motion_event)->getPointerId(pointer_index);
+}
+
+int32_t AMotionEvent_getToolType(const AInputEvent* motion_event, size_t pointer_index) {
+    return static_cast<const MotionEvent*>(motion_event)->getToolType(pointer_index);
 }
 
 float AMotionEvent_getRawX(const AInputEvent* motion_event, size_t pointer_index) {
@@ -170,6 +178,11 @@ float AMotionEvent_getToolMinor(const AInputEvent* motion_event, size_t pointer_
 
 float AMotionEvent_getOrientation(const AInputEvent* motion_event, size_t pointer_index) {
     return static_cast<const MotionEvent*>(motion_event)->getOrientation(pointer_index);
+}
+
+float AMotionEvent_getAxisValue(const AInputEvent* motion_event,
+        int32_t axis, size_t pointer_index) {
+    return static_cast<const MotionEvent*>(motion_event)->getAxisValue(axis, pointer_index);
 }
 
 size_t AMotionEvent_getHistorySize(const AInputEvent* motion_event) {
@@ -248,6 +261,12 @@ float AMotionEvent_getHistoricalOrientation(AInputEvent* motion_event, size_t po
             pointer_index, history_index);
 }
 
+float AMotionEvent_getHistoricalAxisValue(const AInputEvent* motion_event,
+        int32_t axis, size_t pointer_index, size_t history_index) {
+    return static_cast<const MotionEvent*>(motion_event)->getHistoricalAxisValue(
+            axis, pointer_index, history_index);
+}
+
 
 void AInputQueue_attachLooper(AInputQueue* queue, ALooper* looper,
         int ident, ALooper_callbackFunc callback, void* data) {
@@ -271,5 +290,5 @@ int32_t AInputQueue_preDispatchEvent(AInputQueue* queue, AInputEvent* event) {
 }
 
 void AInputQueue_finishEvent(AInputQueue* queue, AInputEvent* event, int handled) {
-    queue->finishEvent(event, handled != 0);
+    queue->finishEvent(event, handled != 0, false);
 }

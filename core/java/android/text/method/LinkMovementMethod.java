@@ -16,37 +16,40 @@
 
 package android.text.method;
 
-import android.content.Intent;
-import android.net.Uri;
+import android.text.Layout;
+import android.text.NoCopySpan;
+import android.text.Selection;
+import android.text.Spannable;
+import android.text.style.ClickableSpan;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
-import android.text.*;
-import android.text.style.*;
 import android.view.View;
 import android.widget.TextView;
 
-public class
-LinkMovementMethod
-extends ScrollingMovementMethod
-{
+/**
+ * A movement method that traverses links in the text buffer and scrolls if necessary.
+ * Supports clicking on links with DPad Center or Enter.
+ */
+public class LinkMovementMethod extends ScrollingMovementMethod {
     private static final int CLICK = 1;
     private static final int UP = 2;
     private static final int DOWN = 3;
 
     @Override
-    public boolean onKeyDown(TextView widget, Spannable buffer,
-                             int keyCode, KeyEvent event) {
+    protected boolean handleMovementKey(TextView widget, Spannable buffer, int keyCode,
+            int movementMetaState, KeyEvent event) {
         switch (keyCode) {
-        case KeyEvent.KEYCODE_DPAD_CENTER:
-        case KeyEvent.KEYCODE_ENTER:
-            if (event.getRepeatCount() == 0) {
-                if (action(CLICK, widget, buffer)) {
-                    return true;
+            case KeyEvent.KEYCODE_DPAD_CENTER:
+            case KeyEvent.KEYCODE_ENTER:
+                if (KeyEvent.metaStateHasNoModifiers(movementMetaState)) {
+                    if (event.getAction() == KeyEvent.ACTION_DOWN &&
+                            event.getRepeatCount() == 0 && action(CLICK, widget, buffer)) {
+                        return true;
+                    }
                 }
-            }
+                break;
         }
-
-        return super.onKeyDown(widget, buffer, keyCode, event);
+        return super.handleMovementKey(widget, buffer, keyCode, movementMetaState, event);
     }
 
     @Override
@@ -86,8 +89,6 @@ extends ScrollingMovementMethod
     }
 
     private boolean action(int what, TextView widget, Spannable buffer) {
-        boolean handled = false;
-
         Layout layout = widget.getLayout();
 
         int padding = widget.getTotalPaddingTop() +
@@ -184,11 +185,6 @@ extends ScrollingMovementMethod
         return false;
     }
 
-    public boolean onKeyUp(TextView widget, Spannable buffer,
-                           int keyCode, KeyEvent event) {
-        return false;
-    }
-
     @Override
     public boolean onTouchEvent(TextView widget, Spannable buffer,
                                 MotionEvent event) {
@@ -229,11 +225,13 @@ extends ScrollingMovementMethod
         return super.onTouchEvent(widget, buffer, event);
     }
 
+    @Override
     public void initialize(TextView widget, Spannable text) {
         Selection.removeSelection(text);
         text.removeSpan(FROM_BELOW);
     }
 
+    @Override
     public void onTakeFocus(TextView view, Spannable text, int dir) {
         Selection.removeSelection(text);
 

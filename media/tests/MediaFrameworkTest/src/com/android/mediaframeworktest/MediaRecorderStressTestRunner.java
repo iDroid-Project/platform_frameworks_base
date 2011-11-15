@@ -16,25 +16,33 @@
 
 package com.android.mediaframeworktest;
 
+import android.media.CamcorderProfile;
 import android.media.MediaRecorder;
 import android.os.Bundle;
 import android.test.InstrumentationTestRunner;
 import android.test.InstrumentationTestSuite;
 import com.android.mediaframeworktest.stress.MediaRecorderStressTest;
-import com.android.mediaframeworktest.stress.MediaPlayerStressTest;
 
+import java.util.List;
 import junit.framework.TestSuite;
 
 public class MediaRecorderStressTestRunner extends InstrumentationTestRunner {
 
-    // Default recorder settings
+    // MediaRecorder stress test sets one of the cameras as the video source. As
+    // a result, we should make sure that the encoding parameters as input to
+    // the test must be supported by the corresponding camera.
+    public static int mCameraId = 0;
+    public static int mProfileQuality = CamcorderProfile.QUALITY_HIGH;
+    public static CamcorderProfile profile =
+                        CamcorderProfile.get(mCameraId, mProfileQuality);
+
     public static int mIterations = 100;
-    public static int mVideoEncoder = MediaRecorder.VideoEncoder.H263;
-    public static int mAudioEncdoer = MediaRecorder.AudioEncoder.AMR_NB;
-    public static int mFrameRate = 20;
-    public static int mVideoWidth = 352;
-    public static int mVideoHeight = 288;
-    public static int mBitRate = 100;
+    public static int mVideoEncoder = profile.videoCodec;
+    public static int mAudioEncdoer = profile.audioCodec;
+    public static int mFrameRate = profile.videoFrameRate;
+    public static int mVideoWidth = profile.videoFrameWidth;
+    public static int mVideoHeight = profile.videoFrameHeight;
+    public static int mBitRate = profile.videoBitRate;
     public static boolean mRemoveVideo = true;
     public static int mDuration = 10000;
 
@@ -42,7 +50,6 @@ public class MediaRecorderStressTestRunner extends InstrumentationTestRunner {
     public TestSuite getAllTests() {
         TestSuite suite = new InstrumentationTestSuite(this);
         suite.addTestSuite(MediaRecorderStressTest.class);
-        suite.addTestSuite(MediaPlayerStressTest.class);
         return suite;
     }
 

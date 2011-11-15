@@ -47,16 +47,16 @@ namespace android {
 
 class NativeBuffer 
     : public EGLNativeBase<
-        android_native_buffer_t, 
+        ANativeWindowBuffer, 
         NativeBuffer, 
         LightRefBase<NativeBuffer> >
 {
 public:
     NativeBuffer(int w, int h, int f, int u) : BASE() {
-        android_native_buffer_t::width  = w;
-        android_native_buffer_t::height = h;
-        android_native_buffer_t::format = f;
-        android_native_buffer_t::usage  = u;
+        ANativeWindowBuffer::width  = w;
+        ANativeWindowBuffer::height = h;
+        ANativeWindowBuffer::format = f;
+        ANativeWindowBuffer::usage  = u;
     }
 private:
     friend class LightRefBase<NativeBuffer>;    
@@ -83,6 +83,7 @@ FramebufferNativeWindow::FramebufferNativeWindow()
     if (hw_get_module(GRALLOC_HARDWARE_MODULE_ID, &module) == 0) {
         int stride;
         int err;
+        int i;
         err = framebuffer_open(module, &fbDev);
         LOGE_IF(err, "couldn't open framebuffer HAL (%s)", strerror(-err));
         
@@ -96,27 +97,33 @@ FramebufferNativeWindow::FramebufferNativeWindow()
         mUpdateOnDemand = (fbDev->setUpdateRect != 0);
         
         // initialize the buffer FIFO
-        mNumBuffers = 2;
-        mNumFreeBuffers = 2;
+        mNumBuffers = NUM_FRAME_BUFFERS;
+        mNumFreeBuffers = NUM_FRAME_BUFFERS;
         mBufferHead = mNumBuffers-1;
-        buffers[0] = new NativeBuffer(
-                fbDev->width, fbDev->height, fbDev->format, GRALLOC_USAGE_HW_FB);
-        buffers[1] = new NativeBuffer(
-                fbDev->width, fbDev->height, fbDev->format, GRALLOC_USAGE_HW_FB);
-        
-        err = grDev->alloc(grDev,
-                fbDev->width, fbDev->height, fbDev->format, 
-                GRALLOC_USAGE_HW_FB, &buffers[0]->handle, &buffers[0]->stride);
 
-        LOGE_IF(err, "fb buffer 0 allocation failed w=%d, h=%d, err=%s",
-                fbDev->width, fbDev->height, strerror(-err));
+        for (i = 0; i < mNumBuffers; i++)
+        {
+                buffers[i] = new NativeBuffer(
+                        fbDev->width, fbDev->height, fbDev->format, GRALLOC_USAGE_HW_FB);
+        }
 
-        err = grDev->alloc(grDev,
-                fbDev->width, fbDev->height, fbDev->format, 
-                GRALLOC_USAGE_HW_FB, &buffers[1]->handle, &buffers[1]->stride);
+        for (i = 0; i < mNumBuffers; i++)
+        {
+                err = grDev->alloc(grDev,
+                        fbDev->width, fbDev->height, fbDev->format,
+                        GRALLOC_USAGE_HW_FB, &buffers[i]->handle, &buffers[i]->stride);
 
-        LOGE_IF(err, "fb buffer 1 allocation failed w=%d, h=%d, err=%s",
-                fbDev->width, fbDev->height, strerror(-err));
+                LOGE_IF(err, "fb buffer %d allocation failed w=%d, h=%d, err=%s",
+                        i, fbDev->width, fbDev->height, strerror(-err));
+
+                if (err)
+                {
+                        mNumBuffers = i;
+                        mNumFreeBuffers = i;
+                        mBufferHead = mNumBuffers-1;
+                        break;
+                }
+        }
 
         const_cast<uint32_t&>(ANativeWindow::flags) = fbDev->flags; 
         const_cast<float&>(ANativeWindow::xdpi) = fbDev->xdpi;
@@ -175,6 +182,16 @@ int FramebufferNativeWindow::setSwapInterval(
     return fb->setSwapInterval(fb, interval);
 }
 
+void FramebufferNativeWindow::dump(String8& result) {
+    if (fbDev->common.version >= 1 && fbDev->dump) {
+        const size_t SIZE = 4096;
+        char buffer[SIZE];
+
+        fbDev->dump(fbDev, buffer, SIZE);
+        result.append(buffer);
+    }
+}
+
 // only for debugging / logging
 int FramebufferNativeWindow::getCurrentBufferIndex() const
 {
@@ -184,7 +201,7 @@ int FramebufferNativeWindow::getCurrentBufferIndex() const
 }
 
 int FramebufferNativeWindow::dequeueBuffer(ANativeWindow* window, 
-        android_native_buffer_t** buffer)
+        ANativeWindowBuffer** buffer)
 {
     FramebufferNativeWindow* self = getSelf(window);
     Mutex::Autolock _l(self->mutex);
@@ -212,7 +229,7 @@ int FramebufferNativeWindow::dequeueBuffer(ANativeWindow* window,
 }
 
 int FramebufferNativeWindow::lockBuffer(ANativeWindow* window, 
-        android_native_buffer_t* buffer)
+        ANativeWindowBuffer* buffer)
 {
     FramebufferNativeWindow* self = getSelf(window);
     Mutex::Autolock _l(self->mutex);
@@ -232,7 +249,7 @@ int FramebufferNativeWindow::lockBuffer(ANativeWindow* window,
 }
 
 int FramebufferNativeWindow::queueBuffer(ANativeWindow* window, 
-        android_native_buffer_t* buffer)
+        ANativeWindowBuffer* buffer)
 {
     FramebufferNativeWindow* self = getSelf(window);
     Mutex::Autolock _l(self->mutex);
@@ -253,10 +270,10 @@ int FramebufferNativeWindow::queueBuffer(ANativeWindow* window,
     return res;
 }
 
-int FramebufferNativeWindow::query(ANativeWindow* window,
+int FramebufferNativeWindow::query(const ANativeWindow* window,
         int what, int* value) 
 {
-    FramebufferNativeWindow* self = getSelf(window);
+    const FramebufferNativeWindow* self = getSelf(window);
     Mutex::Autolock _l(self->mutex);
     framebuffer_device_t* fb = self->fbDev;
     switch (what) {
@@ -269,6 +286,21 @@ int FramebufferNativeWindow::query(ANativeWindow* window,
         case NATIVE_WINDOW_FORMAT:
             *value = fb->format;
             return NO_ERROR;
+        case NATIVE_WINDOW_CONCRETE_TYPE:
+            *value = NATIVE_WINDOW_FRAMEBUFFER;
+            return NO_ERROR;
+        case NATIVE_WINDOW_QUEUES_TO_WINDOW_COMPOSER:
+            *value = 0;
+            return NO_ERROR;
+        case NATIVE_WINDOW_DEFAULT_WIDTH:
+            *value = fb->width;
+            return NO_ERROR;
+        case NATIVE_WINDOW_DEFAULT_HEIGHT:
+            *value = fb->height;
+            return NO_ERROR;
+        case NATIVE_WINDOW_TRANSFORM_HINT:
+            *value = 0;
+            return NO_ERROR;
     }
     *value = 0;
     return BAD_VALUE;
@@ -278,14 +310,27 @@ int FramebufferNativeWindow::perform(ANativeWindow* window,
         int operation, ...)
 {
     switch (operation) {
-        case NATIVE_WINDOW_SET_USAGE:
         case NATIVE_WINDOW_CONNECT:
         case NATIVE_WINDOW_DISCONNECT:
-            break;
-        default:
-            return NAME_NOT_FOUND;
+        case NATIVE_WINDOW_SET_USAGE:
+        case NATIVE_WINDOW_SET_BUFFERS_GEOMETRY:
+        case NATIVE_WINDOW_SET_BUFFERS_DIMENSIONS:
+        case NATIVE_WINDOW_SET_BUFFERS_FORMAT:
+        case NATIVE_WINDOW_SET_BUFFERS_TRANSFORM:
+        case NATIVE_WINDOW_API_CONNECT:
+        case NATIVE_WINDOW_API_DISCONNECT:
+            // TODO: we should implement these
+            return NO_ERROR;
+
+        case NATIVE_WINDOW_LOCK:
+        case NATIVE_WINDOW_UNLOCK_AND_POST:
+        case NATIVE_WINDOW_SET_CROP:
+        case NATIVE_WINDOW_SET_BUFFER_COUNT:
+        case NATIVE_WINDOW_SET_BUFFERS_TIMESTAMP:
+        case NATIVE_WINDOW_SET_SCALING_MODE:
+            return INVALID_OPERATION;
     }
-    return NO_ERROR;
+    return NAME_NOT_FOUND;
 }
 
 // ----------------------------------------------------------------------------

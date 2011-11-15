@@ -28,6 +28,7 @@
 #include "SkBitmapRegionDecoder.h"
 #include "CreateJavaOutputStreamAdaptor.h"
 #include "Utils.h"
+#include "JNIHelp.h"
 
 #include <android_runtime/AndroidRuntime.h>
 #include "android_util_Binder.h"
@@ -38,9 +39,6 @@
 #include <jni.h>
 #include <utils/Asset.h>
 #include <sys/stat.h>
-
-static jclass gFileDescriptor_class;
-static jfieldID gFileDescriptor_descriptor;
 
 #if 0
     #define TRACE_BITMAP(code)  code
@@ -79,12 +77,9 @@ static jobject doBuildTileIndex(JNIEnv* env, SkStream* stream) {
         return nullObjectReturn("SkImageDecoder::Factory returned null");
     }
 
-    JavaPixelAllocator *javaAllocator = new JavaPixelAllocator(env, true);
+    JavaPixelAllocator *javaAllocator = new JavaPixelAllocator(env);
     decoder->setAllocator(javaAllocator);
-    JavaMemoryUsageReporter *javaMemoryReporter = new JavaMemoryUsageReporter(env);
-    decoder->setReporter(javaMemoryReporter);
     javaAllocator->unref();
-    javaMemoryReporter->unref();
 
     if (!decoder->buildTileIndex(stream, &width, &height)) {
         char msg[100];
@@ -94,7 +89,7 @@ static jobject doBuildTileIndex(JNIEnv* env, SkStream* stream) {
         return nullObjectReturn("decoder->buildTileIndex returned false");
     }
 
-    SkBitmapRegionDecoder *bm = new SkBitmapRegionDecoder(decoder, width, height);
+    SkBitmapRegionDecoder *bm = new SkBitmapRegionDecoder(decoder, stream, width, height);
 
     return GraphicsJNI::createBitmapRegionDecoder(env, bm);
 }
@@ -114,8 +109,7 @@ static jobject nativeNewInstanceFromFileDescriptor(JNIEnv* env, jobject clazz,
                                           jobject fileDescriptor, jboolean isShareable) {
     NPE_CHECK_RETURN_ZERO(env, fileDescriptor);
 
-    jint descriptor = env->GetIntField(fileDescriptor,
-                                       gFileDescriptor_descriptor);
+    jint descriptor = jniGetFDFromFileDescriptor(env, fileDescriptor);
     SkStream *stream = NULL;
     struct stat fdStat;
     int newFD;
@@ -241,15 +235,16 @@ static jobject nativeDecodeRegion(JNIEnv* env, jobject, SkBitmapRegionDecoder *b
                             getMimeTypeString(env, decoder->getFormat()));
     }
 
-    // detach bitmap from its autotdeleter, since we want to own it now
+    // detach bitmap from its autodeleter, since we want to own it now
     adb.detach();
 
-    SkPixelRef* pr;
-    pr = bitmap->pixelRef();
+    SkPixelRef* pr = bitmap->pixelRef();
     // promise we will never change our pixels (great for sharing and pictures)
     pr->setImmutable();
-    // now create the java bitmap
-    return GraphicsJNI::createBitmap(env, bitmap, false, NULL);
+
+    JavaPixelAllocator* allocator = (JavaPixelAllocator*) decoder->getAllocator();
+    jbyteArray buff = allocator->getStorageObjAndReset();
+    return GraphicsJNI::createBitmap(env, bitmap, buff, false, NULL, -1);
 }
 
 static int nativeGetHeight(JNIEnv* env, jobject, SkBitmapRegionDecoder *brd) {
@@ -302,25 +297,8 @@ static JNINativeMethod gBitmapRegionDecoderMethods[] = {
 
 #define kClassPathName  "android/graphics/BitmapRegionDecoder"
 
-static jclass make_globalref(JNIEnv* env, const char classname[]) {
-    jclass c = env->FindClass(classname);
-    SkASSERT(c);
-    return (jclass)env->NewGlobalRef(c);
-}
-
-static jfieldID getFieldIDCheck(JNIEnv* env, jclass clazz,
-                                const char fieldname[], const char type[]) {
-    jfieldID id = env->GetFieldID(clazz, fieldname, type);
-    SkASSERT(id);
-    return id;
-}
-
-int register_android_graphics_BitmapRegionDecoder(JNIEnv* env);
 int register_android_graphics_BitmapRegionDecoder(JNIEnv* env)
 {
-
-    gFileDescriptor_class = make_globalref(env, "java/io/FileDescriptor");
-    gFileDescriptor_descriptor = getFieldIDCheck(env, gFileDescriptor_class, "descriptor", "I");
     return android::AndroidRuntime::registerNativeMethods(env, kClassPathName,
             gBitmapRegionDecoderMethods, SK_ARRAY_COUNT(gBitmapRegionDecoderMethods));
 }

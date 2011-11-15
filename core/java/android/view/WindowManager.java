@@ -65,13 +65,22 @@ public interface WindowManager extends ViewManager {
      */
     public void removeViewImmediate(View view);
     
+    /**
+     * Return true if this window manager is configured to request hardware
+     * accelerated windows.  This does <em>not</em> guarantee that they will
+     * actually be accelerated, since that depends on the device supporting them.
+     * @hide
+     */
+    public boolean isHardwareAccelerated();
+    
     public static class LayoutParams extends ViewGroup.LayoutParams
             implements Parcelable {
         /**
          * X position for this window.  With the default gravity it is ignored.
-         * When using {@link Gravity#LEFT} or {@link Gravity#RIGHT} it provides
-         * an offset from the given edge.
+         * When using {@link Gravity#LEFT} or {@link Gravity#START} or {@link Gravity#RIGHT} or
+         * {@link Gravity#END} it provides an offset from the given edge.
          */
+        @ViewDebug.ExportedProperty
         public int x;
         
         /**
@@ -79,6 +88,7 @@ public interface WindowManager extends ViewManager {
          * When using {@link Gravity#TOP} or {@link Gravity#BOTTOM} it provides
          * an offset from the given edge.
          */
+        @ViewDebug.ExportedProperty
         public int y;
 
         /**
@@ -87,6 +97,7 @@ public interface WindowManager extends ViewManager {
          * should not be stretched. Otherwise the extra pixels will be pro-rated
          * among all views whose weight is greater than 0.
          */
+        @ViewDebug.ExportedProperty
         public float horizontalWeight;
 
         /**
@@ -95,8 +106,9 @@ public interface WindowManager extends ViewManager {
          * should not be stretched. Otherwise the extra pixels will be pro-rated
          * among all views whose weight is greater than 0.
          */
+        @ViewDebug.ExportedProperty
         public float verticalWeight;
-        
+
         /**
          * The general type of window.  There are three main classes of
          * window types:
@@ -159,12 +171,21 @@ public interface WindowManager extends ViewManager {
             @ViewDebug.IntToString(from = TYPE_SYSTEM_OVERLAY, to = "TYPE_SYSTEM_OVERLAY"),
             @ViewDebug.IntToString(from = TYPE_PRIORITY_PHONE, to = "TYPE_PRIORITY_PHONE"),
             @ViewDebug.IntToString(from = TYPE_STATUS_BAR_PANEL, to = "TYPE_STATUS_BAR_PANEL"),
+            @ViewDebug.IntToString(from = TYPE_STATUS_BAR_SUB_PANEL, to = "TYPE_STATUS_BAR_SUB_PANEL"),
             @ViewDebug.IntToString(from = TYPE_SYSTEM_DIALOG, to = "TYPE_SYSTEM_DIALOG"),
             @ViewDebug.IntToString(from = TYPE_KEYGUARD_DIALOG, to = "TYPE_KEYGUARD_DIALOG"),
             @ViewDebug.IntToString(from = TYPE_SYSTEM_ERROR, to = "TYPE_SYSTEM_ERROR"),
             @ViewDebug.IntToString(from = TYPE_INPUT_METHOD, to = "TYPE_INPUT_METHOD"),
             @ViewDebug.IntToString(from = TYPE_INPUT_METHOD_DIALOG, to = "TYPE_INPUT_METHOD_DIALOG"),
-            @ViewDebug.IntToString(from = TYPE_SECURE_SYSTEM_OVERLAY, to = "TYPE_SECURE_SYSTEM_OVERLAY")
+            @ViewDebug.IntToString(from = TYPE_WALLPAPER, to = "TYPE_WALLPAPER"),
+            @ViewDebug.IntToString(from = TYPE_STATUS_BAR_PANEL, to = "TYPE_STATUS_BAR_PANEL"),
+            @ViewDebug.IntToString(from = TYPE_SECURE_SYSTEM_OVERLAY, to = "TYPE_SECURE_SYSTEM_OVERLAY"),
+            @ViewDebug.IntToString(from = TYPE_DRAG, to = "TYPE_DRAG"),
+            @ViewDebug.IntToString(from = TYPE_STATUS_BAR_SUB_PANEL, to = "TYPE_STATUS_BAR_SUB_PANEL"),
+            @ViewDebug.IntToString(from = TYPE_POINTER, to = "TYPE_POINTER"),
+            @ViewDebug.IntToString(from = TYPE_NAVIGATION_BAR, to = "TYPE_NAVIGATION_BAR"),
+            @ViewDebug.IntToString(from = TYPE_VOLUME_OVERLAY, to = "TYPE_VOLUME_OVERLAY"),
+            @ViewDebug.IntToString(from = TYPE_BOOT_PROGRESS, to = "TYPE_BOOT_PROGRESS")
         })
         public int type;
     
@@ -339,7 +360,7 @@ public interface WindowManager extends ViewManager {
         public static final int TYPE_WALLPAPER          = FIRST_SYSTEM_WINDOW+13;
 
         /**
-         * Window type: panel that slides out from the status bar
+         * Window type: panel that slides out from over the status bar
          */
         public static final int TYPE_STATUS_BAR_PANEL   = FIRST_SYSTEM_WINDOW+14;
 
@@ -356,86 +377,74 @@ public interface WindowManager extends ViewManager {
         public static final int TYPE_SECURE_SYSTEM_OVERLAY = FIRST_SYSTEM_WINDOW+15;
 
         /**
+         * Window type: the drag-and-drop pseudowindow.  There is only one
+         * drag layer (at most), and it is placed on top of all other windows.
+         * @hide
+         */
+        public static final int TYPE_DRAG               = FIRST_SYSTEM_WINDOW+16;
+
+        /**
+         * Window type: panel that slides out from under the status bar
+         * @hide
+         */
+        public static final int TYPE_STATUS_BAR_SUB_PANEL = FIRST_SYSTEM_WINDOW+17;
+
+        /**
+         * Window type: (mouse) pointer
+         * @hide
+         */
+        public static final int TYPE_POINTER = FIRST_SYSTEM_WINDOW+18;
+
+        /**
+         * Window type: Navigation bar (when distinct from status bar)
+         * @hide
+         */
+        public static final int TYPE_NAVIGATION_BAR = FIRST_SYSTEM_WINDOW+19;
+
+        /**
+         * Window type: The volume level overlay/dialog shown when the user
+         * changes the system volume.
+         * @hide
+         */
+        public static final int TYPE_VOLUME_OVERLAY = FIRST_SYSTEM_WINDOW+20;
+
+        /**
+         * Window type: The boot progress dialog, goes on top of everything
+         * in the world.
+         * @hide
+         */
+        public static final int TYPE_BOOT_PROGRESS = FIRST_SYSTEM_WINDOW+21;
+
+        /**
+         * Window type: Fake window to consume touch events when the navigation
+         * bar is hidden.
+         * @hide
+         */
+        public static final int TYPE_HIDDEN_NAV_CONSUMER = FIRST_SYSTEM_WINDOW+22;
+
+        /**
          * End of types of system windows.
          */
         public static final int LAST_SYSTEM_WINDOW      = 2999;
-        
-        /**
-         * Specifies what type of memory buffers should be used by this window.
-         * Default is normal.
-         * 
-         * @see #MEMORY_TYPE_NORMAL
-         * @see #MEMORY_TYPE_PUSH_BUFFERS
-         */
-        public int memoryType;
 
-        /** Memory type: The window's surface is allocated in main memory. */
+        /** @deprecated this is ignored, this value is set automatically when needed. */
+        @Deprecated
         public static final int MEMORY_TYPE_NORMAL = 0;
-        /** Memory type: The window's surface is configured to be accessible
-         * by DMA engines and hardware accelerators.
-         * @deprecated this is ignored, this value is set automatically when needed.
-         */
+        /** @deprecated this is ignored, this value is set automatically when needed. */
         @Deprecated
         public static final int MEMORY_TYPE_HARDWARE = 1;
-        /** Memory type: The window's surface is configured to be accessible
-         * by graphics accelerators. 
-         * @deprecated this is ignored, this value is set automatically when needed.
-         */
+        /** @deprecated this is ignored, this value is set automatically when needed. */
         @Deprecated
         public static final int MEMORY_TYPE_GPU = 2;
-        /** Memory type: The window's surface doesn't own its buffers and
-         * therefore cannot be locked. Instead the buffers are pushed to
-         * it through native binder calls. */
+        /** @deprecated this is ignored, this value is set automatically when needed. */
+        @Deprecated
         public static final int MEMORY_TYPE_PUSH_BUFFERS = 3;
-
+        
         /**
-         * Various behavioral options/flags.  Default is none.
-         * 
-         * @see #FLAG_BLUR_BEHIND
-         * @see #FLAG_DIM_BEHIND
-         * @see #FLAG_NOT_FOCUSABLE
-         * @see #FLAG_NOT_TOUCHABLE
-         * @see #FLAG_NOT_TOUCH_MODAL
-         * @see #FLAG_LAYOUT_IN_SCREEN
-         * @see #FLAG_DITHER
-         * @see #FLAG_KEEP_SCREEN_ON
-         * @see #FLAG_FULLSCREEN
-         * @see #FLAG_FORCE_NOT_FULLSCREEN
-         * @see #FLAG_IGNORE_CHEEK_PRESSES
+         * @deprecated this is ignored
          */
-        @ViewDebug.ExportedProperty(flagMapping = {
-            @ViewDebug.FlagToString(mask = FLAG_BLUR_BEHIND, equals = FLAG_BLUR_BEHIND,
-                    name = "FLAG_BLUR_BEHIND"),
-            @ViewDebug.FlagToString(mask = FLAG_DIM_BEHIND, equals = FLAG_DIM_BEHIND,
-                    name = "FLAG_DIM_BEHIND"),
-            @ViewDebug.FlagToString(mask = FLAG_NOT_FOCUSABLE, equals = FLAG_NOT_FOCUSABLE,
-                    name = "FLAG_NOT_FOCUSABLE"),
-            @ViewDebug.FlagToString(mask = FLAG_NOT_TOUCHABLE, equals = FLAG_NOT_TOUCHABLE,
-                    name = "FLAG_NOT_TOUCHABLE"),
-            @ViewDebug.FlagToString(mask = FLAG_NOT_TOUCH_MODAL, equals = FLAG_NOT_TOUCH_MODAL,
-                    name = "FLAG_NOT_TOUCH_MODAL"),
-            @ViewDebug.FlagToString(mask = FLAG_LAYOUT_IN_SCREEN, equals = FLAG_LAYOUT_IN_SCREEN,
-                    name = "FLAG_LAYOUT_IN_SCREEN"),
-            @ViewDebug.FlagToString(mask = FLAG_DITHER, equals = FLAG_DITHER,
-                    name = "FLAG_DITHER"),
-            @ViewDebug.FlagToString(mask = FLAG_TURN_SCREEN_ON, equals = FLAG_TURN_SCREEN_ON,
-                    name = "FLAG_TURN_SCREEN_ON"),
-            @ViewDebug.FlagToString(mask = FLAG_KEEP_SCREEN_ON, equals = FLAG_KEEP_SCREEN_ON,
-                    name = "FLAG_KEEP_SCREEN_ON"),
-            @ViewDebug.FlagToString(mask = FLAG_SHOW_WHEN_LOCKED, equals = FLAG_SHOW_WHEN_LOCKED,
-                    name = "FLAG_SHOW_WHEN_LOCKED"),
-            @ViewDebug.FlagToString(mask = FLAG_ALLOW_LOCK_WHILE_SCREEN_ON, equals = FLAG_ALLOW_LOCK_WHILE_SCREEN_ON,
-                    name = "FLAG_ALLOW_LOCK_WHILE_SCREEN_ON"),
-            @ViewDebug.FlagToString(mask = FLAG_DISMISS_KEYGUARD, equals = FLAG_DISMISS_KEYGUARD,
-                    name = "FLAG_DISMISS_KEYGUARD"),
-            @ViewDebug.FlagToString(mask = FLAG_FULLSCREEN, equals = FLAG_FULLSCREEN,
-                    name = "FLAG_FULLSCREEN"),
-            @ViewDebug.FlagToString(mask = FLAG_FORCE_NOT_FULLSCREEN,
-                    equals = FLAG_FORCE_NOT_FULLSCREEN, name = "FLAG_FORCE_NOT_FULLSCREEN"),
-            @ViewDebug.FlagToString(mask = FLAG_IGNORE_CHEEK_PRESSES,
-                    equals = FLAG_IGNORE_CHEEK_PRESSES, name = "FLAG_IGNORE_CHEEK_PRESSES")
-        })
-        public int flags;
+        @Deprecated
+        public int memoryType;
         
         /** Window flag: as long as this window is visible to the user, allow
          *  the lock screen to activate while the screen is on. 
@@ -446,10 +455,12 @@ public interface WindowManager extends ViewManager {
         /** Window flag: everything behind this window will be dimmed.
          *  Use {@link #dimAmount} to control the amount of dim. */
         public static final int FLAG_DIM_BEHIND        = 0x00000002;
-        
-        /** Window flag: blur everything behind this window. */
+
+        /** Window flag: blur everything behind this window.
+         * @deprecated Blurring is no longer supported. */
+        @Deprecated
         public static final int FLAG_BLUR_BEHIND        = 0x00000004;
-        
+
         /** Window flag: this window won't ever get key input focus, so the
          * user can not send key or other button events to it.  Those will
          * instead go to whatever focusable window is behind it.  This flag
@@ -511,7 +522,7 @@ public interface WindowManager extends ViewManager {
         public static final int FLAG_DITHER             = 0x00001000;
         
         /** Window flag: don't allow screen shots while this window is
-         * displayed. */
+         * displayed. Maps to Surface.SECURE. */
         public static final int FLAG_SECURE             = 0x00002000;
         
         /** Window flag: a special mode where the layout parameters are used
@@ -606,9 +617,67 @@ public interface WindowManager extends ViewManager {
          * to which all subsequent touches of that pointer will go until that
          * pointer goes up thereby enabling touches with multiple pointers
          * to be split across multiple windows.
-         * 
-         * {@hide} */
+         */
         public static final int FLAG_SPLIT_TOUCH = 0x00800000;
+        
+        /**
+         * <p>Indicates whether this window should be hardware accelerated.
+         * Requesting hardware acceleration does not guarantee it will happen.</p>
+         * 
+         * <p>This flag can be controlled programmatically <em>only</em> to enable
+         * hardware acceleration. To enable hardware acceleration for a given
+         * window programmatically, do the following:</p>
+         * 
+         * <pre>
+         * Window w = activity.getWindow(); // in Activity's onCreate() for instance
+         * w.setFlags(WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+         *         WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED);
+         * </pre>
+         * 
+         * <p>It is important to remember that this flag <strong>must</strong>
+         * be set before setting the content view of your activity or dialog.</p>
+         * 
+         * <p>This flag cannot be used to disable hardware acceleration after it
+         * was enabled in your manifest using
+         * {@link android.R.attr#hardwareAccelerated}. If you need to selectively
+         * and programmatically disable hardware acceleration (for automated testing
+         * for instance), make sure it is turned off in your manifest and enable it
+         * on your activity or dialog when you need it instead, using the method
+         * described above.</p>
+         * 
+         * <p>This flag is automatically set by the system if the
+         * {@link android.R.attr#hardwareAccelerated android:hardwareAccelerated}
+         * XML attribute is set to true on an activity or on the application.</p>
+         */
+        public static final int FLAG_HARDWARE_ACCELERATED = 0x01000000;
+
+        // ----- HIDDEN FLAGS.
+        // These start at the high bit and go down.
+
+        /** Window flag: Enable touches to slide out of a window into neighboring
+         * windows in mid-gesture instead of being captured for the duration of
+         * the gesture.
+         *
+         * This flag changes the behavior of touch focus for this window only.
+         * Touches can slide out of the window but they cannot necessarily slide
+         * back in (unless the other window with touch focus permits it).
+         *
+         * {@hide}
+         */
+        public static final int FLAG_SLIPPERY = 0x04000000;
+
+        /**
+         * Flag for a window belonging to an activity that responds to {@link KeyEvent#KEYCODE_MENU}
+         * and therefore needs a Menu key. For devices where Menu is a physical button this flag is
+         * ignored, but on devices where the Menu key is drawn in software it may be hidden unless
+         * this flag is set.
+         *
+         * (Note that Action Bars, when available, are the preferred way to offer additional
+         * functions otherwise accessed via an options menu.)
+         *
+         * {@hide}
+         */
+        public static final int FLAG_NEEDS_MENU_KEY = 0x08000000;
 
         /** Window flag: *sigh* The lock screen wants to continue running its
          * animation while it is fading.  A kind-of hack to allow this.  Maybe
@@ -629,6 +698,125 @@ public interface WindowManager extends ViewManager {
          * it is created.
          * {@hide} */
         public static final int FLAG_SYSTEM_ERROR = 0x40000000;
+
+        /**
+         * Various behavioral options/flags.  Default is none.
+         * 
+         * @see #FLAG_ALLOW_LOCK_WHILE_SCREEN_ON
+         * @see #FLAG_DIM_BEHIND
+         * @see #FLAG_NOT_FOCUSABLE
+         * @see #FLAG_NOT_TOUCHABLE
+         * @see #FLAG_NOT_TOUCH_MODAL
+         * @see #FLAG_TOUCHABLE_WHEN_WAKING
+         * @see #FLAG_KEEP_SCREEN_ON
+         * @see #FLAG_LAYOUT_IN_SCREEN
+         * @see #FLAG_LAYOUT_NO_LIMITS
+         * @see #FLAG_FULLSCREEN
+         * @see #FLAG_FORCE_NOT_FULLSCREEN
+         * @see #FLAG_DITHER
+         * @see #FLAG_SECURE
+         * @see #FLAG_SCALED
+         * @see #FLAG_IGNORE_CHEEK_PRESSES
+         * @see #FLAG_LAYOUT_INSET_DECOR
+         * @see #FLAG_ALT_FOCUSABLE_IM
+         * @see #FLAG_WATCH_OUTSIDE_TOUCH
+         * @see #FLAG_SHOW_WHEN_LOCKED
+         * @see #FLAG_SHOW_WALLPAPER
+         * @see #FLAG_TURN_SCREEN_ON
+         * @see #FLAG_DISMISS_KEYGUARD
+         * @see #FLAG_SPLIT_TOUCH
+         * @see #FLAG_HARDWARE_ACCELERATED
+         */
+        @ViewDebug.ExportedProperty(flagMapping = {
+            @ViewDebug.FlagToString(mask = FLAG_ALLOW_LOCK_WHILE_SCREEN_ON, equals = FLAG_ALLOW_LOCK_WHILE_SCREEN_ON,
+                    name = "FLAG_ALLOW_LOCK_WHILE_SCREEN_ON"),
+            @ViewDebug.FlagToString(mask = FLAG_DIM_BEHIND, equals = FLAG_DIM_BEHIND,
+                    name = "FLAG_DIM_BEHIND"),
+            @ViewDebug.FlagToString(mask = FLAG_BLUR_BEHIND, equals = FLAG_BLUR_BEHIND,
+                    name = "FLAG_BLUR_BEHIND"),
+            @ViewDebug.FlagToString(mask = FLAG_NOT_FOCUSABLE, equals = FLAG_NOT_FOCUSABLE,
+                    name = "FLAG_NOT_FOCUSABLE"),
+            @ViewDebug.FlagToString(mask = FLAG_NOT_TOUCHABLE, equals = FLAG_NOT_TOUCHABLE,
+                    name = "FLAG_NOT_TOUCHABLE"),
+            @ViewDebug.FlagToString(mask = FLAG_NOT_TOUCH_MODAL, equals = FLAG_NOT_TOUCH_MODAL,
+                    name = "FLAG_NOT_TOUCH_MODAL"),
+            @ViewDebug.FlagToString(mask = FLAG_TOUCHABLE_WHEN_WAKING, equals = FLAG_TOUCHABLE_WHEN_WAKING,
+                    name = "FLAG_TOUCHABLE_WHEN_WAKING"),
+            @ViewDebug.FlagToString(mask = FLAG_KEEP_SCREEN_ON, equals = FLAG_KEEP_SCREEN_ON,
+                    name = "FLAG_KEEP_SCREEN_ON"),
+            @ViewDebug.FlagToString(mask = FLAG_LAYOUT_IN_SCREEN, equals = FLAG_LAYOUT_IN_SCREEN,
+                    name = "FLAG_LAYOUT_IN_SCREEN"),
+            @ViewDebug.FlagToString(mask = FLAG_LAYOUT_NO_LIMITS, equals = FLAG_LAYOUT_NO_LIMITS,
+                    name = "FLAG_LAYOUT_NO_LIMITS"),
+            @ViewDebug.FlagToString(mask = FLAG_FULLSCREEN, equals = FLAG_FULLSCREEN,
+                    name = "FLAG_FULLSCREEN"),
+            @ViewDebug.FlagToString(mask = FLAG_FORCE_NOT_FULLSCREEN, equals = FLAG_FORCE_NOT_FULLSCREEN,
+                    name = "FLAG_FORCE_NOT_FULLSCREEN"),
+            @ViewDebug.FlagToString(mask = FLAG_DITHER, equals = FLAG_DITHER,
+                    name = "FLAG_DITHER"),
+            @ViewDebug.FlagToString(mask = FLAG_SECURE, equals = FLAG_SECURE,
+                    name = "FLAG_SECURE"),
+            @ViewDebug.FlagToString(mask = FLAG_SCALED, equals = FLAG_SCALED,
+                    name = "FLAG_SCALED"),
+            @ViewDebug.FlagToString(mask = FLAG_IGNORE_CHEEK_PRESSES, equals = FLAG_IGNORE_CHEEK_PRESSES,
+                    name = "FLAG_IGNORE_CHEEK_PRESSES"),
+            @ViewDebug.FlagToString(mask = FLAG_LAYOUT_INSET_DECOR, equals = FLAG_LAYOUT_INSET_DECOR,
+                    name = "FLAG_LAYOUT_INSET_DECOR"),
+            @ViewDebug.FlagToString(mask = FLAG_ALT_FOCUSABLE_IM, equals = FLAG_ALT_FOCUSABLE_IM,
+                    name = "FLAG_ALT_FOCUSABLE_IM"),
+            @ViewDebug.FlagToString(mask = FLAG_WATCH_OUTSIDE_TOUCH, equals = FLAG_WATCH_OUTSIDE_TOUCH,
+                    name = "FLAG_WATCH_OUTSIDE_TOUCH"),
+            @ViewDebug.FlagToString(mask = FLAG_SHOW_WHEN_LOCKED, equals = FLAG_SHOW_WHEN_LOCKED,
+                    name = "FLAG_SHOW_WHEN_LOCKED"),
+            @ViewDebug.FlagToString(mask = FLAG_SHOW_WALLPAPER, equals = FLAG_SHOW_WALLPAPER,
+                    name = "FLAG_SHOW_WALLPAPER"),
+            @ViewDebug.FlagToString(mask = FLAG_TURN_SCREEN_ON, equals = FLAG_TURN_SCREEN_ON,
+                    name = "FLAG_TURN_SCREEN_ON"),
+            @ViewDebug.FlagToString(mask = FLAG_DISMISS_KEYGUARD, equals = FLAG_DISMISS_KEYGUARD,
+                    name = "FLAG_DISMISS_KEYGUARD"),
+            @ViewDebug.FlagToString(mask = FLAG_SPLIT_TOUCH, equals = FLAG_SPLIT_TOUCH,
+                    name = "FLAG_SPLIT_TOUCH"),
+            @ViewDebug.FlagToString(mask = FLAG_HARDWARE_ACCELERATED, equals = FLAG_HARDWARE_ACCELERATED,
+                    name = "FLAG_HARDWARE_ACCELERATED")
+        })
+        public int flags;
+
+        /**
+         * If the window has requested hardware acceleration, but this is not
+         * allowed in the process it is in, then still render it as if it is
+         * hardware accelerated.  This is used for the starting preview windows
+         * in the system process, which don't need to have the overhead of
+         * hardware acceleration (they are just a static rendering), but should
+         * be rendered as much to match the actual window of the app even if it
+         * is hardware accelerated.
+         * Even if the window isn't hardware accelerated, still do its rendering
+         * as if it is.
+         * Like {@link #FLAG_HARDWARE_ACCELERATED} except for trusted system windows
+         * that need hardware acceleration (e.g. LockScreen), where hardware acceleration
+         * is generally disabled. This flag must be specified in addition to 
+         * {@link #FLAG_HARDWARE_ACCELERATED} to enable hardware acceleration for system
+         * windows.
+         * 
+         * @hide
+         */
+        public static final int PRIVATE_FLAG_FAKE_HARDWARE_ACCELERATED = 0x00000001;
+
+        /**
+         * In the system process, we globally do not use hardware acceleration
+         * because there are many threads doing UI there and they an conflict.
+         * If certain parts of the UI that really do want to use hardware
+         * acceleration, this flag can be set to force it.  This is basically
+         * for the lock screen.  Anyone else using it, you are probably wrong.
+         * 
+         * @hide
+         */
+        public static final int PRIVATE_FLAG_FORCE_HARDWARE_ACCELERATED = 0x00000002;
+
+        /**
+         * Control flags that are private to the platform.
+         * @hide
+         */
+        public int privateFlags;
 
         /**
          * Given a particular set of window manager flags, determine whether
@@ -729,6 +917,12 @@ public interface WindowManager extends ViewManager {
          */
         public static final int SOFT_INPUT_ADJUST_PAN = 0x20;
         
+        /** Adjustment option for {@link #softInputMode}: set to have a window
+         * not adjust for a shown input method.  The window will not be resized,
+         * and it will not be panned to make its focus visible.
+         */
+        public static final int SOFT_INPUT_ADJUST_NOTHING = 0x30;
+
         /**
          * Bit for {@link #softInputMode}: set when the user has navigated
          * forward to the window.  This is normally set automatically for
@@ -739,28 +933,7 @@ public interface WindowManager extends ViewManager {
         public static final int SOFT_INPUT_IS_FORWARD_NAVIGATION = 0x100;
 
         /**
-         * Default value for {@link #screenBrightness} and {@link #buttonBrightness}
-         * indicating that the brightness value is not overridden for this window
-         * and normal brightness policy should be used.
-         */
-        public static final float BRIGHTNESS_OVERRIDE_NONE = -1.0f;
-
-        /**
-         * Value for {@link #screenBrightness} and {@link #buttonBrightness}
-         * indicating that the screen or button backlight brightness should be set
-         * to the lowest value when this window is in front.
-         */
-        public static final float BRIGHTNESS_OVERRIDE_OFF = 0.0f;
-
-        /**
-         * Value for {@link #screenBrightness} and {@link #buttonBrightness}
-         * indicating that the screen or button backlight brightness should be set
-         * to the hightest value when this window is in front.
-         */
-        public static final float BRIGHTNESS_OVERRIDE_FULL = 1.0f;
-
-        /**
-         * Desired operating mode for any soft input area.  May any combination
+         * Desired operating mode for any soft input area.  May be any combination
          * of:
          * 
          * <ul>
@@ -776,7 +949,17 @@ public interface WindowManager extends ViewManager {
         public int softInputMode;
         
         /**
-         * Placement of window within the screen as per {@link Gravity}
+         * Placement of window within the screen as per {@link Gravity}.  Both
+         * {@link Gravity#apply(int, int, int, android.graphics.Rect, int, int,
+         * android.graphics.Rect) Gravity.apply} and
+         * {@link Gravity#applyDisplay(int, android.graphics.Rect, android.graphics.Rect)
+         * Gravity.applyDisplay} are used during window layout, with this value
+         * given as the desired gravity.  For example you can specify
+         * {@link Gravity#DISPLAY_CLIP_HORIZONTAL Gravity.DISPLAY_CLIP_HORIZONTAL} and
+         * {@link Gravity#DISPLAY_CLIP_VERTICAL Gravity.DISPLAY_CLIP_VERTICAL} here
+         * to control the behavior of
+         * {@link Gravity#applyDisplay(int, android.graphics.Rect, android.graphics.Rect)
+         * Gravity.applyDisplay}.
          *
          * @see Gravity
          */
@@ -784,13 +967,19 @@ public interface WindowManager extends ViewManager {
     
         /**
          * The horizontal margin, as a percentage of the container's width,
-         * between the container and the widget.
+         * between the container and the widget.  See
+         * {@link Gravity#apply(int, int, int, android.graphics.Rect, int, int,
+         * android.graphics.Rect) Gravity.apply} for how this is used.  This
+         * field is added with {@link #x} to supply the <var>xAdj</var> parameter.
          */
         public float horizontalMargin;
     
         /**
          * The vertical margin, as a percentage of the container's height,
-         * between the container and the widget.
+         * between the container and the widget.  See
+         * {@link Gravity#apply(int, int, int, android.graphics.Rect, int, int,
+         * android.graphics.Rect) Gravity.apply} for how this is used.  This
+         * field is added with {@link #y} to supply the <var>yAdj</var> parameter.
          */
         public float verticalMargin;
     
@@ -819,6 +1008,27 @@ public interface WindowManager extends ViewManager {
          * dim.
          */
         public float dimAmount = 1.0f;
+
+        /**
+         * Default value for {@link #screenBrightness} and {@link #buttonBrightness}
+         * indicating that the brightness value is not overridden for this window
+         * and normal brightness policy should be used.
+         */
+        public static final float BRIGHTNESS_OVERRIDE_NONE = -1.0f;
+
+        /**
+         * Value for {@link #screenBrightness} and {@link #buttonBrightness}
+         * indicating that the screen or button backlight brightness should be set
+         * to the lowest value when this window is in front.
+         */
+        public static final float BRIGHTNESS_OVERRIDE_OFF = 0.0f;
+
+        /**
+         * Value for {@link #screenBrightness} and {@link #buttonBrightness}
+         * indicating that the screen or button backlight brightness should be set
+         * to the hightest value when this window is in front.
+         */
+        public static final float BRIGHTNESS_OVERRIDE_FULL = 1.0f;
     
         /**
          * This can be used to override the user's preferred brightness of
@@ -856,8 +1066,57 @@ public interface WindowManager extends ViewManager {
          * will be used.
          */
         public int screenOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
-        
-        
+
+        /**
+         * Control the visibility of the status bar.
+         *
+         * @see View#STATUS_BAR_VISIBLE
+         * @see View#STATUS_BAR_HIDDEN
+         */
+        public int systemUiVisibility;
+
+        /**
+         * @hide
+         * The ui visibility as requested by the views in this hierarchy.
+         * the combined value should be systemUiVisibility | subtreeSystemUiVisibility.
+         */
+        public int subtreeSystemUiVisibility;
+
+        /**
+         * Get callbacks about the system ui visibility changing.
+         * 
+         * TODO: Maybe there should be a bitfield of optional callbacks that we need.
+         *
+         * @hide
+         */
+        public boolean hasSystemUiListeners;
+
+        /**
+         * When this window has focus, disable touch pad pointer gesture processing.
+         * The window will receive raw position updates from the touch pad instead
+         * of pointer movements and synthetic touch events.
+         *
+         * @hide
+         */
+        public static final int INPUT_FEATURE_DISABLE_POINTER_GESTURES = 0x00000001;
+
+        /**
+         * Does not construct an input channel for this window.  The channel will therefore
+         * be incapable of receiving input.
+         *
+         * @hide
+         */
+        public static final int INPUT_FEATURE_NO_INPUT_CHANNEL = 0x00000002;
+
+        /**
+         * Control special features of the input subsystem.
+         *
+         * @see #INPUT_FEATURE_DISABLE_TOUCH_PAD_GESTURES
+         * @see #INPUT_FEATURE_NO_INPUT_CHANNEL
+         * @hide
+         */
+        public int inputFeatures;
+
         public LayoutParams() {
             super(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT);
             type = TYPE_APPLICATION;
@@ -922,8 +1181,8 @@ public interface WindowManager extends ViewManager {
             out.writeInt(x);
             out.writeInt(y);
             out.writeInt(type);
-            out.writeInt(memoryType);
             out.writeInt(flags);
+            out.writeInt(privateFlags);
             out.writeInt(softInputMode);
             out.writeInt(gravity);
             out.writeFloat(horizontalMargin);
@@ -938,6 +1197,10 @@ public interface WindowManager extends ViewManager {
             out.writeString(packageName);
             TextUtils.writeToParcel(mTitle, out, parcelableFlags);
             out.writeInt(screenOrientation);
+            out.writeInt(systemUiVisibility);
+            out.writeInt(subtreeSystemUiVisibility);
+            out.writeInt(hasSystemUiListeners ? 1 : 0);
+            out.writeInt(inputFeatures);
         }
         
         public static final Parcelable.Creator<LayoutParams> CREATOR
@@ -958,8 +1221,8 @@ public interface WindowManager extends ViewManager {
             x = in.readInt();
             y = in.readInt();
             type = in.readInt();
-            memoryType = in.readInt();
             flags = in.readInt();
+            privateFlags = in.readInt();
             softInputMode = in.readInt();
             gravity = in.readInt();
             horizontalMargin = in.readFloat();
@@ -974,6 +1237,10 @@ public interface WindowManager extends ViewManager {
             packageName = in.readString();
             mTitle = TextUtils.CHAR_SEQUENCE_CREATOR.createFromParcel(in);
             screenOrientation = in.readInt();
+            systemUiVisibility = in.readInt();
+            subtreeSystemUiVisibility = in.readInt();
+            hasSystemUiListeners = in.readInt() != 0;
+            inputFeatures = in.readInt();
         }
     
         @SuppressWarnings({"PointlessBitwiseExpression"})
@@ -991,7 +1258,17 @@ public interface WindowManager extends ViewManager {
         public static final int SCREEN_BRIGHTNESS_CHANGED = 1<<11;
         /** {@hide} */
         public static final int BUTTON_BRIGHTNESS_CHANGED = 1<<12;
-    
+        /** {@hide} */
+        public static final int SYSTEM_UI_VISIBILITY_CHANGED = 1<<13;
+        /** {@hide} */
+        public static final int SYSTEM_UI_LISTENER_CHANGED = 1<<14;
+        /** {@hide} */
+        public static final int INPUT_FEATURES_CHANGED = 1<<15;
+        /** {@hide} */
+        public static final int PRIVATE_FLAGS_CHANGED = 1<<16;
+        /** {@hide} */
+        public static final int EVERYTHING_CHANGED = 0xffffffff;
+
         // internal buffer to backup/restore parameters under compatibility mode.
         private int[] mCompatibilityParamsBackup = null;
         
@@ -1034,13 +1311,13 @@ public interface WindowManager extends ViewManager {
                 type = o.type;
                 changes |= TYPE_CHANGED;
             }
-            if (memoryType != o.memoryType) {
-                memoryType = o.memoryType;
-                changes |= MEMORY_TYPE_CHANGED;
-            }
             if (flags != o.flags) {
                 flags = o.flags;
                 changes |= FLAGS_CHANGED;
+            }
+            if (privateFlags != o.privateFlags) {
+                privateFlags = o.privateFlags;
+                changes |= PRIVATE_FLAGS_CHANGED;
             }
             if (softInputMode != o.softInputMode) {
                 softInputMode = o.softInputMode;
@@ -1048,14 +1325,6 @@ public interface WindowManager extends ViewManager {
             }
             if (gravity != o.gravity) {
                 gravity = o.gravity;
-                changes |= LAYOUT_CHANGED;
-            }
-            if (horizontalMargin != o.horizontalMargin) {
-                horizontalMargin = o.horizontalMargin;
-                changes |= LAYOUT_CHANGED;
-            }
-            if (verticalMargin != o.verticalMargin) {
-                verticalMargin = o.verticalMargin;
                 changes |= LAYOUT_CHANGED;
             }
             if (format != o.format) {
@@ -1101,6 +1370,24 @@ public interface WindowManager extends ViewManager {
                 screenOrientation = o.screenOrientation;
                 changes |= SCREEN_ORIENTATION_CHANGED;
             }
+
+            if (systemUiVisibility != o.systemUiVisibility
+                    || subtreeSystemUiVisibility != o.subtreeSystemUiVisibility) {
+                systemUiVisibility = o.systemUiVisibility;
+                subtreeSystemUiVisibility = o.subtreeSystemUiVisibility;
+                changes |= SYSTEM_UI_VISIBILITY_CHANGED;
+            }
+
+            if (hasSystemUiListeners != o.hasSystemUiListeners) {
+                hasSystemUiListeners = o.hasSystemUiListeners;
+                changes |= SYSTEM_UI_LISTENER_CHANGED;
+            }
+
+            if (inputFeatures != o.inputFeatures) {
+                inputFeatures = o.inputFeatures;
+                changes |= INPUT_FEATURES_CHANGED;
+            }
+
             return changes;
         }
     
@@ -1128,20 +1415,33 @@ public interface WindowManager extends ViewManager {
             sb.append('x');
             sb.append((height== MATCH_PARENT ?"fill":(height==WRAP_CONTENT?"wrap":height)));
             sb.append(")");
-            if (softInputMode != 0) {
-                sb.append(" sim=#");
-                sb.append(Integer.toHexString(softInputMode));
+            if (horizontalMargin != 0) {
+                sb.append(" hm=");
+                sb.append(horizontalMargin);
+            }
+            if (verticalMargin != 0) {
+                sb.append(" vm=");
+                sb.append(verticalMargin);
             }
             if (gravity != 0) {
                 sb.append(" gr=#");
                 sb.append(Integer.toHexString(gravity));
             }
+            if (softInputMode != 0) {
+                sb.append(" sim=#");
+                sb.append(Integer.toHexString(softInputMode));
+            }
             sb.append(" ty=");
             sb.append(type);
             sb.append(" fl=#");
             sb.append(Integer.toHexString(flags));
-            sb.append(" fmt=");
-            sb.append(format);
+            if (privateFlags != 0) {
+                sb.append(" pfl=0x").append(Integer.toHexString(privateFlags));
+            }
+            if (format != PixelFormat.OPAQUE) {
+                sb.append(" fmt=");
+                sb.append(format);
+            }
             if (windowAnimations != 0) {
                 sb.append(" wanim=0x");
                 sb.append(Integer.toHexString(windowAnimations));
@@ -1150,8 +1450,35 @@ public interface WindowManager extends ViewManager {
                 sb.append(" or=");
                 sb.append(screenOrientation);
             }
+            if (alpha != 1.0f) {
+                sb.append(" alpha=");
+                sb.append(alpha);
+            }
+            if (screenBrightness != BRIGHTNESS_OVERRIDE_NONE) {
+                sb.append(" sbrt=");
+                sb.append(screenBrightness);
+            }
+            if (buttonBrightness != BRIGHTNESS_OVERRIDE_NONE) {
+                sb.append(" bbrt=");
+                sb.append(buttonBrightness);
+            }
             if ((flags & FLAG_COMPATIBLE_WINDOW) != 0) {
                 sb.append(" compatible=true");
+            }
+            if (systemUiVisibility != 0) {
+                sb.append(" sysui=0x");
+                sb.append(Integer.toHexString(systemUiVisibility));
+            }
+            if (subtreeSystemUiVisibility != 0) {
+                sb.append(" vsysui=0x");
+                sb.append(Integer.toHexString(subtreeSystemUiVisibility));
+            }
+            if (hasSystemUiListeners) {
+                sb.append(" sysuil=");
+                sb.append(hasSystemUiListeners);
+            }
+            if (inputFeatures != 0) {
+                sb.append(" if=0x").append(Integer.toHexString(inputFeatures));
             }
             sb.append('}');
             return sb.toString();

@@ -16,29 +16,34 @@
 
 package android.webkit;
 
+import android.content.Context;
+import android.media.AudioManager;
 import android.media.MediaPlayer;
-import android.media.MediaPlayer.OnBufferingUpdateListener;
-import android.media.MediaPlayer.OnCompletionListener;
-import android.media.MediaPlayer.OnErrorListener;
-import android.media.MediaPlayer.OnPreparedListener;
-import android.media.MediaPlayer.OnSeekCompleteListener;
 import android.os.Handler;
+import android.os.Looper;
 import android.os.Message;
 import android.util.Log;
 
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Timer;
 import java.util.TimerTask;
 
 /**
- * <p>HTML5 support class for Audio.
+ * HTML5 support class for Audio.
+ *
+ * This class runs almost entirely on the WebCore thread. The exception is when
+ * accessing the WebView object to determine whether private browsing is
+ * enabled.
  */
 class HTML5Audio extends Handler
                  implements MediaPlayer.OnBufferingUpdateListener,
                             MediaPlayer.OnCompletionListener,
                             MediaPlayer.OnErrorListener,
                             MediaPlayer.OnPreparedListener,
-                            MediaPlayer.OnSeekCompleteListener {
+                            MediaPlayer.OnSeekCompleteListener,
+                            AudioManager.OnAudioFocusChangeListener {
     // Logging tag.
     private static final String LOGTAG = "HTML5Audio";
 
@@ -46,6 +51,8 @@ class HTML5Audio extends Handler
 
     // The C++ MediaPlayerPrivateAndroid object.
     private int mNativePointer;
+    // The private status of the view that created this player
+    private IsPrivateBrowsingEnabledGetter mIsPrivateBrowsingEnabledGetter;
 
     private static int IDLE        =  0;
     private static int INITIALIZED =  1;
@@ -60,9 +67,13 @@ class HTML5Audio extends Handler
 
     private String mUrl;
     private boolean mAskToPlay = false;
+    private Context mContext;
 
     // Timer thread -> UI thread
     private static final int TIMEUPDATE = 100;
+
+    private static final String COOKIE = "Cookie";
+    private static final String HIDE_URL_LOGS = "x-hide-urls-from-log";
 
     // The spec says the timer should fire every 250 ms or less.
     private static final int TIMEUPDATE_PERIOD = 250;  // ms
@@ -74,6 +85,35 @@ class HTML5Audio extends Handler
             HTML5Audio.this.obtainMessage(TIMEUPDATE).sendToTarget();
         }
     }
+
+    // Helper class to determine whether private browsing is enabled in the
+    // given WebView. Queries the WebView on the UI thread. Calls to get()
+    // block until the data is available.
+    private class IsPrivateBrowsingEnabledGetter {
+        private boolean mIsReady;
+        private boolean mIsPrivateBrowsingEnabled;
+        IsPrivateBrowsingEnabledGetter(Looper uiThreadLooper, final WebView webView) {
+            new Handler(uiThreadLooper).post(new Runnable() {
+                @Override
+                public void run() {
+                    synchronized(IsPrivateBrowsingEnabledGetter.this) {
+                        mIsPrivateBrowsingEnabled = webView.isPrivateBrowsingEnabled();
+                        mIsReady = true;
+                        IsPrivateBrowsingEnabledGetter.this.notify();
+                    }
+                }
+            });
+        }
+        synchronized boolean get() {
+            while (!mIsReady) {
+                try {
+                    wait();
+                } catch (InterruptedException e) {
+                }
+            }
+            return mIsPrivateBrowsingEnabled;
+        }
+    };
 
     @Override
     public void handleMessage(Message msg) {
@@ -138,10 +178,13 @@ class HTML5Audio extends Handler
     /**
      * @param nativePtr is the C++ pointer to the MediaPlayerPrivate object.
      */
-    public HTML5Audio(int nativePtr) {
+    public HTML5Audio(WebViewCore webViewCore, int nativePtr) {
         // Save the native ptr
         mNativePointer = nativePtr;
         resetMediaPlayer();
+        mContext = webViewCore.getContext();
+        mIsPrivateBrowsingEnabledGetter = new IsPrivateBrowsingEnabledGetter(
+                webViewCore.getContext().getMainLooper(), webViewCore.getWebView());
     }
 
     private void resetMediaPlayer() {
@@ -169,25 +212,74 @@ class HTML5Audio extends Handler
             if (mState != IDLE) {
                 resetMediaPlayer();
             }
-            mMediaPlayer.setDataSource(url);
+            String cookieValue = CookieManager.getInstance().getCookie(
+                    url, mIsPrivateBrowsingEnabledGetter.get());
+            Map<String, String> headers = new HashMap<String, String>();
+
+            if (cookieValue != null) {
+                headers.put(COOKIE, cookieValue);
+            }
+            if (mIsPrivateBrowsingEnabledGetter.get()) {
+                headers.put(HIDE_URL_LOGS, "true");
+            }
+
+            mMediaPlayer.setDataSource(url, headers);
             mState = INITIALIZED;
             mMediaPlayer.prepareAsync();
         } catch (IOException e) {
-            Log.e(LOGTAG, "couldn't load the resource: " + url + " exc: " + e);
+            String debugUrl = url.length() > 128 ? url.substring(0, 128) + "..." : url;
+            Log.e(LOGTAG, "couldn't load the resource: "+ debugUrl +" exc: " + e);
             resetMediaPlayer();
         }
     }
 
+    @Override
+    public void onAudioFocusChange(int focusChange) {
+        switch (focusChange) {
+        case AudioManager.AUDIOFOCUS_GAIN:
+            // resume playback
+            if (mMediaPlayer == null) {
+                resetMediaPlayer();
+            } else if (mState != ERROR && !mMediaPlayer.isPlaying()) {
+                mMediaPlayer.start();
+                mState = STARTED;
+            }
+            break;
+
+        case AudioManager.AUDIOFOCUS_LOSS:
+            // Lost focus for an unbounded amount of time: stop playback.
+            if (mState != ERROR && mMediaPlayer.isPlaying()) {
+                mMediaPlayer.stop();
+                mState = STOPPED;
+            }
+            break;
+
+        case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT:
+        case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK:
+            // Lost focus for a short time, but we have to stop
+            // playback.
+            if (mState != ERROR && mMediaPlayer.isPlaying()) pause();
+            break;
+        }
+    }
+
+
     private void play() {
-        if ((mState == ERROR || mState == IDLE) && mUrl != null) {
+        if ((mState >= ERROR && mState < PREPARED) && mUrl != null) {
             resetMediaPlayer();
             setDataSource(mUrl);
             mAskToPlay = true;
         }
 
         if (mState >= PREPARED) {
-            mMediaPlayer.start();
-            mState = STARTED;
+            AudioManager audioManager = (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE);
+            int result = audioManager.requestAudioFocus(this, AudioManager.STREAM_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN);
+
+            if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+                mMediaPlayer.start();
+                mState = STARTED;
+            }
         }
     }
 
@@ -207,8 +299,13 @@ class HTML5Audio extends Handler
         }
     }
 
+    /**
+     * Called only over JNI when WebKit is happy to
+     * destroy the media player.
+     */
     private void teardown() {
         mMediaPlayer.release();
+        mMediaPlayer = null;
         mState = ERROR;
         mNativePointer = 0;
     }
@@ -221,4 +318,5 @@ class HTML5Audio extends Handler
     private native void nativeOnEnded(int nativePointer);
     private native void nativeOnPrepared(int duration, int width, int height, int nativePointer);
     private native void nativeOnTimeupdate(int position, int nativePointer);
+
 }

@@ -33,15 +33,13 @@ import android.test.AndroidTestCase;
 import android.test.PerformanceTestCase;
 import android.test.suitebuilder.annotation.LargeTest;
 import android.test.suitebuilder.annotation.MediumTest;
-import android.test.suitebuilder.annotation.SmallTest;
 import android.test.suitebuilder.annotation.Suppress;
 import android.util.Log;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Random;
-
-import junit.framework.TestCase;
 
 public class DatabaseCursorTest extends AndroidTestCase implements PerformanceTestCase {
 
@@ -92,43 +90,6 @@ public class DatabaseCursorTest extends AndroidTestCase implements PerformanceTe
     }
 
     @MediumTest
-    public void testCursorUpdate() {
-        mDatabase.execSQL(
-            "CREATE TABLE test (_id INTEGER PRIMARY KEY, d INTEGER, s INTEGER);");
-        for(int i = 0; i < 20; i++) {
-            mDatabase.execSQL("INSERT INTO test (d, s) VALUES (" + i + 
-                "," + i%2 + ");");
-        }
-        
-        Cursor c = mDatabase.query("test", null, "s = 0", null, null, null, null);
-        int dCol = c.getColumnIndexOrThrow("d");
-        int sCol = c.getColumnIndexOrThrow("s");
-        
-        int count = 0;
-        while (c.moveToNext()) {
-            assertTrue(c.updateInt(dCol, 3));
-            count++;
-        }
-        assertEquals(10, count);
-        
-        assertTrue(c.commitUpdates());
-        
-        assertTrue(c.requery());
-        
-        count = 0;
-        while (c.moveToNext()) {
-            assertEquals(3, c.getInt(dCol));
-            count++;
-        }
-        
-        assertEquals(10, count);
-        assertTrue(c.moveToFirst());
-        assertTrue(c.deleteRow());
-        assertEquals(9, c.getCount());
-        c.close();
-    }
-    
-    @MediumTest
     public void testBlob() throws Exception {
         // create table
         mDatabase.execSQL(
@@ -164,24 +125,7 @@ public class DatabaseCursorTest extends AndroidTestCase implements PerformanceTe
         assertTrue(Arrays.equals(blob, cBlob));
         assertEquals(s, c.getString(sCol));
         assertEquals((double)d, c.getDouble(dCol));
-        assertEquals((long)l, c.getLong(lCol));
-        
-        // new byte[]
-        byte[] newblob = new byte[1000];
-        value = 98;
-        Arrays.fill(blob, value);        
-        
-        c.updateBlob(bCol, newblob);
-        cBlob =  c.getBlob(bCol);
-        assertTrue(Arrays.equals(newblob, cBlob));
-        
-        // commit
-        assertTrue(c.commitUpdates());
-        assertTrue(c.requery());
-        c.moveToNext();
-        cBlob =  c.getBlob(bCol);
-        assertTrue(Arrays.equals(newblob, cBlob));        
-        c.close();
+        assertEquals((long)l, c.getLong(lCol));        
     }
     
     @MediumTest
@@ -346,110 +290,7 @@ public class DatabaseCursorTest extends AndroidTestCase implements PerformanceTe
         public void onInvalidated() {
         }
     }
-    
-    //@Large
-    @Suppress
-    public void testLoadingThreadDelayRegisterData() throws Exception {
-        mDatabase.execSQL("CREATE TABLE test (_id INTEGER PRIMARY KEY, data INT);");
-        
-        final int count = 505; 
-        String sql = "INSERT INTO test (data) VALUES (?);";
-        SQLiteStatement s = mDatabase.compileStatement(sql);
-        for (int i = 0; i < count; i++) {
-            s.bindLong(1, i);
-            s.execute();
-        }
 
-        int maxRead = 500;
-        int initialRead = 5;
-        SQLiteCursor c = (SQLiteCursor)mDatabase.rawQuery("select * from test;",
-                null, initialRead, maxRead);
-        
-        TestObserver observer = new TestObserver(count, c);
-        c.getCount();
-        c.registerDataSetObserver(observer);
-        if (!observer.quit) {
-            Looper.loop();
-        }
-        c.close();
-    }
-    
-    //@LargeTest
-    @BrokenTest("Consistently times out")
-    @Suppress
-    public void testLoadingThread() throws Exception {
-        mDatabase.execSQL("CREATE TABLE test (_id INTEGER PRIMARY KEY, data INT);");
-        
-        final int count = 50000; 
-        String sql = "INSERT INTO test (data) VALUES (?);";
-        SQLiteStatement s = mDatabase.compileStatement(sql);
-        for (int i = 0; i < count; i++) {
-            s.bindLong(1, i);
-            s.execute();
-        }
-
-        int maxRead = 1000;
-        int initialRead = 5;
-        SQLiteCursor c = (SQLiteCursor)mDatabase.rawQuery("select * from test;",
-                null, initialRead, maxRead);
-        
-        TestObserver observer = new TestObserver(count, c);
-        c.registerDataSetObserver(observer);
-        c.getCount();
-        
-        Looper.loop();
-        c.close();
-    } 
-    
-    //@LargeTest
-    @BrokenTest("Consistently times out")
-    @Suppress
-    public void testLoadingThreadClose() throws Exception {
-        mDatabase.execSQL("CREATE TABLE test (_id INTEGER PRIMARY KEY, data INT);");
-        
-        final int count = 1000; 
-        String sql = "INSERT INTO test (data) VALUES (?);";
-        SQLiteStatement s = mDatabase.compileStatement(sql);
-        for (int i = 0; i < count; i++) {
-            s.bindLong(1, i);
-            s.execute();
-        }
-
-        int maxRead = 11;
-        int initialRead = 5;
-        SQLiteCursor c = (SQLiteCursor)mDatabase.rawQuery("select * from test;",
-                null, initialRead, maxRead);
-        
-        TestObserver observer = new TestObserver(count, c);
-        c.registerDataSetObserver(observer);
-        c.getCount();       
-        c.close();
-    }
-    
-    @LargeTest
-    public void testLoadingThreadDeactivate() throws Exception {
-        mDatabase.execSQL("CREATE TABLE test (_id INTEGER PRIMARY KEY, data INT);");
-        
-        final int count = 1000; 
-        String sql = "INSERT INTO test (data) VALUES (?);";
-        SQLiteStatement s = mDatabase.compileStatement(sql);
-        for (int i = 0; i < count; i++) {
-            s.bindLong(1, i);
-            s.execute();
-        }
-
-        int maxRead = 11;
-        int initialRead = 5;
-        SQLiteCursor c = (SQLiteCursor)mDatabase.rawQuery("select * from test;",
-                null, initialRead, maxRead);
-        
-        TestObserver observer = new TestObserver(count, c);
-        c.registerDataSetObserver(observer);
-        c.getCount();       
-        c.deactivate();
-        c.close();
-    }
-    
     @LargeTest
     public void testManyRowsLong() throws Exception {
         mDatabase.execSQL("CREATE TABLE test (_id INTEGER PRIMARY KEY, data INT);");
@@ -637,5 +478,36 @@ public class DatabaseCursorTest extends AndroidTestCase implements PerformanceTe
         // Test that setting query args on a deactivated cursor also works.
         c.deactivate();
         c.requery();
+    }
+    /**
+     * sometimes CursorWindow creation fails due to non-availability of memory create
+     * another CursorWindow object. One of the scenarios of its occurrence is when
+     * there are too many CursorWindow objects already opened by the process.
+     * This test is for that scenario.
+     */
+    @LargeTest
+    public void testCursorWindowFailureWhenTooManyCursorWindowsLeftOpen() {
+        mDatabase.execSQL("CREATE TABLE test (_id INTEGER PRIMARY KEY, data TEXT);");
+        mDatabase.execSQL("INSERT INTO test values(1, 'test');");
+        int N = 1024;
+        ArrayList<Cursor> cursorList = new ArrayList<Cursor>();
+        // open many cursors until a failure occurs
+        for (int i = 0; i < N; i++) {
+            try {
+                Cursor cursor = mDatabase.rawQuery("select * from test", null);
+                cursor.getCount();
+                cursorList.add(cursor);
+            } catch (CursorWindowAllocationException e) {
+                // got the exception we wanted
+                break;
+            } catch (Exception e) {
+                fail("unexpected exception: " + e.getMessage());
+                e.printStackTrace();
+                break;
+            }
+        }
+        for (Cursor c : cursorList) {
+            c.close();
+        }
     }
 }

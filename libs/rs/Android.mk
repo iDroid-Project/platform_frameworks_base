@@ -23,7 +23,16 @@ include $(BUILD_HOST_EXECUTABLE)
 # TODO: This should go into build/core/config.mk
 RSG_GENERATOR:=$(LOCAL_BUILT_MODULE)
 
+# include $(CLEAR_VARS)
+# input_data_file := $(LOCAL_PATH)/rslib.bc
+# slangdata_output_var_name := rs_runtime_lib_bc
+# LOCAL_MODULE := librslib_rt
 
+# LOCAL_MODULE_CLASS := STATIC_LIBRARIES
+
+# LOCAL_MODULE_TAGS := optional
+# include frameworks/compile/slang/SlangData.mk
+# include $(BUILD_STATIC_LIBRARY)
 
 # Build render script lib ====================
 
@@ -68,54 +77,149 @@ rs_generated_source += $(GEN)
 
 LOCAL_GENERATED_SOURCES += $(GEN)
 
-# libRS needs libacc, which isn't 64-bit clean, and so can't be built
-# for the simulator on gHardy, and therefore libRS needs to be excluded
-# from the simulator as well.
-ifneq ($(TARGET_SIMULATOR),true)
-
 LOCAL_SRC_FILES:= \
 	rsAdapter.cpp \
 	rsAllocation.cpp \
+	rsAnimation.cpp \
 	rsComponent.cpp \
 	rsContext.cpp \
 	rsDevice.cpp \
 	rsElement.cpp \
-        rsFileA3D.cpp \
-	rsLight.cpp \
+	rsFBOCache.cpp \
+	rsFifoSocket.cpp \
+	rsFileA3D.cpp \
+	rsFont.cpp \
 	rsLocklessFifo.cpp \
 	rsObjectBase.cpp \
-	rsMatrix.cpp \
-        rsMesh.cpp \
-	rsNoise.cpp \
+	rsMatrix2x2.cpp \
+	rsMatrix3x3.cpp \
+	rsMatrix4x4.cpp \
+	rsMesh.cpp \
+	rsMutex.cpp \
 	rsProgram.cpp \
 	rsProgramFragment.cpp \
-	rsProgramFragmentStore.cpp \
+	rsProgramStore.cpp \
 	rsProgramRaster.cpp \
 	rsProgramVertex.cpp \
 	rsSampler.cpp \
 	rsScript.cpp \
 	rsScriptC.cpp \
 	rsScriptC_Lib.cpp \
-        rsShaderCache.cpp \
-	rsSimpleMesh.cpp \
+	rsScriptC_LibGL.cpp \
+	rsSignal.cpp \
+	rsStream.cpp \
 	rsThreadIO.cpp \
 	rsType.cpp \
-	rsVertexArray.cpp
+	driver/rsdAllocation.cpp \
+	driver/rsdBcc.cpp \
+	driver/rsdCore.cpp \
+	driver/rsdFrameBuffer.cpp \
+	driver/rsdFrameBufferObj.cpp \
+	driver/rsdGL.cpp \
+	driver/rsdMesh.cpp \
+	driver/rsdMeshObj.cpp \
+	driver/rsdProgram.cpp \
+	driver/rsdProgramRaster.cpp \
+	driver/rsdProgramStore.cpp \
+	driver/rsdRuntimeMath.cpp \
+	driver/rsdRuntimeStubs.cpp \
+	driver/rsdSampler.cpp \
+	driver/rsdShader.cpp \
+	driver/rsdShaderCache.cpp \
+	driver/rsdVertexArray.cpp
 
-ifeq ($(TARGET_BOARD_PLATFORM), s5pc110)
-	LOCAL_CFLAGS += -DHAS_CONTEXT_PRIORITY
-endif
+LOCAL_SHARED_LIBRARIES += libz libcutils libutils libEGL libGLESv1_CM libGLESv2 libui libbcc libbcinfo
 
-LOCAL_SHARED_LIBRARIES += libcutils libutils libEGL libGLESv1_CM libGLESv2 libui libacc
+LOCAL_STATIC_LIBRARIES := libdex libft2
+
+LOCAL_C_INCLUDES += external/freetype/include external/zlib dalvik
+LOCAL_C_INCLUDES += frameworks/compile/libbcc/include
+
+LOCAL_CFLAGS += -Werror -Wall -Wno-unused-parameter -Wno-unused-variable
+
 LOCAL_LDLIBS := -lpthread -ldl
 LOCAL_MODULE:= libRS
 LOCAL_MODULE_TAGS := optional
 
 include $(BUILD_SHARED_LIBRARY)
 
-# include the java examples
-include $(addprefix $(LOCAL_PATH)/,$(addsuffix /Android.mk,\
-    java \
-    ))
+# Now build a host version for serialization
+include $(CLEAR_VARS)
+LOCAL_MODULE:= libRS
+LOCAL_MODULE_TAGS := optional
 
-endif #simulator
+intermediates := $(call intermediates-dir-for,STATIC_LIBRARIES,libRS,HOST,)
+
+# Generate custom headers
+
+GEN := $(addprefix $(intermediates)/, \
+            rsgApiStructs.h \
+            rsgApiFuncDecl.h \
+        )
+
+$(GEN) : PRIVATE_PATH := $(LOCAL_PATH)
+$(GEN) : PRIVATE_CUSTOM_TOOL = $(RSG_GENERATOR) $< $@ <$(PRIVATE_PATH)/rs.spec
+$(GEN) : $(RSG_GENERATOR) $(LOCAL_PATH)/rs.spec
+$(GEN): $(intermediates)/%.h : $(LOCAL_PATH)/%.h.rsg
+	$(transform-generated-source)
+
+LOCAL_GENERATED_SOURCES += $(GEN)
+
+# Generate custom source files
+
+GEN := $(addprefix $(intermediates)/, \
+            rsgApi.cpp \
+            rsgApiReplay.cpp \
+        )
+
+$(GEN) : PRIVATE_PATH := $(LOCAL_PATH)
+$(GEN) : PRIVATE_CUSTOM_TOOL = $(RSG_GENERATOR) $< $@ <$(PRIVATE_PATH)/rs.spec
+$(GEN) : $(RSG_GENERATOR) $(LOCAL_PATH)/rs.spec
+$(GEN): $(intermediates)/%.cpp : $(LOCAL_PATH)/%.cpp.rsg
+	$(transform-generated-source)
+
+LOCAL_GENERATED_SOURCES += $(GEN)
+
+LOCAL_CFLAGS += -Werror -Wall -Wno-unused-parameter -Wno-unused-variable
+LOCAL_CFLAGS += -DANDROID_RS_SERIALIZE
+LOCAL_CFLAGS += -fPIC
+
+LOCAL_SRC_FILES:= \
+	rsAdapter.cpp \
+	rsAllocation.cpp \
+	rsAnimation.cpp \
+	rsComponent.cpp \
+	rsContext.cpp \
+	rsDevice.cpp \
+	rsElement.cpp \
+	rsFBOCache.cpp \
+	rsFifoSocket.cpp \
+	rsFileA3D.cpp \
+	rsFont.cpp \
+	rsLocklessFifo.cpp \
+	rsObjectBase.cpp \
+	rsMatrix2x2.cpp \
+	rsMatrix3x3.cpp \
+	rsMatrix4x4.cpp \
+	rsMesh.cpp \
+	rsMutex.cpp \
+	rsProgram.cpp \
+	rsProgramFragment.cpp \
+	rsProgramStore.cpp \
+	rsProgramRaster.cpp \
+	rsProgramVertex.cpp \
+	rsSampler.cpp \
+	rsScript.cpp \
+	rsScriptC.cpp \
+	rsScriptC_Lib.cpp \
+	rsScriptC_LibGL.cpp \
+	rsSignal.cpp \
+	rsStream.cpp \
+	rsThreadIO.cpp \
+	rsType.cpp
+
+LOCAL_STATIC_LIBRARIES := libcutils libutils
+
+LOCAL_LDLIBS := -lpthread
+
+include $(BUILD_HOST_STATIC_LIBRARY)

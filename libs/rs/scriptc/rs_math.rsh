@@ -1,287 +1,248 @@
-// Float ops
-
-extern float __attribute__((overloadable)) abs(float);
-extern float2 __attribute__((overloadable)) abs(float2);
-extern float3 __attribute__((overloadable)) abs(float3);
-extern float4 __attribute__((overloadable)) abs(float4);
-extern float8 __attribute__((overloadable)) abs(float8);
-extern float16 __attribute__((overloadable)) abs(float16);
-
-extern float __attribute__((overloadable)) acos(float);
-extern float2 __attribute__((overloadable)) acos(float2);
-extern float3 __attribute__((overloadable)) acos(float3);
-extern float4 __attribute__((overloadable)) acos(float4);
-extern float8 __attribute__((overloadable)) acos(float8);
-extern float16 __attribute__((overloadable)) acos(float16);
-
-extern float __attribute__((overloadable)) asin(float);
-extern float2 __attribute__((overloadable)) asin(float2);
-extern float3 __attribute__((overloadable)) asin(float3);
-extern float4 __attribute__((overloadable)) asin(float4);
-extern float8 __attribute__((overloadable)) asin(float8);
-extern float16 __attribute__((overloadable)) asin(float16);
-
-extern float __attribute__((overloadable)) atan(float);
-extern float2 __attribute__((overloadable)) atan(float2);
-extern float3 __attribute__((overloadable)) atan(float3);
-extern float4 __attribute__((overloadable)) atan(float4);
-extern float8 __attribute__((overloadable)) atan(float8);
-extern float16 __attribute__((overloadable)) atan(float16);
-
-extern float __attribute__((overloadable)) atan2(float, float);
-extern float2 __attribute__((overloadable)) atan2(float2, float2);
-extern float3 __attribute__((overloadable)) atan2(float3, float3);
-extern float4 __attribute__((overloadable)) atan2(float4, float4);
-extern float8 __attribute__((overloadable)) atan2(float8, float8);
-extern float16 __attribute__((overloadable)) atan2(float16, float16);
-
-extern float __attribute__((overloadable)) ceil(float);
-extern float2 __attribute__((overloadable)) ceil(float2);
-extern float3 __attribute__((overloadable)) ceil(float3);
-extern float4 __attribute__((overloadable)) ceil(float4);
-extern float8 __attribute__((overloadable)) ceil(float8);
-extern float16 __attribute__((overloadable)) ceil(float16);
-
-extern float __attribute__((overloadable)) clamp(float, float, float);
-extern float2 __attribute__((overloadable)) clamp(float2, float2, float2);
-extern float3 __attribute__((overloadable)) clamp(float3, float3, float3);
-extern float4 __attribute__((overloadable)) clamp(float4, float4, float4);
-extern float8 __attribute__((overloadable)) clamp(float8, float8, float8);
-extern float16 __attribute__((overloadable)) clamp(float16, float16, float16);
-extern float __attribute__((overloadable)) clamp(float, float, float);
-extern float2 __attribute__((overloadable)) clamp(float2, float, float);
-extern float3 __attribute__((overloadable)) clamp(float3, float, float);
-extern float4 __attribute__((overloadable)) clamp(float4, float, float);
-extern float8 __attribute__((overloadable)) clamp(float8, float, float);
-extern float16 __attribute__((overloadable)) clamp(float16, float, float);
-
-extern float __attribute__((overloadable)) copysign(float, float);
-extern float2 __attribute__((overloadable)) copysign(float2, float2);
-extern float3 __attribute__((overloadable)) copysign(float3, float3);
-extern float4 __attribute__((overloadable)) copysign(float4, float4);
-extern float8 __attribute__((overloadable)) copysign(float8, float8);
-extern float16 __attribute__((overloadable)) copysign(float16, float16);
-
-extern float __attribute__((overloadable)) cos(float);
-extern float2 __attribute__((overloadable)) cos(float2);
-extern float3 __attribute__((overloadable)) cos(float3);
-extern float4 __attribute__((overloadable)) cos(float4);
-extern float8 __attribute__((overloadable)) cos(float8);
-extern float16 __attribute__((overloadable)) cos(float16);
-
-extern float __attribute__((overloadable)) degrees(float);
-extern float2 __attribute__((overloadable)) degrees(float2);
-extern float3 __attribute__((overloadable)) degrees(float3);
-extern float4 __attribute__((overloadable)) degrees(float4);
-extern float8 __attribute__((overloadable)) degrees(float8);
-extern float16 __attribute__((overloadable)) degrees(float16);
-
-extern float __attribute__((overloadable)) exp(float);
-extern float2 __attribute__((overloadable)) exp(float2);
-extern float3 __attribute__((overloadable)) exp(float3);
-extern float4 __attribute__((overloadable)) exp(float4);
-extern float8 __attribute__((overloadable)) exp(float8);
-extern float16 __attribute__((overloadable)) exp(float16);
-
-extern float __attribute__((overloadable)) exp2(float);
-extern float2 __attribute__((overloadable)) exp2(float2);
-extern float3 __attribute__((overloadable)) exp2(float3);
-extern float4 __attribute__((overloadable)) exp2(float4);
-extern float8 __attribute__((overloadable)) exp2(float8);
-extern float16 __attribute__((overloadable)) exp2(float16);
-
-extern float __attribute__((overloadable)) exp10(float);
-extern float2 __attribute__((overloadable)) exp10(float2);
-extern float3 __attribute__((overloadable)) exp10(float3);
-extern float4 __attribute__((overloadable)) exp10(float4);
-extern float8 __attribute__((overloadable)) exp10(float8);
-extern float16 __attribute__((overloadable)) exp10(float16);
-
-extern float __attribute__((overloadable)) fabs(float);
-extern float2 __attribute__((overloadable)) fabs(float2);
-extern float3 __attribute__((overloadable)) fabs(float3);
-extern float4 __attribute__((overloadable)) fabs(float4);
-extern float8 __attribute__((overloadable)) fabs(float8);
-extern float16 __attribute__((overloadable)) fabs(float16);
-
-extern float __attribute__((overloadable)) floor(float);
-extern float2 __attribute__((overloadable)) floor(float2);
-extern float3 __attribute__((overloadable)) floor(float3);
-extern float4 __attribute__((overloadable)) floor(float4);
-extern float8 __attribute__((overloadable)) floor(float8);
-extern float16 __attribute__((overloadable)) floor(float16);
-
-extern float __attribute__((overloadable)) fmax(float, float);
-extern float2 __attribute__((overloadable)) fmax(float2, float2);
-extern float3 __attribute__((overloadable)) fmax(float3, float3);
-extern float4 __attribute__((overloadable)) fmax(float4, float4);
-extern float8 __attribute__((overloadable)) fmax(float8, float8);
-extern float16 __attribute__((overloadable)) fmax(float16, float16);
-extern float2 __attribute__((overloadable)) fmax(float2, float);
-extern float3 __attribute__((overloadable)) fmax(float3, float);
-extern float4 __attribute__((overloadable)) fmax(float4, float);
-extern float8 __attribute__((overloadable)) fmax(float8, float);
-extern float16 __attribute__((overloadable)) fmax(float16, float);
-
-extern float __attribute__((overloadable)) fmin(float, float);
-extern float2 __attribute__((overloadable)) fmin(float2, float2);
-extern float3 __attribute__((overloadable)) fmin(float3, float3);
-extern float4 __attribute__((overloadable)) fmin(float4, float4);
-extern float8 __attribute__((overloadable)) fmin(float8, float8);
-extern float16 __attribute__((overloadable)) fmin(float16, float16);
-extern float2 __attribute__((overloadable)) fmin(float2, float);
-extern float3 __attribute__((overloadable)) fmin(float3, float);
-extern float4 __attribute__((overloadable)) fmin(float4, float);
-extern float8 __attribute__((overloadable)) fmin(float8, float);
-extern float16 __attribute__((overloadable)) fmin(float16, float);
-
-extern float __attribute__((overloadable)) fmod(float, float);
-extern float2 __attribute__((overloadable)) fmod(float2, float2);
-extern float3 __attribute__((overloadable)) fmod(float3, float3);
-extern float4 __attribute__((overloadable)) fmod(float4, float4);
-extern float8 __attribute__((overloadable)) fmod(float8, float8);
-extern float16 __attribute__((overloadable)) fmod(float16, float16);
-
-extern float __attribute__((overloadable)) log(float);
-extern float2 __attribute__((overloadable)) log(float2);
-extern float3 __attribute__((overloadable)) log(float3);
-extern float4 __attribute__((overloadable)) log(float4);
-extern float8 __attribute__((overloadable)) log(float8);
-extern float16 __attribute__((overloadable)) log(float16);
-
-extern float __attribute__((overloadable)) log2(float);
-extern float2 __attribute__((overloadable)) log2(float2);
-extern float3 __attribute__((overloadable)) log2(float3);
-extern float4 __attribute__((overloadable)) log2(float4);
-extern float8 __attribute__((overloadable)) log2(float8);
-extern float16 __attribute__((overloadable)) log2(float16);
-
-extern float __attribute__((overloadable)) log10(float);
-extern float2 __attribute__((overloadable)) log10(float2);
-extern float3 __attribute__((overloadable)) log10(float3);
-extern float4 __attribute__((overloadable)) log10(float4);
-extern float8 __attribute__((overloadable)) log10(float8);
-extern float16 __attribute__((overloadable)) log10(float16);
-
-extern float __attribute__((overloadable)) max(float, float);
-extern float2 __attribute__((overloadable)) max(float2, float2);
-extern float3 __attribute__((overloadable)) max(float3, float3);
-extern float4 __attribute__((overloadable)) max(float4, float4);
-extern float8 __attribute__((overloadable)) max(float8, float8);
-extern float16 __attribute__((overloadable)) max(float16, float16);
-
-extern float __attribute__((overloadable)) min(float, float);
-extern float2 __attribute__((overloadable)) min(float2, float2);
-extern float3 __attribute__((overloadable)) min(float3, float3);
-extern float4 __attribute__((overloadable)) min(float4, float4);
-extern float8 __attribute__((overloadable)) min(float8, float8);
-extern float16 __attribute__((overloadable)) min(float16, float16);
-
-extern float __attribute__((overloadable)) mix(float, float, float);
-extern float2 __attribute__((overloadable)) mix(float2, float2, float2);
-extern float3 __attribute__((overloadable)) mix(float3, float3, float3);
-extern float4 __attribute__((overloadable)) mix(float4, float4, float4);
-extern float8 __attribute__((overloadable)) mix(float8, float8, float8);
-extern float16 __attribute__((overloadable)) mix(float16, float16, float16);
-extern float __attribute__((overloadable)) mix(float, float, float);
-extern float2 __attribute__((overloadable)) mix(float2, float2, float);
-extern float3 __attribute__((overloadable)) mix(float3, float3, float);
-extern float4 __attribute__((overloadable)) mix(float4, float4, float);
-extern float8 __attribute__((overloadable)) mix(float8, float8, float);
-extern float16 __attribute__((overloadable)) mix(float16, float16, float);
-
-extern float __attribute__((overloadable)) pow(float, float);
-extern float2 __attribute__((overloadable)) pow(float2, float2);
-extern float3 __attribute__((overloadable)) pow(float3, float3);
-extern float4 __attribute__((overloadable)) pow(float4, float4);
-extern float8 __attribute__((overloadable)) pow(float8, float8);
-extern float16 __attribute__((overloadable)) pow(float16, float16);
-
-extern float __attribute__((overloadable)) radians(float);
-extern float2 __attribute__((overloadable)) radians(float2);
-extern float3 __attribute__((overloadable)) radians(float3);
-extern float4 __attribute__((overloadable)) radians(float4);
-extern float8 __attribute__((overloadable)) radians(float8);
-extern float16 __attribute__((overloadable)) radians(float16);
-
-extern float __attribute__((overloadable)) rint(float);
-extern float2 __attribute__((overloadable)) rint(float2);
-extern float3 __attribute__((overloadable)) rint(float3);
-extern float4 __attribute__((overloadable)) rint(float4);
-extern float8 __attribute__((overloadable)) rint(float8);
-extern float16 __attribute__((overloadable)) rint(float16);
-
-extern float __attribute__((overloadable)) round(float);
-extern float2 __attribute__((overloadable)) round(float2);
-extern float3 __attribute__((overloadable)) round(float3);
-extern float4 __attribute__((overloadable)) round(float4);
-extern float8 __attribute__((overloadable)) round(float8);
-extern float16 __attribute__((overloadable)) round(float16);
-
-extern float __attribute__((overloadable)) rsqrt(float);
-extern float2 __attribute__((overloadable)) rsqrt(float2);
-extern float3 __attribute__((overloadable)) rsqrt(float3);
-extern float4 __attribute__((overloadable)) rsqrt(float4);
-extern float8 __attribute__((overloadable)) rsqrt(float8);
-extern float16 __attribute__((overloadable)) rsqrt(float16);
-
-extern float __attribute__((overloadable)) sign(float);
-extern float2 __attribute__((overloadable)) sign(float2);
-extern float3 __attribute__((overloadable)) sign(float3);
-extern float4 __attribute__((overloadable)) sign(float4);
-extern float8 __attribute__((overloadable)) sign(float8);
-extern float16 __attribute__((overloadable)) sign(float16);
-
-extern float __attribute__((overloadable)) sin(float);
-extern float2 __attribute__((overloadable)) sin(float2);
-extern float3 __attribute__((overloadable)) sin(float3);
-extern float4 __attribute__((overloadable)) sin(float4);
-extern float8 __attribute__((overloadable)) sin(float8);
-extern float16 __attribute__((overloadable)) sin(float16);
-
-extern float __attribute__((overloadable)) sqrt(float);
-extern float2 __attribute__((overloadable)) sqrt(float2);
-extern float3 __attribute__((overloadable)) sqrt(float3);
-extern float4 __attribute__((overloadable)) sqrt(float4);
-extern float8 __attribute__((overloadable)) sqrt(float8);
-extern float16 __attribute__((overloadable)) sqrt(float16);
-
-extern float __attribute__((overloadable)) tan(float);
-extern float2 __attribute__((overloadable)) tan(float2);
-extern float3 __attribute__((overloadable)) tan(float3);
-extern float4 __attribute__((overloadable)) tan(float4);
-extern float8 __attribute__((overloadable)) tan(float8);
-extern float16 __attribute__((overloadable)) tan(float16);
-
-extern float __attribute__((overloadable)) trunc(float);
-extern float2 __attribute__((overloadable)) trunc(float2);
-extern float3 __attribute__((overloadable)) trunc(float3);
-extern float4 __attribute__((overloadable)) trunc(float4);
-extern float8 __attribute__((overloadable)) trunc(float8);
-extern float16 __attribute__((overloadable)) trunc(float16);
-
-
-
-
-
-
-// Int ops
-
-extern int __attribute__((overloadable)) abs(int);
-extern int2 __attribute__((overloadable)) abs(int2);
-extern int3 __attribute__((overloadable)) abs(int3);
-extern int4 __attribute__((overloadable)) abs(int4);
-extern int8 __attribute__((overloadable)) abs(int8);
-extern int16 __attribute__((overloadable)) abs(int16);
-
-
-
 /*
-extern float modf(float, float);
-extern float randf(float);
-extern float randf2(float, float);
-extern float fracf(float);
-extern float lerpf(float, float, float);
-extern float mapf(float, float, float, float, float);
-*/
+ * Copyright (C) 2011 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
+/** @file rs_math.rsh
+ *  \brief todo-jsams
+ *
+ *  todo-jsams
+ *
+ */
+
+#ifndef __RS_MATH_RSH__
+#define __RS_MATH_RSH__
+
+
+/**
+ * Return a random value between 0 (or min_value) and max_malue.
+ */
+extern int __attribute__((overloadable))
+    rsRand(int max_value);
+/**
+ * \overload
+ */
+extern int __attribute__((overloadable))
+    rsRand(int min_value, int max_value);
+/**
+ * \overload
+ */
+extern float __attribute__((overloadable))
+    rsRand(float max_value);
+/**
+ * \overload
+ */
+extern float __attribute__((overloadable))
+    rsRand(float min_value, float max_value);
+
+/**
+ * Returns the fractional part of a float
+ */
+extern float __attribute__((overloadable))
+    rsFrac(float);
+
+
+/////////////////////////////////////////////////////
+// int ops
+/////////////////////////////////////////////////////
+
+/**
+ * Clamp the value amount between low and high.
+ *
+ * @param amount  The value to clamp
+ * @param low
+ * @param high
+ */
+_RS_RUNTIME uint __attribute__((overloadable, always_inline)) rsClamp(uint amount, uint low, uint high);
+
+/**
+ * \overload
+ */
+_RS_RUNTIME int __attribute__((overloadable, always_inline)) rsClamp(int amount, int low, int high);
+/**
+ * \overload
+ */
+_RS_RUNTIME ushort __attribute__((overloadable, always_inline)) rsClamp(ushort amount, ushort low, ushort high);
+/**
+ * \overload
+ */
+_RS_RUNTIME short __attribute__((overloadable, always_inline)) rsClamp(short amount, short low, short high);
+/**
+ * \overload
+ */
+_RS_RUNTIME uchar __attribute__((overloadable, always_inline)) rsClamp(uchar amount, uchar low, uchar high);
+/**
+ * \overload
+ */
+_RS_RUNTIME char __attribute__((overloadable, always_inline)) rsClamp(char amount, char low, char high);
+
+
+/**
+ * Computes 6 frustum planes from the view projection matrix
+ * @param viewProj matrix to extract planes from
+ * @param left plane
+ * @param right plane
+ * @param top plane
+ * @param bottom plane
+ * @param near plane
+ * @param far plane
+ */
+__inline__ static void __attribute__((overloadable, always_inline))
+rsExtractFrustumPlanes(const rs_matrix4x4 *viewProj,
+                         float4 *left, float4 *right,
+                         float4 *top, float4 *bottom,
+                         float4 *near, float4 *far) {
+    // x y z w = a b c d in the plane equation
+    left->x = viewProj->m[3] + viewProj->m[0];
+    left->y = viewProj->m[7] + viewProj->m[4];
+    left->z = viewProj->m[11] + viewProj->m[8];
+    left->w = viewProj->m[15] + viewProj->m[12];
+
+    right->x = viewProj->m[3] - viewProj->m[0];
+    right->y = viewProj->m[7] - viewProj->m[4];
+    right->z = viewProj->m[11] - viewProj->m[8];
+    right->w = viewProj->m[15] - viewProj->m[12];
+
+    top->x = viewProj->m[3] - viewProj->m[1];
+    top->y = viewProj->m[7] - viewProj->m[5];
+    top->z = viewProj->m[11] - viewProj->m[9];
+    top->w = viewProj->m[15] - viewProj->m[13];
+
+    bottom->x = viewProj->m[3] + viewProj->m[1];
+    bottom->y = viewProj->m[7] + viewProj->m[5];
+    bottom->z = viewProj->m[11] + viewProj->m[9];
+    bottom->w = viewProj->m[15] + viewProj->m[13];
+
+    near->x = viewProj->m[3] + viewProj->m[2];
+    near->y = viewProj->m[7] + viewProj->m[6];
+    near->z = viewProj->m[11] + viewProj->m[10];
+    near->w = viewProj->m[15] + viewProj->m[14];
+
+    far->x = viewProj->m[3] - viewProj->m[2];
+    far->y = viewProj->m[7] - viewProj->m[6];
+    far->z = viewProj->m[11] - viewProj->m[10];
+    far->w = viewProj->m[15] - viewProj->m[14];
+
+    float len = length(left->xyz);
+    *left /= len;
+    len = length(right->xyz);
+    *right /= len;
+    len = length(top->xyz);
+    *top /= len;
+    len = length(bottom->xyz);
+    *bottom /= len;
+    len = length(near->xyz);
+    *near /= len;
+    len = length(far->xyz);
+    *far /= len;
+}
+
+/**
+ * Checks if a sphere is withing the 6 frustum planes
+ * @param sphere float4 representing the sphere
+ * @param left plane
+ * @param right plane
+ * @param top plane
+ * @param bottom plane
+ * @param near plane
+ * @param far plane
+ */
+__inline__ static bool __attribute__((overloadable, always_inline))
+rsIsSphereInFrustum(float4 *sphere,
+                      float4 *left, float4 *right,
+                      float4 *top, float4 *bottom,
+                      float4 *near, float4 *far) {
+
+    float distToCenter = dot(left->xyz, sphere->xyz) + left->w;
+    if (distToCenter < -sphere->w) {
+        return false;
+    }
+    distToCenter = dot(right->xyz, sphere->xyz) + right->w;
+    if (distToCenter < -sphere->w) {
+        return false;
+    }
+    distToCenter = dot(top->xyz, sphere->xyz) + top->w;
+    if (distToCenter < -sphere->w) {
+        return false;
+    }
+    distToCenter = dot(bottom->xyz, sphere->xyz) + bottom->w;
+    if (distToCenter < -sphere->w) {
+        return false;
+    }
+    distToCenter = dot(near->xyz, sphere->xyz) + near->w;
+    if (distToCenter < -sphere->w) {
+        return false;
+    }
+    distToCenter = dot(far->xyz, sphere->xyz) + far->w;
+    if (distToCenter < -sphere->w) {
+        return false;
+    }
+    return true;
+}
+
+
+/**
+ * Pack floating point (0-1) RGB values into a uchar4.  The alpha component is
+ * set to 255 (1.0).
+ *
+ * @param r
+ * @param g
+ * @param b
+ *
+ * @return uchar4
+ */
+_RS_RUNTIME uchar4 __attribute__((overloadable)) rsPackColorTo8888(float r, float g, float b);
+
+/**
+ * Pack floating point (0-1) RGBA values into a uchar4.
+ *
+ * @param r
+ * @param g
+ * @param b
+ * @param a
+ *
+ * @return uchar4
+ */
+_RS_RUNTIME uchar4 __attribute__((overloadable)) rsPackColorTo8888(float r, float g, float b, float a);
+
+/**
+ * Pack floating point (0-1) RGB values into a uchar4.  The alpha component is
+ * set to 255 (1.0).
+ *
+ * @param color
+ *
+ * @return uchar4
+ */
+_RS_RUNTIME uchar4 __attribute__((overloadable)) rsPackColorTo8888(float3 color);
+
+/**
+ * Pack floating point (0-1) RGBA values into a uchar4.
+ *
+ * @param color
+ *
+ * @return uchar4
+ */
+_RS_RUNTIME uchar4 __attribute__((overloadable)) rsPackColorTo8888(float4 color);
+
+/**
+ * Unpack a uchar4 color to float4.  The resulting float range will be (0-1).
+ *
+ * @param c
+ *
+ * @return float4
+ */
+_RS_RUNTIME float4 rsUnpackColor8888(uchar4 c);
+
+
+#endif

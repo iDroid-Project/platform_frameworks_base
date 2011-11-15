@@ -1,4 +1,6 @@
 page.title=Android Debug Bridge
+parent.title=Tools
+parent.link=index.html
 @jd:body
 
 <div id="qv-wrapper">
@@ -33,45 +35,9 @@ page.title=Android Debug Bridge
 </div>
 </div>
 
-<!-- 
-<p>Android Debug Bridge (adb) is a versatile tool that </a>. </p>
-
-<p>Some of ways you can use adb include:</p>
-
-<ul>
-
-</ul>
-<p>The sections below introduce adb and describe many of its common uses. </p>
-
-<h2>Contents</h2>
-<dl>
-<dt><a href="#overview">Overview</a></dt>
-<dt><a href="#issuingcommands">Issuing adb Commands</a></dt>
-<dt><a href="#devicestatus">Querying for Emulator/Device Instances</a></dt>
-<dt><a href="#directingcommands">Directing Commands to a Specific Emulator/Device Instance</a></dt>
-<dt><a href="#move">Installing an Application</a></dt>
-<dt><a href="#forwardports">Forwarding Ports</a></dt>
-<dt><a href="#copyfiles">Copying Files to or from an Emulator/Device Instance</a></dt>
-<dt><a href="#commandsummary">Listing of adb Commands </a></dt>
-<dt><a href="#shellcommands">Issuing Shell Commands</a></dt>
-    <dd><a href="#sqlite">Examining sqlite3 Databases from a Remote Shell</a></dd>
-    <dd><a href="#monkey">UI/Application Exerciser Monkey</a></dd>
-	<dd><a href="#othershellcommands">Other Shell Commands</a></dd>
-<dt><a href="#logcat">Enabling logcat Logging</a> </dt>
-	<dd><a href="#usinglogcat">Using logcat Commands</a></dd>
-	<dd><a href="#filteringoutput">Filtering Log Output</a></dd>
-	<dd><a href="#outputformat">Controlling Log Output Format</a></dd>
-	<dd><a href="#alternativebuffers">Viewing Alternative Log Buffers</a></dd>
-	<dd><a href="#stdout">Viewing stdout and stderr</a></dd>
-	<dd><a href="#logcatoptions">Listing of logcat Command Options</a></dd>
-<dt><a href="#stopping">Stopping the adb Server</a> </dt>
-</dl>
-
-<a name="overview"></a>
-
-<h2>Overview</h2>
--->
-<p>Android Debug Bridge (adb) is a versatile tool lets you manage the state of an emulator instance or Android-powered device. It is a client-server program that includes three components: </p>
+<p>Android Debug Bridge (adb) is a versatile command line tool that lets you communicate with an
+emulator instance or connected Android-powered device. It is a client-server program that includes
+three components: </p>
 
 <ul>
   <li>A client, which runs on your development machine. You can invoke a client from a shell by issuing an adb command. Other Android tools such as the ADT plugin and DDMS also create adb clients. </li>
@@ -171,7 +137,8 @@ emulator-5558&nbsp;&nbsp;device</pre>
 
 <pre>adb install &lt;path_to_apk&gt;</pre>
 
-<p>For more information about how to create an .apk file that you can install on an emulator/device instance, see <a href="{@docRoot}guide/developing/tools/aapt.html">Android Asset Packaging Tool</a> (aapt). </p>
+<p>For more information about how to create an .apk file that you can install on an emulator/device
+instance, see <a href="{@docRoot}guide/developing/building/index.html">Building and Running</a></p>
 
 <p>Note that, if you are using the Eclipse IDE and have the ADT plugin installed, you do not need to use adb (or aapt) directly to install your application on the emulator/device. Instead, the ADT plugin handles the packaging and installation of the application for you. </p>
 
@@ -313,7 +280,7 @@ emulator-5558&nbsp;&nbsp;device</pre>
 <td>Run PPP over USB.
 <ul>
 <li><code>&lt;tty&gt;</code> &mdash; the tty for PPP stream. For example <code>dev:/dev/omap_csmi_ttyl</code>. </li>
-<li><code>[parm]... </code> &mdash zero or more PPP/PPPD options, such as <code>defaultroute</code>, <code>local</code>, <code>notty</code>, etc.</li></ul>
+<li><code>[parm]... </code> &mdash; zero or more PPP/PPPD options, such as <code>defaultroute</code>, <code>local</code>, <code>notty</code>, etc.</li></ul>
 
 <p>Note that you should not automatically start a PPP connection. </p></td>
 <td></td>
@@ -465,7 +432,8 @@ application and send 500 pseudo-random events to it.</p>
 <tr>
 <td><code>dumpsys</code></td>
 <td>Dumps system data to the screen.</td>
-<td rowspan=4">The <a href="{@docRoot}guide/developing/tools/ddms.html">Dalvik Debug Monitor Service</a> (DDMS) tool offers integrated debug environment that you may find easier to use.</td>
+<td rowspan=4">The <a href="{@docRoot}guide/developing/debugging/ddms.html">Dalvik Debug Monitor Server</a> 
+(DDMS) tool offers integrated debug environment that you may find easier to use.</td>
 </tr>
 
 <tr>
@@ -535,7 +503,7 @@ application and send 500 pseudo-random events to it.</p>
 <ul>
     <li><code>V</code> &mdash; Verbose (lowest priority)</li>
 	<li><code>D</code> &mdash; Debug</li>
-	<li><code>I</code> &mdash; Info</li>
+	<li><code>I</code> &mdash; Info (default priority)</li>
 	<li><code>W</code> &mdash; Warning</li>
 	<li><code>E</code> &mdash; Error</li>
 	<li><code>F</code> &mdash; Fatal</li>
@@ -552,7 +520,7 @@ of each message, given as <code>&lt;priority&gt;/&lt;tag&gt;</code>. </p>
 
 <p>To reduce the log output to a manageable level, you can restrict log output using <em>filter expressions</em>. Filter expressions let you indicate to the system the tags-priority combinations that you are interested in &mdash; the system suppresses other messages for the specified tags. </p>
 
-<p>A filter expression follows this format <code>tag:priority ...</code>, where <code>tag</code> indicates the tag of interest and <code>priority</code> indicates the <em>minimum</em> level of priority to report for that tag.  Messages for that tag at or above the specified priority are written to the log. You can supply any number of <code>tag:priority</code> specifications in a single filter expression. The series of specifications is whitespace-delimited. </p>
+<p>A filter expression follows this format <code>tag:priority ...</code>, where <code>tag</code> indicates the tag of interest and <code>priority</code> indicates the <em>minimum</em> level of priority to report for that tag.  Messages for that tag at or above the specified priority are written to the log. You can supply any number of <code>tag:priority</code> specifications in a single filter expression. The series of specifications is whitespace-delimited. The default output is to show all log messages with the Info priority (*:I).</p>
 
 <p>Here's an example of a filter expression that suppresses all log messages except those with the tag "ActivityManager", at priority "Info" or above, and all log messages with tag "MyApp", with priority "Debug" or above:</p>
 

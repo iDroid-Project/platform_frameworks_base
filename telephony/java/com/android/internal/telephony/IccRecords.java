@@ -21,9 +21,8 @@ import android.os.Handler;
 import android.os.Message;
 import android.os.Registrant;
 import android.os.RegistrantList;
-import android.util.Log;
 
-import java.util.ArrayList;
+import com.android.internal.telephony.ims.IsimRecords;
 
 /**
  * {@hide}
@@ -73,11 +72,34 @@ public abstract class IccRecords extends Handler implements IccConstants {
     // ***** Event Constants
     protected static final int EVENT_SET_MSISDN_DONE = 30;
 
+    public static final int EVENT_GET_ICC_RECORD_DONE = 100;
+
+    /**
+     * Generic ICC record loaded callback. Subclasses can call EF load methods on
+     * {@link IccFileHandler} passing a Message for onLoaded with the what field set to
+     * {@link #EVENT_GET_ICC_RECORD_DONE} and the obj field set to an instance
+     * of this interface. The {@link #handleMessage} method in this class will print a
+     * log message using {@link #getEfName()} and decrement {@link #recordsToLoad}.
+     *
+     * If the record load was successful, {@link #onRecordLoaded} will be called with the result.
+     * Otherwise, an error log message will be output by {@link #handleMessage} and
+     * {@link #onRecordLoaded} will not be called.
+     */
+    public interface IccRecordLoaded {
+        String getEfName();
+        void onRecordLoaded(AsyncResult ar);
+    }
+
     // ***** Constructor
 
     public IccRecords(PhoneBase p) {
         this.phone = p;
     }
+
+    /**
+     * Call when the IccRecords object is no longer going to be used.
+     */
+    public abstract void dispose();
 
     protected abstract void onRadioOffOrNotAvailable();
 
@@ -97,6 +119,17 @@ public abstract class IccRecords extends Handler implements IccConstants {
 
     public void unregisterForRecordsLoaded(Handler h) {
         recordsLoadedRegistrants.remove(h);
+    }
+
+    /**
+     * Get the International Mobile Subscriber ID (IMSI) on a SIM
+     * for GSM, UMTS and like networks. Default is null if IMSI is
+     * not supported or unavailable.
+     *
+     * @return null if SIM is not yet ready or unavailable
+     */
+    public String getIMSI() {
+        return null;
     }
 
     public String getMsisdnNumber() {
@@ -220,7 +253,33 @@ public abstract class IccRecords extends Handler implements IccConstants {
     }
 
     //***** Overridden from Handler
-    public abstract void handleMessage(Message msg);
+    @Override
+    public void handleMessage(Message msg) {
+        switch (msg.what) {
+            case EVENT_GET_ICC_RECORD_DONE:
+                try {
+                    AsyncResult ar = (AsyncResult) msg.obj;
+                    IccRecordLoaded recordLoaded = (IccRecordLoaded) ar.userObj;
+                    if (DBG) log(recordLoaded.getEfName() + " LOADED");
+
+                    if (ar.exception != null) {
+                        loge("Record Load Exception: " + ar.exception);
+                    } else {
+                        recordLoaded.onRecordLoaded(ar);
+                    }
+                }catch (RuntimeException exc) {
+                    // I don't want these exceptions to be fatal
+                    loge("Exception parsing SIM record: " + exc);
+                } finally {
+                    // Count up record load responses even if they are fails
+                    onRecordLoaded();
+                }
+                break;
+
+            default:
+                super.handleMessage(msg);
+        }
+    }
 
     protected abstract void onRecordLoaded();
 
@@ -232,8 +291,76 @@ public abstract class IccRecords extends Handler implements IccConstants {
      * and TS 51.011 10.3.11 for details.
      *
      * If the SPN is not found on the SIM, the rule is always PLMN_ONLY.
+     * Generally used for GSM/UMTS and the like SIMs.
      */
-    protected abstract int getDisplayRule(String plmn);
+    public abstract int getDisplayRule(String plmn);
 
+    /**
+     * Return true if "Restriction of menu options for manual PLMN selection"
+     * bit is set or EF_CSP data is unavailable, return false otherwise.
+     * Generally used for GSM/UMTS and the like SIMs.
+     */
+    public boolean isCspPlmnEnabled() {
+        return false;
+    }
+
+    /**
+     * Returns the 5 or 6 digit MCC/MNC of the operator that
+     * provided the SIM card. Returns null of SIM is not yet ready
+     * or is not valid for the type of IccCard. Generally used for
+     * GSM/UMTS and the like SIMS
+     */
+    public String getOperatorNumeric() {
+        return null;
+    }
+
+    /**
+     * Get the current Voice call forwarding flag for GSM/UMTS and the like SIMs
+     *
+     * @return true if enabled
+     */
+    public boolean getVoiceCallForwardingFlag() {
+        return false;
+    }
+
+    /**
+     * Set the voice call forwarding flag for GSM/UMTS and the like SIMs
+     *
+     * @param line to enable/disable
+     * @param enable
+     */
+    public void setVoiceCallForwardingFlag(int line, boolean enable) {
+    }
+
+    /**
+     * Indicates wether SIM is in provisioned state or not.
+     * Overridden only if SIM can be dynamically provisioned via OTA.
+     *
+     * @return true if provisioned
+     */
+    public boolean isProvisioned () {
+        return true;
+    }
+
+    /**
+     * Write string to log file
+     *
+     * @param s is the string to write
+     */
     protected abstract void log(String s);
+
+    /**
+     * Write error string to log file.
+     *
+     * @param s is the string to write
+     */
+    protected abstract void loge(String s);
+
+    /**
+     * Return an interface to retrieve the ISIM records for IMS, if available.
+     * @return the interface to retrieve the ISIM records, or null if not supported
+     */
+    public IsimRecords getIsimRecords() {
+        return null;
+    }
 }

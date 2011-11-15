@@ -16,22 +16,45 @@
 
 package android.os;
 
-import java.io.File;
-
 import android.content.res.Resources;
 import android.os.storage.IMountService;
+import android.os.storage.StorageVolume;
+import android.util.Log;
+
+import java.io.File;
 
 /**
  * Provides access to environment variables.
  */
 public class Environment {
+    private static final String TAG = "Environment";
 
     private static final File ROOT_DIRECTORY
             = getDirectory("ANDROID_ROOT", "/system");
 
     private static final String SYSTEM_PROPERTY_EFS_ENABLED = "persist.security.efs.enabled";
 
-    private static IMountService mMntSvc = null;
+    private static final Object mLock = new Object();
+
+    private volatile static StorageVolume mPrimaryVolume = null;
+
+    private static StorageVolume getPrimaryVolume() {
+        if (mPrimaryVolume == null) {
+            synchronized (mLock) {
+                if (mPrimaryVolume == null) {
+                    try {
+                        IMountService mountService = IMountService.Stub.asInterface(ServiceManager
+                                .getService("mount"));
+                        Parcelable[] volumes = mountService.getVolumeList();
+                        mPrimaryVolume = (StorageVolume)volumes[0];
+                    } catch (Exception e) {
+                        Log.e(TAG, "couldn't talk to MountService", e);
+                    }
+                }
+            }
+        }
+        return mPrimaryVolume;
+    }
 
     /**
      * Gets the Android root directory.
@@ -90,15 +113,19 @@ public class Environment {
             = getDirectory("ANDROID_SECURE_DATA", "/data/secure");
 
     private static final File EXTERNAL_STORAGE_DIRECTORY
-            = getDirectory("EXTERNAL_STORAGE", "/sdcard");
+            = getDirectory("EXTERNAL_STORAGE", "/mnt/sdcard");
 
     private static final File EXTERNAL_STORAGE_ANDROID_DATA_DIRECTORY
-            = new File (new File(getDirectory("EXTERNAL_STORAGE", "/sdcard"),
+            = new File (new File(getDirectory("EXTERNAL_STORAGE", "/mnt/sdcard"),
                     "Android"), "data");
 
     private static final File EXTERNAL_STORAGE_ANDROID_MEDIA_DIRECTORY
-            = new File (new File(getDirectory("EXTERNAL_STORAGE", "/sdcard"),
+            = new File (new File(getDirectory("EXTERNAL_STORAGE", "/mnt/sdcard"),
                     "Android"), "media");
+
+    private static final File EXTERNAL_STORAGE_ANDROID_OBB_DIRECTORY
+            = new File (new File(getDirectory("EXTERNAL_STORAGE", "/mnt/sdcard"),
+                    "Android"), "obb");
 
     private static final File DOWNLOAD_CACHE_DIRECTORY
             = getDirectory("DOWNLOAD_CACHE", "/cache");
@@ -297,6 +324,14 @@ public class Environment {
     }
     
     /**
+     * Generates the raw path to an application's OBB files
+     * @hide
+     */
+    public static File getExternalStorageAppObbDirectory(String packageName) {
+        return new File(EXTERNAL_STORAGE_ANDROID_OBB_DIRECTORY, packageName);
+    }
+    
+    /**
      * Generates the path to an application's files.
      * @hide
      */
@@ -322,54 +357,54 @@ public class Environment {
     }
 
     /**
-     * getExternalStorageState() returns MEDIA_REMOVED if the media is not present. 
+     * {@link #getExternalStorageState()} returns MEDIA_REMOVED if the media is not present.
      */
     public static final String MEDIA_REMOVED = "removed";
      
     /**
-     * getExternalStorageState() returns MEDIA_UNMOUNTED if the media is present
+     * {@link #getExternalStorageState()} returns MEDIA_UNMOUNTED if the media is present
      * but not mounted. 
      */
     public static final String MEDIA_UNMOUNTED = "unmounted";
 
     /**
-     * getExternalStorageState() returns MEDIA_CHECKING if the media is present
+     * {@link #getExternalStorageState()} returns MEDIA_CHECKING if the media is present
      * and being disk-checked
      */
     public static final String MEDIA_CHECKING = "checking";
 
     /**
-     * getExternalStorageState() returns MEDIA_NOFS if the media is present
+     * {@link #getExternalStorageState()} returns MEDIA_NOFS if the media is present
      * but is blank or is using an unsupported filesystem
      */
     public static final String MEDIA_NOFS = "nofs";
 
     /**
-     * getExternalStorageState() returns MEDIA_MOUNTED if the media is present
+     * {@link #getExternalStorageState()} returns MEDIA_MOUNTED if the media is present
      * and mounted at its mount point with read/write access. 
      */
     public static final String MEDIA_MOUNTED = "mounted";
 
     /**
-     * getExternalStorageState() returns MEDIA_MOUNTED_READ_ONLY if the media is present
+     * {@link #getExternalStorageState()} returns MEDIA_MOUNTED_READ_ONLY if the media is present
      * and mounted at its mount point with read only access. 
      */
     public static final String MEDIA_MOUNTED_READ_ONLY = "mounted_ro";
 
     /**
-     * getExternalStorageState() returns MEDIA_SHARED if the media is present
+     * {@link #getExternalStorageState()} returns MEDIA_SHARED if the media is present
      * not mounted, and shared via USB mass storage. 
      */
     public static final String MEDIA_SHARED = "shared";
 
     /**
-     * getExternalStorageState() returns MEDIA_BAD_REMOVAL if the media was
+     * {@link #getExternalStorageState()} returns MEDIA_BAD_REMOVAL if the media was
      * removed before it was unmounted. 
      */
     public static final String MEDIA_BAD_REMOVAL = "bad_removal";
 
     /**
-     * getExternalStorageState() returns MEDIA_UNMOUNTABLE if the media is present
+     * {@link #getExternalStorageState()} returns MEDIA_UNMOUNTABLE if the media is present
      * but cannot be mounted.  Typically this happens if the file system on the
      * media is corrupted. 
      */
@@ -381,17 +416,15 @@ public class Environment {
      * <p>See {@link #getExternalStorageDirectory()} for more information.
      */
     public static String getExternalStorageState() {
-/*        try {
-            if (mMntSvc == null) {
-                mMntSvc = IMountService.Stub.asInterface(ServiceManager
-                                                         .getService("mount"));
-            }
-            return mMntSvc.getVolumeState(getExternalStorageDirectory().toString());
+        try {
+            IMountService mountService = IMountService.Stub.asInterface(ServiceManager
+                    .getService("mount"));
+            return mountService.getVolumeState(getExternalStorageDirectory()
+                    .toString());
         } catch (Exception rex) {
             return Environment.MEDIA_REMOVED;
-        } */
-    return SystemProperties.get("EXTERNAL_STORAGE_STATE", MEDIA_REMOVED);
-	}
+        }
+    }
 
     /**
      * Returns whether the primary "external" storage device is removable.
@@ -402,8 +435,26 @@ public class Environment {
      * <p>See {@link #getExternalStorageDirectory()} for more information.
      */
     public static boolean isExternalStorageRemovable() {
-        return Resources.getSystem().getBoolean(
-                com.android.internal.R.bool.config_externalStorageRemovable);
+        StorageVolume volume = getPrimaryVolume();
+        return (volume != null && volume.isRemovable());
+    }
+
+    /**
+     * Returns whether the device has an external storage device which is
+     * emulated. If true, the device does not have real external storage, and the directory
+     * returned by {@link #getExternalStorageDirectory()} will be allocated using a portion of
+     * the internal storage system.
+     *
+     * <p>Certain system services, such as the package manager, use this
+     * to determine where to install an application.
+     *
+     * <p>Emulated external storage may also be encrypted - see
+     * {@link android.app.admin.DevicePolicyManager#setStorageEncryption(
+     * android.content.ComponentName, boolean)} for additional details.
+     */
+    public static boolean isExternalStorageEmulated() {
+        StorageVolume volume = getPrimaryVolume();
+        return (volume != null && volume.isEmulated());
     }
 
     static File getDirectory(String variableName, String defaultPath) {

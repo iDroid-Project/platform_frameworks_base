@@ -62,10 +62,27 @@ public class SimpleCursorAdapter extends ResourceCursorAdapter {
     private int mStringConversionColumn = -1;
     private CursorToStringConverter mCursorToStringConverter;
     private ViewBinder mViewBinder;
-    private String[] mOriginalFrom;
+
+    String[] mOriginalFrom;
 
     /**
-     * Constructor.
+     * Constructor the enables auto-requery.
+     *
+     * @deprecated This option is discouraged, as it results in Cursor queries
+     * being performed on the application's UI thread and thus can cause poor
+     * responsiveness or even Application Not Responding errors.  As an alternative,
+     * use {@link android.app.LoaderManager} with a {@link android.content.CursorLoader}.
+     */
+    @Deprecated
+    public SimpleCursorAdapter(Context context, int layout, Cursor c, String[] from, int[] to) {
+        super(context, layout, c);
+        mTo = to;
+        mOriginalFrom = from;
+        findColumns(from);
+    }
+
+    /**
+     * Standard constructor.
      * 
      * @param context The context where the ListView associated with this
      *            SimpleListItemFactory is running
@@ -79,9 +96,12 @@ public class SimpleCursorAdapter extends ResourceCursorAdapter {
      *            These should all be TextViews. The first N views in this list
      *            are given the values of the first N columns in the from
      *            parameter.  Can be null if the cursor is not available yet.
+     * @param flags Flags used to determine the behavior of the adapter,
+     * as per {@link CursorAdapter#CursorAdapter(Context, Cursor, int)}.
      */
-    public SimpleCursorAdapter(Context context, int layout, Cursor c, String[] from, int[] to) {
-        super(context, layout, c);
+    public SimpleCursorAdapter(Context context, int layout, Cursor c, String[] from,
+            int[] to, int flags) {
+        super(context, layout, c, flags);
         mTo = to;
         mOriginalFrom = from;
         findColumns(from);
@@ -317,10 +337,17 @@ public class SimpleCursorAdapter extends ResourceCursorAdapter {
     }
 
     @Override
-    public void changeCursor(Cursor c) {
-        super.changeCursor(c);
+    public Cursor swapCursor(Cursor c) {
+        // super.swapCursor() will notify observers before we have
+        // a valid mapping, make sure we have a mapping before this
+        // happens
+        if (mFrom == null) {
+            findColumns(mOriginalFrom);
+        }
+        Cursor res = super.swapCursor(c);
         // rescan columns in case cursor layout is different
         findColumns(mOriginalFrom);
+        return res;
     }
     
     /**
@@ -337,7 +364,13 @@ public class SimpleCursorAdapter extends ResourceCursorAdapter {
     public void changeCursorAndColumns(Cursor c, String[] from, int[] to) {
         mOriginalFrom = from;
         mTo = to;
-        super.changeCursor(c);        
+        // super.changeCursor() will notify observers before we have
+        // a valid mapping, make sure we have a mapping before this
+        // happens
+        if (mFrom == null) {
+            findColumns(mOriginalFrom);
+        }
+        super.changeCursor(c);
         findColumns(mOriginalFrom);
     }
 

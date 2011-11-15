@@ -29,68 +29,49 @@
 namespace android
 {
 
-static struct file_descriptor_offsets_t
-{
-    jclass mClass;
-    jmethodID mConstructor;
-    jfieldID mDescriptor;
-} gFileDescriptorOffsets;
-
-static struct socket_offsets_t
-{
-    jfieldID mSocketImpl;
-} gSocketOffsets;
-
-static struct socket_impl_offsets_t
-{
-    jfieldID mFileDescriptor;
-} gSocketImplOffsets;
-
 static struct parcel_file_descriptor_offsets_t
 {
-    jclass mClass;
     jfieldID mFileDescriptor;
 } gParcelFileDescriptorOffsets;
 
-static jobject android_os_ParcelFileDescriptor_getFileDescriptorFromSocket(JNIEnv* env,
-    jobject clazz, jobject object)
+static jobject android_os_ParcelFileDescriptor_getFileDescriptorFromFd(JNIEnv* env,
+    jobject clazz, jint origfd)
 {
-    jobject socketImpl = env->GetObjectField(object, gSocketOffsets.mSocketImpl);
-    jobject fileDescriptor = env->GetObjectField(socketImpl, gSocketImplOffsets.mFileDescriptor);
-    jint fd = env->GetIntField(fileDescriptor, gFileDescriptorOffsets.mDescriptor);
-    jobject fileDescriptorClone = env->NewObject(gFileDescriptorOffsets.mClass,
-        gFileDescriptorOffsets.mConstructor);
-    if (fileDescriptorClone != NULL) {
-        env->SetIntField(fileDescriptorClone, gFileDescriptorOffsets.mDescriptor, dup(fd));
+    int fd = dup(origfd);
+    if (fd < 0) {
+        jniThrowException(env, "java/io/IOException", strerror(errno));
+        return NULL;
     }
-    return fileDescriptorClone;
+    return jniCreateFileDescriptor(env, fd);
 }
 
-static int android_os_ParcelFileDescriptor_createPipeNative(JNIEnv* env,
+static jobject android_os_ParcelFileDescriptor_getFileDescriptorFromFdNoDup(JNIEnv* env,
+    jobject clazz, jint fd)
+{
+    return jniCreateFileDescriptor(env, fd);
+}
+
+static void android_os_ParcelFileDescriptor_createPipeNative(JNIEnv* env,
     jobject clazz, jobjectArray outFds)
 {
     int fds[2];
     if (pipe(fds) < 0) {
-        return -errno;
+        int therr = errno;
+        jniThrowException(env, "java/io/IOException", strerror(therr));
+        return;
     }
 
     for (int i=0; i<2; i++) {
-        jobject fdObj = env->NewObject(gFileDescriptorOffsets.mClass,
-                gFileDescriptorOffsets.mConstructor);
-        if (fdObj != NULL) {
-            env->SetIntField(fdObj, gFileDescriptorOffsets.mDescriptor, fds[i]);
-        }
+        jobject fdObj = jniCreateFileDescriptor(env, fds[i]);
         env->SetObjectArrayElement(outFds, i, fdObj);
     }
-
-    return 0;
 }
 
 static jint getFd(JNIEnv* env, jobject clazz)
 {
     jobject descriptor = env->GetObjectField(clazz, gParcelFileDescriptorOffsets.mFileDescriptor);
     if (descriptor == NULL) return -1;
-    return env->GetIntField(descriptor, gFileDescriptorOffsets.mDescriptor);
+    return jniGetFDFromFileDescriptor(env, descriptor);
 }
 
 static jlong android_os_ParcelFileDescriptor_getStatSize(JNIEnv* env,
@@ -101,16 +82,16 @@ static jlong android_os_ParcelFileDescriptor_getStatSize(JNIEnv* env,
         jniThrowException(env, "java/lang/IllegalArgumentException", "bad file descriptor");
         return -1;
     }
-    
+
     struct stat st;
     if (fstat(fd, &st) != 0) {
         return -1;
     }
-    
+
     if (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode)) {
         return st.st_size;
     }
-    
+
     return -1;
 }
 
@@ -122,50 +103,42 @@ static jlong android_os_ParcelFileDescriptor_seekTo(JNIEnv* env,
         jniThrowException(env, "java/lang/IllegalArgumentException", "bad file descriptor");
         return -1;
     }
-    
+
     return lseek(fd, pos, SEEK_SET);
 }
 
+static jlong android_os_ParcelFileDescriptor_getFdNative(JNIEnv* env, jobject clazz)
+{
+    jint fd = getFd(env, clazz);
+    if (fd < 0) {
+        jniThrowException(env, "java/lang/IllegalArgumentException", "bad file descriptor");
+        return -1;
+    }
+
+    return fd;
+}
+
 static const JNINativeMethod gParcelFileDescriptorMethods[] = {
-    {"getFileDescriptorFromSocket", "(Ljava/net/Socket;)Ljava/io/FileDescriptor;",
-        (void*)android_os_ParcelFileDescriptor_getFileDescriptorFromSocket},
-    {"createPipeNative", "([Ljava/io/FileDescriptor;)I",
+    {"getFileDescriptorFromFd", "(I)Ljava/io/FileDescriptor;",
+        (void*)android_os_ParcelFileDescriptor_getFileDescriptorFromFd},
+    {"getFileDescriptorFromFdNoDup", "(I)Ljava/io/FileDescriptor;",
+        (void*)android_os_ParcelFileDescriptor_getFileDescriptorFromFdNoDup},
+    {"createPipeNative", "([Ljava/io/FileDescriptor;)V",
         (void*)android_os_ParcelFileDescriptor_createPipeNative},
     {"getStatSize", "()J",
         (void*)android_os_ParcelFileDescriptor_getStatSize},
     {"seekTo", "(J)J",
-        (void*)android_os_ParcelFileDescriptor_seekTo}
+        (void*)android_os_ParcelFileDescriptor_seekTo},
+    {"getFdNative", "()I",
+        (void*)android_os_ParcelFileDescriptor_getFdNative}
 };
 
 const char* const kParcelFileDescriptorPathName = "android/os/ParcelFileDescriptor";
 
 int register_android_os_ParcelFileDescriptor(JNIEnv* env)
 {
-    jclass clazz;
-
-    clazz = env->FindClass("java/net/Socket");
-    LOG_FATAL_IF(clazz == NULL, "Unable to find class java.net.Socket");
-    gSocketOffsets.mSocketImpl = env->GetFieldID(clazz, "impl", "Ljava/net/SocketImpl;");
-    LOG_FATAL_IF(gSocketOffsets.mSocketImpl == NULL,
-        "Unable to find impl field in java.net.Socket");
-
-    clazz = env->FindClass("java/net/SocketImpl");
-    LOG_FATAL_IF(clazz == NULL, "Unable to find class java.net.SocketImpl");
-    gSocketImplOffsets.mFileDescriptor = env->GetFieldID(clazz, "fd", "Ljava/io/FileDescriptor;");
-    LOG_FATAL_IF(gSocketImplOffsets.mFileDescriptor == NULL,
-                 "Unable to find fd field in java.net.SocketImpl");
-
-    clazz = env->FindClass("java/io/FileDescriptor");
-    LOG_FATAL_IF(clazz == NULL, "Unable to find class java.io.FileDescriptor");
-    gFileDescriptorOffsets.mClass = (jclass) env->NewGlobalRef(clazz);
-    gFileDescriptorOffsets.mConstructor = env->GetMethodID(clazz, "<init>", "()V");
-    gFileDescriptorOffsets.mDescriptor = env->GetFieldID(clazz, "descriptor", "I");
-    LOG_FATAL_IF(gFileDescriptorOffsets.mDescriptor == NULL,
-                 "Unable to find descriptor field in java.io.FileDescriptor");
-    
-    clazz = env->FindClass(kParcelFileDescriptorPathName);
+    jclass clazz = env->FindClass(kParcelFileDescriptorPathName);
     LOG_FATAL_IF(clazz == NULL, "Unable to find class android.os.ParcelFileDescriptor");
-    gParcelFileDescriptorOffsets.mClass = (jclass) env->NewGlobalRef(clazz);
     gParcelFileDescriptorOffsets.mFileDescriptor = env->GetFieldID(clazz, "mFileDescriptor", "Ljava/io/FileDescriptor;");
     LOG_FATAL_IF(gParcelFileDescriptorOffsets.mFileDescriptor == NULL,
                  "Unable to find mFileDescriptor field in android.os.ParcelFileDescriptor");

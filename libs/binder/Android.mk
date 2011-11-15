@@ -16,6 +16,7 @@
 sources := \
     Binder.cpp \
     BpBinder.cpp \
+    CursorWindow.cpp \
     IInterface.cpp \
     IMemory.cpp \
     IPCThreadState.cpp \
@@ -26,7 +27,7 @@ sources := \
     MemoryHeapBase.cpp \
     MemoryHeapPmem.cpp \
     Parcel.cpp \
-    Permission.cpp \
+    PermissionCache.cpp \
     ProcessState.cpp \
     Static.cpp
 

@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and 
  * limitations under the License.
  */
- 
+
 package com.android.internal.statusbar;
 
 import com.android.internal.statusbar.IStatusBar;
@@ -27,17 +27,24 @@ interface IStatusBarService
     void expand();
     void collapse();
     void disable(int what, IBinder token, String pkg);
-    void setIcon(String slot, String iconPackage, int iconId, int iconLevel);
+    void setIcon(String slot, String iconPackage, int iconId, int iconLevel, String contentDescription);
     void setIconVisibility(String slot, boolean visible);
     void removeIcon(String slot);
+    void topAppWindowChanged(boolean menuVisible);
+    void setImeWindowStatus(in IBinder token, int vis, int backDisposition);
 
     // ---- Methods below are for use by the status bar policy services ----
     // You need the STATUS_BAR_SERVICE permission
     void registerStatusBar(IStatusBar callbacks, out StatusBarIconList iconList,
-            out List<IBinder> notificationKeys, out List<StatusBarNotification> notifications);
+            out List<IBinder> notificationKeys, out List<StatusBarNotification> notifications,
+            out int[] switches, out List<IBinder> binders);
     void onPanelRevealed();
     void onNotificationClick(String pkg, String tag, int id);
     void onNotificationError(String pkg, String tag, int id,
             int uid, int initialPid, String message);
     void onClearAllNotifications();
+    void onNotificationClear(String pkg, String tag, int id);
+    void setSystemUiVisibility(int vis);
+    void setHardKeyboardEnabled(boolean enabled);
+    void toggleRecentApps();
 }

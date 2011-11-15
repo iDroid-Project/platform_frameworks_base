@@ -23,6 +23,7 @@ import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.ProviderInfo;
 import android.content.pm.ServiceInfo;
+import android.content.res.CompatibilityInfo;
 import android.content.res.Configuration;
 import android.os.Binder;
 import android.os.Bundle;
@@ -97,6 +98,15 @@ public abstract class ApplicationThreadNative extends Binder
             return true;
         }
 
+        case SCHEDULE_SLEEPING_TRANSACTION:
+        {
+            data.enforceInterface(IApplicationThread.descriptor);
+            IBinder b = data.readStrongBinder();
+            boolean sleeping = data.readInt() != 0;
+            scheduleSleeping(b, sleeping);
+            return true;
+        }
+
         case SCHEDULE_RESUME_ACTIVITY_TRANSACTION:
         {
             data.enforceInterface(IApplicationThread.descriptor);
@@ -122,13 +132,19 @@ public abstract class ApplicationThreadNative extends Binder
             IBinder b = data.readStrongBinder();
             int ident = data.readInt();
             ActivityInfo info = ActivityInfo.CREATOR.createFromParcel(data);
+            Configuration curConfig = Configuration.CREATOR.createFromParcel(data);
+            CompatibilityInfo compatInfo = CompatibilityInfo.CREATOR.createFromParcel(data);
             Bundle state = data.readBundle();
             List<ResultInfo> ri = data.createTypedArrayList(ResultInfo.CREATOR);
             List<Intent> pi = data.createTypedArrayList(Intent.CREATOR);
             boolean notResumed = data.readInt() != 0;
             boolean isForward = data.readInt() != 0;
-            scheduleLaunchActivity(intent, b, ident, info, state, ri, pi,
-                    notResumed, isForward);
+            String profileName = data.readString();
+            ParcelFileDescriptor profileFd = data.readInt() != 0
+                    ? data.readFileDescriptor() : null;
+            boolean autoStopProfiler = data.readInt() != 0;
+            scheduleLaunchActivity(intent, b, ident, info, curConfig, compatInfo, state, ri, pi,
+                    notResumed, isForward, profileName, profileFd, autoStopProfiler);
             return true;
         }
         
@@ -172,11 +188,12 @@ public abstract class ApplicationThreadNative extends Binder
             data.enforceInterface(IApplicationThread.descriptor);
             Intent intent = Intent.CREATOR.createFromParcel(data);
             ActivityInfo info = ActivityInfo.CREATOR.createFromParcel(data);
+            CompatibilityInfo compatInfo = CompatibilityInfo.CREATOR.createFromParcel(data);
             int resultCode = data.readInt();
             String resultData = data.readString();
             Bundle resultExtras = data.readBundle();
             boolean sync = data.readInt() != 0;
-            scheduleReceiver(intent, info, resultCode, resultData,
+            scheduleReceiver(intent, info, compatInfo, resultCode, resultData,
                     resultExtras, sync);
             return true;
         }
@@ -185,7 +202,8 @@ public abstract class ApplicationThreadNative extends Binder
             data.enforceInterface(IApplicationThread.descriptor);
             IBinder token = data.readStrongBinder();
             ServiceInfo info = ServiceInfo.CREATOR.createFromParcel(data);
-            scheduleCreateService(token, info);
+            CompatibilityInfo compatInfo = CompatibilityInfo.CREATOR.createFromParcel(data);
+            scheduleCreateService(token, info, compatInfo);
             return true;
         }
 
@@ -210,6 +228,7 @@ public abstract class ApplicationThreadNative extends Binder
         {
             data.enforceInterface(IApplicationThread.descriptor);
             IBinder token = data.readStrongBinder();
+            boolean taskRemoved = data.readInt() != 0;
             int startId = data.readInt();
             int fl = data.readInt();
             Intent args;
@@ -218,7 +237,7 @@ public abstract class ApplicationThreadNative extends Binder
             } else {
                 args = null;
             }
-            scheduleServiceArgs(token, startId, fl, args);
+            scheduleServiceArgs(token, taskRemoved, startId, fl, args);
             return true;
         }
 
@@ -241,17 +260,23 @@ public abstract class ApplicationThreadNative extends Binder
             ComponentName testName = (data.readInt() != 0)
                 ? new ComponentName(data) : null;
             String profileName = data.readString();
+            ParcelFileDescriptor profileFd = data.readInt() != 0
+                    ? data.readFileDescriptor() : null;
+            boolean autoStopProfiler = data.readInt() != 0;
             Bundle testArgs = data.readBundle();
             IBinder binder = data.readStrongBinder();
             IInstrumentationWatcher testWatcher = IInstrumentationWatcher.Stub.asInterface(binder);
             int testMode = data.readInt();
             boolean restrictedBackupMode = (data.readInt() != 0);
+            boolean persistent = (data.readInt() != 0);
             Configuration config = Configuration.CREATOR.createFromParcel(data);
+            CompatibilityInfo compatInfo = CompatibilityInfo.CREATOR.createFromParcel(data);
             HashMap<String, IBinder> services = data.readHashMap(null);
+            Bundle coreSettings = data.readBundle();
             bindApplication(packageName, info,
-                            providers, testName, profileName,
-                            testArgs, testWatcher, testMode, restrictedBackupMode,
-                            config, services);
+                            providers, testName, profileName, profileFd, autoStopProfiler,
+                            testArgs, testWatcher, testMode, restrictedBackupMode, persistent,
+                            config, compatInfo, services, coreSettings);
             return true;
         }
         
@@ -276,7 +301,7 @@ public abstract class ApplicationThreadNative extends Binder
             requestThumbnail(b);
             return true;
         }
-        
+
         case SCHEDULE_CONFIGURATION_CHANGED_TRANSACTION:
         {
             data.enforceInterface(IApplicationThread.descriptor);
@@ -291,12 +316,27 @@ public abstract class ApplicationThreadNative extends Binder
             return true;
         }
 
+        case CLEAR_DNS_CACHE_TRANSACTION: {
+            data.enforceInterface(IApplicationThread.descriptor);
+            clearDnsCache();
+            return true;
+        }
+
+        case SET_HTTP_PROXY_TRANSACTION: {
+            data.enforceInterface(IApplicationThread.descriptor);
+            final String proxy = data.readString();
+            final String port = data.readString();
+            final String exclList = data.readString();
+            setHttpProxy(proxy, port, exclList);
+            return true;
+        }
+
         case PROCESS_IN_BACKGROUND_TRANSACTION: {
             data.enforceInterface(IApplicationThread.descriptor);
             processInBackground();
             return true;
         }
-        
+
         case DUMP_SERVICE_TRANSACTION: {
             data.enforceInterface(IApplicationThread.descriptor);
             ParcelFileDescriptor fd = data.readFileDescriptor();
@@ -345,10 +385,11 @@ public abstract class ApplicationThreadNative extends Binder
         {
             data.enforceInterface(IApplicationThread.descriptor);
             boolean start = data.readInt() != 0;
+            int profileType = data.readInt();
             String path = data.readString();
             ParcelFileDescriptor fd = data.readInt() != 0
                     ? data.readFileDescriptor() : null;
-            profilerControl(start, path, fd);
+            profilerControl(start, path, fd, profileType);
             return true;
         }
         
@@ -364,8 +405,9 @@ public abstract class ApplicationThreadNative extends Binder
         {
             data.enforceInterface(IApplicationThread.descriptor);
             ApplicationInfo appInfo = ApplicationInfo.CREATOR.createFromParcel(data);
+            CompatibilityInfo compatInfo = CompatibilityInfo.CREATOR.createFromParcel(data);
             int backupMode = data.readInt();
-            scheduleCreateBackupAgent(appInfo, backupMode);
+            scheduleCreateBackupAgent(appInfo, compatInfo, backupMode);
             return true;
         }
 
@@ -373,7 +415,8 @@ public abstract class ApplicationThreadNative extends Binder
         {
             data.enforceInterface(IApplicationThread.descriptor);
             ApplicationInfo appInfo = ApplicationInfo.CREATOR.createFromParcel(data);
-            scheduleDestroyBackupAgent(appInfo);
+            CompatibilityInfo compatInfo = CompatibilityInfo.CREATOR.createFromParcel(data);
+            scheduleDestroyBackupAgent(appInfo, compatInfo);
             return true;
         }
 
@@ -401,6 +444,99 @@ public abstract class ApplicationThreadNative extends Binder
             data.enforceInterface(IApplicationThread.descriptor);
             String msg = data.readString();
             scheduleCrash(msg);
+            return true;
+        }
+
+        case DUMP_HEAP_TRANSACTION:
+        {
+            data.enforceInterface(IApplicationThread.descriptor);
+            boolean managed = data.readInt() != 0;
+            String path = data.readString();
+            ParcelFileDescriptor fd = data.readInt() != 0
+                    ? data.readFileDescriptor() : null;
+            dumpHeap(managed, path, fd);
+            return true;
+        }
+
+        case DUMP_ACTIVITY_TRANSACTION: {
+            data.enforceInterface(IApplicationThread.descriptor);
+            ParcelFileDescriptor fd = data.readFileDescriptor();
+            final IBinder activity = data.readStrongBinder();
+            final String prefix = data.readString();
+            final String[] args = data.readStringArray();
+            if (fd != null) {
+                dumpActivity(fd.getFileDescriptor(), activity, prefix, args);
+                try {
+                    fd.close();
+                } catch (IOException e) {
+                }
+            }
+            return true;
+        }
+
+        case SET_CORE_SETTINGS_TRANSACTION: {
+            data.enforceInterface(IApplicationThread.descriptor);
+            Bundle settings = data.readBundle();
+            setCoreSettings(settings);
+            return true;
+        }
+
+        case UPDATE_PACKAGE_COMPATIBILITY_INFO_TRANSACTION: {
+            data.enforceInterface(IApplicationThread.descriptor);
+            String pkg = data.readString();
+            CompatibilityInfo compat = CompatibilityInfo.CREATOR.createFromParcel(data);
+            updatePackageCompatibilityInfo(pkg, compat);
+            return true;
+        }
+
+        case SCHEDULE_TRIM_MEMORY_TRANSACTION: {
+            data.enforceInterface(IApplicationThread.descriptor);
+            int level = data.readInt();
+            scheduleTrimMemory(level);
+            return true;
+        }
+
+        case DUMP_MEM_INFO_TRANSACTION:
+        {
+            data.enforceInterface(IApplicationThread.descriptor);
+            ParcelFileDescriptor fd = data.readFileDescriptor();
+            boolean checkin = data.readInt() != 0;
+            boolean all = data.readInt() != 0;
+            String[] args = data.readStringArray();
+            Debug.MemoryInfo mi = null;
+            if (fd != null) {
+                try {
+                    mi = dumpMemInfo(fd.getFileDescriptor(), checkin, all, args);
+                } finally {
+                    try {
+                        fd.close();
+                    } catch (IOException e) {
+                        // swallowed, not propagated back to the caller
+                    }
+                }
+            }
+            reply.writeNoException();
+            mi.writeToParcel(reply, 0);
+            return true;
+        }
+
+        case DUMP_GFX_INFO_TRANSACTION:
+        {
+            data.enforceInterface(IApplicationThread.descriptor);
+            ParcelFileDescriptor fd = data.readFileDescriptor();
+            String[] args = data.readStringArray();
+            if (fd != null) {
+                try {
+                    dumpGfxInfo(fd.getFileDescriptor(), args);
+                } finally {
+                    try {
+                        fd.close();
+                    } catch (IOException e) {
+                        // swallowed, not propagated back to the caller
+                    }
+                }
+            }
+            reply.writeNoException();
             return true;
         }
         }
@@ -461,6 +597,17 @@ class ApplicationThreadProxy implements IApplicationThread {
         data.recycle();
     }
 
+    public final void scheduleSleeping(IBinder token,
+            boolean sleeping) throws RemoteException {
+        Parcel data = Parcel.obtain();
+        data.writeInterfaceToken(IApplicationThread.descriptor);
+        data.writeStrongBinder(token);
+        data.writeInt(sleeping ? 1 : 0);
+        mRemote.transact(SCHEDULE_SLEEPING_TRANSACTION, data, null,
+                IBinder.FLAG_ONEWAY);
+        data.recycle();
+    }
+
     public final void scheduleResumeActivity(IBinder token, boolean isForward)
             throws RemoteException {
         Parcel data = Parcel.obtain();
@@ -484,8 +631,10 @@ class ApplicationThreadProxy implements IApplicationThread {
     }
 
     public final void scheduleLaunchActivity(Intent intent, IBinder token, int ident,
-            ActivityInfo info, Bundle state, List<ResultInfo> pendingResults,
-    		List<Intent> pendingNewIntents, boolean notResumed, boolean isForward)
+            ActivityInfo info, Configuration curConfig, CompatibilityInfo compatInfo,
+            Bundle state, List<ResultInfo> pendingResults,
+    		List<Intent> pendingNewIntents, boolean notResumed, boolean isForward,
+    		String profileName, ParcelFileDescriptor profileFd, boolean autoStopProfiler)
     		throws RemoteException {
         Parcel data = Parcel.obtain();
         data.writeInterfaceToken(IApplicationThread.descriptor);
@@ -493,11 +642,21 @@ class ApplicationThreadProxy implements IApplicationThread {
         data.writeStrongBinder(token);
         data.writeInt(ident);
         info.writeToParcel(data, 0);
+        curConfig.writeToParcel(data, 0);
+        compatInfo.writeToParcel(data, 0);
         data.writeBundle(state);
         data.writeTypedList(pendingResults);
         data.writeTypedList(pendingNewIntents);
         data.writeInt(notResumed ? 1 : 0);
         data.writeInt(isForward ? 1 : 0);
+        data.writeString(profileName);
+        if (profileFd != null) {
+            data.writeInt(1);
+            profileFd.writeToParcel(data, Parcelable.PARCELABLE_WRITE_RETURN_VALUE);
+        } else {
+            data.writeInt(0);
+        }
+        data.writeInt(autoStopProfiler ? 1 : 0);
         mRemote.transact(SCHEDULE_LAUNCH_ACTIVITY_TRANSACTION, data, null,
                 IBinder.FLAG_ONEWAY);
         data.recycle();
@@ -549,12 +708,13 @@ class ApplicationThreadProxy implements IApplicationThread {
     }
     
     public final void scheduleReceiver(Intent intent, ActivityInfo info,
-            int resultCode, String resultData,
+            CompatibilityInfo compatInfo, int resultCode, String resultData,
             Bundle map, boolean sync) throws RemoteException {
         Parcel data = Parcel.obtain();
         data.writeInterfaceToken(IApplicationThread.descriptor);
         intent.writeToParcel(data, 0);
         info.writeToParcel(data, 0);
+        compatInfo.writeToParcel(data, 0);
         data.writeInt(resultCode);
         data.writeString(resultData);
         data.writeBundle(map);
@@ -564,32 +724,36 @@ class ApplicationThreadProxy implements IApplicationThread {
         data.recycle();
     }
 
-    public final void scheduleCreateBackupAgent(ApplicationInfo app, int backupMode)
-            throws RemoteException {
+    public final void scheduleCreateBackupAgent(ApplicationInfo app,
+            CompatibilityInfo compatInfo, int backupMode) throws RemoteException {
         Parcel data = Parcel.obtain();
         data.writeInterfaceToken(IApplicationThread.descriptor);
         app.writeToParcel(data, 0);
+        compatInfo.writeToParcel(data, 0);
         data.writeInt(backupMode);
         mRemote.transact(SCHEDULE_CREATE_BACKUP_AGENT_TRANSACTION, data, null,
                 IBinder.FLAG_ONEWAY);
         data.recycle();
     }
 
-    public final void scheduleDestroyBackupAgent(ApplicationInfo app) throws RemoteException {
+    public final void scheduleDestroyBackupAgent(ApplicationInfo app,
+            CompatibilityInfo compatInfo) throws RemoteException {
         Parcel data = Parcel.obtain();
         data.writeInterfaceToken(IApplicationThread.descriptor);
         app.writeToParcel(data, 0);
+        compatInfo.writeToParcel(data, 0);
         mRemote.transact(SCHEDULE_DESTROY_BACKUP_AGENT_TRANSACTION, data, null,
                 IBinder.FLAG_ONEWAY);
         data.recycle();
     }
     
-    public final void scheduleCreateService(IBinder token, ServiceInfo info)
-            throws RemoteException {
+    public final void scheduleCreateService(IBinder token, ServiceInfo info,
+            CompatibilityInfo compatInfo) throws RemoteException {
         Parcel data = Parcel.obtain();
         data.writeInterfaceToken(IApplicationThread.descriptor);
         data.writeStrongBinder(token);
         info.writeToParcel(data, 0);
+        compatInfo.writeToParcel(data, 0);
         mRemote.transact(SCHEDULE_CREATE_SERVICE_TRANSACTION, data, null,
                 IBinder.FLAG_ONEWAY);
         data.recycle();
@@ -618,11 +782,12 @@ class ApplicationThreadProxy implements IApplicationThread {
         data.recycle();
     }
 
-    public final void scheduleServiceArgs(IBinder token, int startId,
+    public final void scheduleServiceArgs(IBinder token, boolean taskRemoved, int startId,
 	    int flags, Intent args) throws RemoteException {
         Parcel data = Parcel.obtain();
         data.writeInterfaceToken(IApplicationThread.descriptor);
         data.writeStrongBinder(token);
+        data.writeInt(taskRemoved ? 1 : 0);
         data.writeInt(startId);
         data.writeInt(flags);
         if (args != null) {
@@ -647,10 +812,11 @@ class ApplicationThreadProxy implements IApplicationThread {
     }
 
     public final void bindApplication(String packageName, ApplicationInfo info,
-            List<ProviderInfo> providers, ComponentName testName,
-            String profileName, Bundle testArgs, IInstrumentationWatcher testWatcher, int debugMode,
-            boolean restrictedBackupMode, Configuration config,
-            Map<String, IBinder> services) throws RemoteException {
+            List<ProviderInfo> providers, ComponentName testName, String profileName,
+            ParcelFileDescriptor profileFd, boolean autoStopProfiler, Bundle testArgs,
+            IInstrumentationWatcher testWatcher, int debugMode, boolean restrictedBackupMode,
+            boolean persistent, Configuration config, CompatibilityInfo compatInfo,
+            Map<String, IBinder> services, Bundle coreSettings) throws RemoteException {
         Parcel data = Parcel.obtain();
         data.writeInterfaceToken(IApplicationThread.descriptor);
         data.writeString(packageName);
@@ -663,12 +829,22 @@ class ApplicationThreadProxy implements IApplicationThread {
             testName.writeToParcel(data, 0);
         }
         data.writeString(profileName);
+        if (profileFd != null) {
+            data.writeInt(1);
+            profileFd.writeToParcel(data, Parcelable.PARCELABLE_WRITE_RETURN_VALUE);
+        } else {
+            data.writeInt(0);
+        }
+        data.writeInt(autoStopProfiler ? 1 : 0);
         data.writeBundle(testArgs);
         data.writeStrongInterface(testWatcher);
         data.writeInt(debugMode);
         data.writeInt(restrictedBackupMode ? 1 : 0);
+        data.writeInt(persistent ? 1 : 0);
         config.writeToParcel(data, 0);
+        compatInfo.writeToParcel(data, 0);
         data.writeMap(services);
+        data.writeBundle(coreSettings);
         mRemote.transact(BIND_APPLICATION_TRANSACTION, data, null,
                 IBinder.FLAG_ONEWAY);
         data.recycle();
@@ -718,6 +894,24 @@ class ApplicationThreadProxy implements IApplicationThread {
         data.recycle();
     }
 
+    public void clearDnsCache() throws RemoteException {
+        Parcel data = Parcel.obtain();
+        data.writeInterfaceToken(IApplicationThread.descriptor);
+        mRemote.transact(CLEAR_DNS_CACHE_TRANSACTION, data, null,
+                IBinder.FLAG_ONEWAY);
+        data.recycle();
+    }
+
+    public void setHttpProxy(String proxy, String port, String exclList) throws RemoteException {
+        Parcel data = Parcel.obtain();
+        data.writeInterfaceToken(IApplicationThread.descriptor);
+        data.writeString(proxy);
+        data.writeString(port);
+        data.writeString(exclList);
+        mRemote.transact(SET_HTTP_PROXY_TRANSACTION, data, null, IBinder.FLAG_ONEWAY);
+        data.recycle();
+    }
+
     public void processInBackground() throws RemoteException {
         Parcel data = Parcel.obtain();
         data.writeInterfaceToken(IApplicationThread.descriptor);
@@ -733,7 +927,7 @@ class ApplicationThreadProxy implements IApplicationThread {
         data.writeFileDescriptor(fd);
         data.writeStrongBinder(token);
         data.writeStringArray(args);
-        mRemote.transact(DUMP_SERVICE_TRANSACTION, data, null, 0);
+        mRemote.transact(DUMP_SERVICE_TRANSACTION, data, null, IBinder.FLAG_ONEWAY);
         data.recycle();
     }
     
@@ -773,10 +967,11 @@ class ApplicationThreadProxy implements IApplicationThread {
     }
     
     public void profilerControl(boolean start, String path,
-            ParcelFileDescriptor fd) throws RemoteException {
+            ParcelFileDescriptor fd, int profileType) throws RemoteException {
         Parcel data = Parcel.obtain();
         data.writeInterfaceToken(IApplicationThread.descriptor);
         data.writeInt(start ? 1 : 0);
+        data.writeInt(profileType);
         data.writeString(path);
         if (fd != null) {
             data.writeInt(1);
@@ -829,5 +1024,85 @@ class ApplicationThreadProxy implements IApplicationThread {
         data.recycle();
         
     }
-}
 
+    public void dumpHeap(boolean managed, String path,
+            ParcelFileDescriptor fd) throws RemoteException {
+        Parcel data = Parcel.obtain();
+        data.writeInterfaceToken(IApplicationThread.descriptor);
+        data.writeInt(managed ? 1 : 0);
+        data.writeString(path);
+        if (fd != null) {
+            data.writeInt(1);
+            fd.writeToParcel(data, Parcelable.PARCELABLE_WRITE_RETURN_VALUE);
+        } else {
+            data.writeInt(0);
+        }
+        mRemote.transact(DUMP_HEAP_TRANSACTION, data, null,
+                IBinder.FLAG_ONEWAY);
+        data.recycle();
+    }
+
+    public void dumpActivity(FileDescriptor fd, IBinder token, String prefix, String[] args)
+            throws RemoteException {
+        Parcel data = Parcel.obtain();
+        data.writeInterfaceToken(IApplicationThread.descriptor);
+        data.writeFileDescriptor(fd);
+        data.writeStrongBinder(token);
+        data.writeString(prefix);
+        data.writeStringArray(args);
+        mRemote.transact(DUMP_ACTIVITY_TRANSACTION, data, null, IBinder.FLAG_ONEWAY);
+        data.recycle();
+    }
+
+    public void setCoreSettings(Bundle coreSettings) throws RemoteException {
+        Parcel data = Parcel.obtain();
+        data.writeInterfaceToken(IApplicationThread.descriptor);
+        data.writeBundle(coreSettings);
+        mRemote.transact(SET_CORE_SETTINGS_TRANSACTION, data, null, IBinder.FLAG_ONEWAY);
+    }
+
+    public void updatePackageCompatibilityInfo(String pkg, CompatibilityInfo info)
+            throws RemoteException {
+        Parcel data = Parcel.obtain();
+        data.writeInterfaceToken(IApplicationThread.descriptor);
+        data.writeString(pkg);
+        info.writeToParcel(data, 0);
+        mRemote.transact(UPDATE_PACKAGE_COMPATIBILITY_INFO_TRANSACTION, data, null,
+                IBinder.FLAG_ONEWAY);
+    }
+
+    public void scheduleTrimMemory(int level) throws RemoteException {
+        Parcel data = Parcel.obtain();
+        data.writeInterfaceToken(IApplicationThread.descriptor);
+        data.writeInt(level);
+        mRemote.transact(SCHEDULE_TRIM_MEMORY_TRANSACTION, data, null,
+                IBinder.FLAG_ONEWAY);
+    }
+
+    public Debug.MemoryInfo dumpMemInfo(FileDescriptor fd, boolean checkin, boolean all,
+            String[] args) throws RemoteException {
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        data.writeInterfaceToken(IApplicationThread.descriptor);
+        data.writeFileDescriptor(fd);
+        data.writeInt(checkin ? 1 : 0);
+        data.writeInt(all ? 1 : 0);
+        data.writeStringArray(args);
+        mRemote.transact(DUMP_MEM_INFO_TRANSACTION, data, reply, 0);
+        reply.readException();
+        Debug.MemoryInfo info = new Debug.MemoryInfo();
+        info.readFromParcel(reply);
+        data.recycle();
+        reply.recycle();
+        return info;
+    }
+
+    public void dumpGfxInfo(FileDescriptor fd, String[] args) throws RemoteException {
+        Parcel data = Parcel.obtain();
+        data.writeInterfaceToken(IApplicationThread.descriptor);
+        data.writeFileDescriptor(fd);
+        data.writeStringArray(args);
+        mRemote.transact(DUMP_GFX_INFO_TRANSACTION, data, null, IBinder.FLAG_ONEWAY);
+        data.recycle();
+    }
+}

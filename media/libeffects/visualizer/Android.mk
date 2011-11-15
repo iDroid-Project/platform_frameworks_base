@@ -9,22 +9,15 @@ LOCAL_SRC_FILES:= \
 LOCAL_CFLAGS+= -O2
 
 LOCAL_SHARED_LIBRARIES := \
-	libcutils
+	libcutils \
+	libdl
 
 LOCAL_MODULE_PATH := $(TARGET_OUT_SHARED_LIBRARIES)/soundfx
 LOCAL_MODULE:= libvisualizer
 
-ifeq ($(TARGET_OS)-$(TARGET_SIMULATOR),linux-true)
-LOCAL_LDLIBS += -ldl
-endif
-
-ifneq ($(TARGET_SIMULATOR),true)
-LOCAL_SHARED_LIBRARIES += libdl
-endif
-
 LOCAL_C_INCLUDES := \
-	$(call include-path-for, graphics corecg)
+	$(call include-path-for, graphics corecg) \
+	system/media/audio_effects/include
 
-LOCAL_PRELINK_MODULE := false
 
 include $(BUILD_SHARED_LIBRARY)

@@ -26,11 +26,15 @@
 #include "AudioResamplerSinc.h"
 #include "AudioResamplerCubic.h"
 
+#ifdef __arm__
+#include <machine/cpu-features.h>
+#endif
+
 namespace android {
 
-#ifdef __ARM_ARCH_5E__  // optimized asm option
+#ifdef __ARM_HAVE_HALFWORD_MULTIPLY // optimized asm option
     #define ASM_ARM_RESAMP1 // enable asm optimisation for ResamplerOrder1
-#endif // __ARM_ARCH_5E__
+#endif // __ARM_HAVE_HALFWORD_MULTIPLY
 // ----------------------------------------------------------------------------
 
 class AudioResamplerOrder1 : public AudioResampler {
@@ -146,6 +150,12 @@ void AudioResampler::setVolume(int16_t left, int16_t right) {
     // TODO: Implement anti-zipper filter
     mVolume[0] = left;
     mVolume[1] = right;
+}
+
+void AudioResampler::reset() {
+    mInputIndex = 0;
+    mPhaseFraction = 0;
+    mBuffer.frameCount = 0;
 }
 
 // ----------------------------------------------------------------------------
@@ -424,9 +434,9 @@ void AudioResamplerOrder1::AsmMono16Loop(int16_t *in, int32_t* maxOutPt, int32_t
 
         // the following loop works on 2 frames
 
-        ".Y4L01:\n"
+        "1:\n"
         "   cmp r8, r2\n"                   // curOut - maxCurOut
-        "   bcs .Y4L02\n"
+        "   bcs 2f\n"
 
 #define MO_ONE_FRAME \
     "   add r0, r1, r7, asl #1\n"       /* in + inputIndex */\
@@ -450,8 +460,8 @@ void AudioResamplerOrder1::AsmMono16Loop(int16_t *in, int32_t* maxOutPt, int32_t
         MO_ONE_FRAME    // frame 2
 
         "   cmp r7, r3\n"                   // inputIndex - maxInIdx
-        "   bcc .Y4L01\n"
-        ".Y4L02:\n"
+        "   bcc 1b\n"
+        "2:\n"
 
         "   bic r6, r6, #0xC0000000\n"             // phaseFraction & ...
         // save modified values
@@ -531,9 +541,9 @@ void AudioResamplerOrder1::AsmStereo16Loop(int16_t *in, int32_t* maxOutPt, int32
         // r13 sp
         // r14
 
-        ".Y5L01:\n"
+        "3:\n"
         "   cmp r8, r2\n"                   // curOut - maxCurOut
-        "   bcs .Y5L02\n"
+        "   bcs 4f\n"
 
 #define ST_ONE_FRAME \
     "   bic r6, r6, #0xC0000000\n"      /* phaseFraction & ... */\
@@ -567,8 +577,8 @@ void AudioResamplerOrder1::AsmStereo16Loop(int16_t *in, int32_t* maxOutPt, int32
     ST_ONE_FRAME    // frame 1
 
         "   cmp r7, r3\n"                       // inputIndex - maxInIdx
-        "   bcc .Y5L01\n"
-        ".Y5L02:\n"
+        "   bcc 3b\n"
+        "4:\n"
 
         "   bic r6, r6, #0xC0000000\n"              // phaseFraction & ...
         // save modified values

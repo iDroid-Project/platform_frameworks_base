@@ -1,8 +1,8 @@
 page.title=ADT Plugin for Eclipse
-adt.zip.version=9.0.0
-adt.zip.download=ADT_9.0.0.zip
-adt.zip.bytes=4433536
-adt.zip.checksum=bc2757f2a5a11d131390ce547bae154b
+adt.zip.version=15.0.0
+adt.zip.download=ADT-15.0.0.zip
+adt.zip.bytes=6750682
+adt.zip.checksum=264f40a89a1107b0c422adae4e1ce0d1
 
 @jd:body
 
@@ -23,17 +23,22 @@ adt.zip.checksum=bc2757f2a5a11d131390ce547bae154b
     <li><a href="#updating">Updating the ADT Plugin</a></li>
   </ol>
 
+  <h2>See also</h2>
+  <ol>
+    <li><a href="{@docRoot}guide/developing/tools/adt.html">Android Developer Tools</a></li>
+  </ol>
+
 </div>
 </div>
 
 <p>Android Development Tools (ADT) is a plugin for the Eclipse IDE
 that is designed to give you a powerful, integrated environment in which
-to build Android applications. </p>
+to build Android applications.</p>
 
 <p>ADT extends the capabilities of Eclipse to let you quickly set up new Android
 projects, create an application UI, add components based on the Android
 Framework API, debug your applications using the Android SDK tools, and even
-export signed (or unsigned) APKs in order to distribute your application.</p>
+export signed (or unsigned) {@code .apk} files in order to distribute your application.</p>
 
 <p>Developing in Eclipse with ADT is highly recommended and is the fastest way
 to get started. With the guided project setup it provides, as well as tools
@@ -50,10 +55,19 @@ href="#installing">Installing the ADT Plugin</a>, below. </p>
 how to update ADT to the latest version or how to uninstall it, if necessary.
 </p>
 
+<p>For information about the features provided by the ADT plugin, such as code
+editor features, SDK tool integration, and the graphical layout editor (for drag-and-drop layout
+editing), see the <a href="{@docRoot}guide/developing/tools/adt.html">Android Developer Tools</a>
+document.</p>
+
+
 <h2 id="notes">Revisions</h2>
 
 <p>The sections below provide notes about successive releases of
 the ADT Plugin, as denoted by revision number. </p>
+
+<p>For a summary of all known issues in ADT, see <a
+href="http://tools.android.com/knownissues">http://tools.android.com/knownissues</a>.</p>
 
 <script type="text/javascript">
 function toggleDiv(link) {
@@ -99,6 +113,423 @@ padding: .25em 1em;
   <a href="#" onclick="return toggleDiv(this)">
         <img src="{@docRoot}assets/images/triangle-opened.png" class="toggle-img" height="9px"
 width="9px" />
+ADT 15.0.0</a> <em>(October 2011)</em>
+  <div class="toggleme">
+<dl>
+
+<dt>Dependencies:</dt>
+
+<dd>ADT 15.0.0 is designed for use with <a href="{@docRoot}sdk/tools-notes.html">SDK Tools r15</a>.
+If you haven't already installed SDK Tools r15 into your SDK, use the Android SDK and AVD Manager to
+do so.</dd>
+
+<dt>Bug fixes:</dt>
+<dd>
+<ul>
+  <li>Fixed build issue when using Renderscript in projects that target API levels 11-13
+    (<a href="http://code.google.com/p/android/issues/detail?id=21006">Issue 21006</a>).</li>
+  <li>Fixed issue when creating projects from existing source code.</li>
+  <li>Fixed issues in the SDK Manager
+    (<a href="http://code.google.com/p/android/issues/detail?id=20939">Issue 20939</a>,
+    <a href="http://code.google.com/p/android/issues/detail?id=20607">Issue 20607</a>).</li>
+  <li>Fixed scrolling issue in the new Logcat panel of DDMS.</li>
+</ul>
+</dd>
+</dl>
+
+</div>
+</div>
+
+<div class="toggleable closed">
+  <a href="#" onclick="return toggleDiv(this)">
+        <img src="{@docRoot}assets/images/triangle-closed.png" class="toggle-img" height="9px"
+width="9px" />
+ADT 14.0.0</a> <em>(October 2011)</em>
+  <div class="toggleme">
+<dl>
+
+<dt>Dependencies:</dt>
+
+<dd>ADT 14.0.0 is designed for use with <a href="{@docRoot}sdk/tools-notes.html">SDK Tools r14</a>.
+If you haven't already installed SDK Tools r14 into your SDK, use the Android SDK and AVD Manager to
+do so.</dd>
+
+<dt>Build system</dt>
+<dd>
+  <ul>
+    <li>Changed <code>default.properties</code> to <code>project.properties</code> and
+    <code>build.properties</code> to <code>ant.properties</code>. ADT automatically
+    renames these files, if necessary, when you open a project in Eclipse.</li>
+    <li>Changed how library projects are built in Eclipse.</a></li>
+    <li>Changed output of <code>javac</code> from <code>bin/</code> to <code>bin/classes</code>
+    in Eclipse.</li>
+    <li>Improved incremental builds so that resource compilation runs less frequently. Builds no
+    longer run when you edit strings or layouts (unless you add a new <code>id</code>) and no longer
+    run once for each library project.</li>
+    <li>Introduced a "PNG crunch cache" that only runs on modified PNG files, instead of
+    crunching all existing PNG files, all the time.</li>
+    <li>Modified resource compilation so it no longer happens for normal save operations. It only
+    happens when running or debugging (the build option that lets you disable the packaging
+    step, which was introduced in ADT 12, is now on by default.)</li>
+  </ul>
+<p>For a complete overview of the build system changes and what you need to do to support them,
+see the <a href="http://tools.android.com/recent/buildchangesinrevision14">Android Tools Project
+site</a>.</p>
+</dd>
+
+<dt>General improvements</dt>
+<dd>
+  <ul>
+
+
+<li>Added a Welcome Wizard to help with the initial setup of the Android
+development environment (<a href="http://tools.android.com/recent/welcomewizard">more
+info</a>).</li>
+<li>Integrated the Android Asset Studio, which helps you create icons for things
+like the launcher, menus, and tabs. (<a
+href="http://tools.android.com/recent/assetstudiointegration">more
+info</a>).</li>
+<li>Revamped the Logcat view and added support to display and filter logs by
+   application names as well as PIDs (<a
+   href="http://tools.android.com/recent/updatedlogcatviewer">more info</a>).</li>
+<li>Revamped the SDK Manager UI (<a href="http://tools.android.com/recent/newsdkmanager">more
+info</a>).</li>
+<li>Revamped the New Project and the New XML File wizards to have
+multiple pages. Sample projects are now copied into the workspace such that they can be modified
+and deleted without affecting the master copy
+(<a href="http://tools.android.com/recent/revampedwizards">more info</a>).</li>
+<li>Removed the dependency on Eclipse GEF.</li>
+</ul>
+</dd>
+
+<dt>XML and Java editors</dt>
+<dd>
+  <ul>
+    <li>Added a new XML formatter that formats all XML files according to the
+   standard Android coding style. The formatter can also reorder
+   attributes to follow a recommended order and processes any changes made in the Layout editor.
+(<a href="http://tools.android.com/recent/xmlformatter">more info</a>).</li>
+  <li>Added the "Go to Matching" (Ctrl-Shift-P) feature, which lets you jump
+between opening and closing tags in XML files.</li>
+  <li>Added support for the "Select Enclosing Element" feature on Mac.</li>
+  <li>Added a Quickfix for extracting Strings when the caret is inside a String (<a href="">see
+more</a>).</li>
+  <li>Improved "smart indent", which allows automatic indentation and un-indentation
+   when pressing the Return key in XML editors (<a
+href="http://tools.android.com/recent/xmleditingimprovements">more info</a>).</li>
+
+  </ul>
+</dd>
+
+<dt>Layout editor</dt>
+<dd>
+  <ul>
+    <li>Added tooltip feedback for dragging and resizing operations. For
+    example, when dragging in a relative layout, the proposed
+    constraints are shown. When resizing, the new dimensions are
+    shown (<a href="http://tools.android.com/recent/layouteditorfeedbacktooltips">more
+info</a>).</li>
+    <li>Added the ability to suppress rendering fidelity warnings (<a
+href="http://tools.android.com/recent/suppressrenderwarnings">more info</a>).</li>
+    <li>Added "Remove Container" visual refactoring that removes the
+    children of a container up to the top level and transfers
+    namespace and layout attributes if necessary (<a
+href="http://tools.android.com/recent/removecontainervisualrefactoring">more info</a>).</li>
+    <li>Added pull-right menus to the context menu for accessing
+    properties of the parents, which is useful when the children fully
+    cover the parent and make it hard to select on their own.</li>
+     <li>Improved access to properties in the context menu. The most
+    frequently set attributes for each view are listed at the top of
+    the menu. The Properties menu offers access to the most
+    recently set attributes, attributes organized by their defining
+    view, and layout attributes only or all attributes alphabetically (<a
+href="http://tools.android.com/recent/layouteditorcontextmenuimprovements">more info</a>).</li>
+  </ul>
+</dd>
+
+<dt>Bug fixes</dt>
+<dd>Fixed many bugs and added <a
+href="http://tools.android.com/recent/miscellaneousrecentfixes">minor improvements</a>, in
+particular some <a href="http://tools.android.com/recent/linuxfixes">critical bug fixes on
+Linux</a>.</dd>
+
+</div>
+</div>
+
+
+
+<div class="toggleable closed">
+  <a href="#" onclick="return toggleDiv(this)">
+        <img src="{@docRoot}assets/images/triangle-closed.png" class="toggle-img" height="9px"
+width="9px" />
+ADT 12.0.0</a> <em>(July 2011)</em>
+  <div class="toggleme">
+<dl>
+
+<dt>Dependencies:</dt>
+
+<dd>ADT 12.0.0 is designed for use with <a href="{@docRoot}sdk/tools-notes.html">SDK Tools r12</a>. If you haven't
+already installed SDK Tools r12 into your SDK, use
+the Android SDK and AVD Manager to do so.</dd>
+
+<dt>Visual Layout Editor:</dt>
+<dd>
+<ul>
+  <li>New RelativeLayout drop support with guideline suggestions for
+   attachments and cycle prevention
+   (<a href="http://tools.android.com/recent/revampedrelativelayoutsupport">more info</a>).</li>
+  <li>Resize support in most layouts along with
+  guideline snapping to the sizes dictated by <code>wrap_content</code> and <code>match_parent</code>.
+  In LinearLayout, sizes are mapped to weights instead of pixel widths.
+  (<a href="http://tools.android.com/recent/resizesupport">more info</a>).</li>
+  <li>Previews of drawables and colors in the resource chooser dialogs
+  (<a href="http://tools.android.com/recent/imageandcolorpreviews">more info</a>).</li>
+  <li>Improved error messages and links for rendering errors including
+  detection of misspelled class names
+  (<a href="http://tools.android.com/recent/improvedrenderingerrordiagnostics">more info</a>).</li>
+</ul>
+</dd>
+
+<dt>Build system</dt>
+<dd>
+<ul>
+  <li id="build-option">A new option lets you disable the packaging step in the automatic
+  builders. This improves performance when saving files by not
+  performing a full build, which can take a long time for large projects.
+  If the option is enabled, the APK is packaged when the
+  application is deployed to a device or emulator or when the
+  release APK is exported (<a href="http://tools.android.com/recent/finercontroloveradtbuildprocess">more info</a>).</li>
+</ul>
+</dd>
+
+<dt>Bug fixes</dt>
+<dd>Many bug fixes are part of this release
+(<a href="http://tools.android.com/recent/adt12bugfixroundup">more info</a>).</dd>
+
+</div>
+</div>
+
+
+<div class="toggleable closed">
+  <a href="#" onclick="return toggleDiv(this)">
+        <img src="{@docRoot}assets/images/triangle-closed.png" class="toggle-img" height="9px"
+width="9px" />
+ADT 11.0.0</a> <em>(June 2011)</em>
+  <div class="toggleme">
+
+<dl>
+
+<dt>Dependencies:</dt>
+
+<dd>ADT 11.0.0 is designed for use with SDK Tools r11. If you haven't
+already installed SDK Tools r11 into your SDK, use the Android SDK and AVD Manager to do
+so.</dd>
+
+<dt>Visual Refactoring:</dt>
+<dd>
+  <ul>
+    <li>"Extract Style" feature pulls out style-related attributes from your layout and extracts
+them as a new style defined in {@code styles.xml} (<a
+href="http://tools.android.com/recent/extractstylerefactoring">more info</a>).</li>
+    <li>"Wrap in Container" feature lets you select a group of views then surround them
+    in a new layout (a new view group, such as a LinearLayout), and transfers namespace and layout
+    parameters to the new parent (<a
+href="http://tools.android.com/recent/newrefactoringswrapinchangelayoutchangewidget">more
+info</a>).</li>
+    <li>"Change Layout" feature changes layouts from one type
+    to another, and can also flatten a layout hierarchy (<a
+href="http://tools.android.com/recent/newrefactoringswrapinchangelayoutchangewidget">more
+info</a>).</li>
+    <li>"Change Widget Type" feature changes the type of the
+    selected views to a new type. Also, a new selection context menu
+    in the visual layout editor makes it easy to select siblings as
+    well as views anywhere in the layout that have the same type (<a
+href="http://tools.android.com/recent/newrefactoringswrapinchangelayoutchangewidget">more
+info</a>).</li>
+    <li>"Extract as Include" feature finds identical collections of views
+    in other layouts and offers to combine them into a single layout that you can then include in
+ each layout (<a
+href="http://tools.android.com/recent/extractasincludeimprovements">more info</a>).</li>
+    <li>Quick Assistant in Eclipse can be invoked
+    from the XML editor (with Ctrl-1) to apply any of the above
+    refactorings (and Extract String) to the current selection (<a
+href="http://tools.android.com/recent/refactoringquickassistant">more info</a>).</li>
+  </ul>
+</dd>
+
+<dt>Visual Layout Editor:</dt>
+<dd>
+  <ul>
+    <li>This is the update to the layout editor you've been waiting for! It includes (almost) all
+the goodies demonstrated at Google I/O. <a href="http://www.youtube.com/watch?v=Oq05KqjXTvs">Watch
+the video</a> on YouTube.</li>
+    <li>The palette now supports different configurations for supported widgets. That is, a single
+view is presented in various different configurations that you can drag into your layout. For
+example, there is a <em>Text Fields</em> palette category where you can drag an {@link
+android.widget.EditText} widget in as a password field, an e-mail field, a phone field, or other
+types of text boxes. Similarly, {@link android.widget.TextView} widgets are preconfigured
+with large, normal and small theme sizes, and {@link android.widget.LinearLayout} elements are
+preconfigured in horizontal and vertical configurations (<a
+href="http://tools.android.com/recent/multipletextfieldandlayouttypes">more info</a>).</li>
+    <li>The palette supports custom views. You can pick up any custom
+    implementations of the View class you've created in your project or from included libraries and
+drag them into your layout (<a
+href="http://tools.android.com/recent/customviewsinthepalette">more info</a>).</li>
+    <li>Fragments are available in the palette for placement in your layout. In the tool, you can
+choose which layout to show rendered for a given fragment tag. Go to declaration works for fragment
+classes (<a href="http://tools.android.com/recent/fragmentsupport">more info</a>).</li>
+    <li>The layout editor automatically applies a "zoom to fit" for newly
+    opened files as well as on device size and orientation changes to
+    ensure that large layouts are always fully visible unless you
+    manually zoom in.</li>
+    <li>You can drop in an {@code &lt;include&gt;} element from the palette, which will pop up
+    a layout chooser. When you select the layout to include, it is added with an {@code
+&lt;include&gt;}. Similarly, dropping images or image buttons will pop up image
+    resource choosers (<a
+href="http://tools.android.com/recent/includetagdropsupport">more info</a>).</li>
+    <li>The configuration chooser now applies the "Render Target" and
+    "Locale" settings project wide, making it trivial to check the
+    layouts for different languages or render targets without having
+    to configure these individually for each layout.</li>
+    <li>The layout editor is smarter about picking a default theme to
+    render a layout with, consulting factors like theme registrations
+    in the manifest, the SDK version, and other factors.</li>
+    <li>The layout editor is smarter about picking a default configuration to render a layout
+with, defaulting to the currently visible configuration in the previous file. It also considers the
+SDK target to determine whether to default to a tablet or phone screen size.</li>
+    <li>Basic focus support. The first text field dropped in a layout is assigned focus, and there
+are <strong>Request Focus</strong> and <strong>Clear Focus</strong> context menu items on text
+fields to change the focus.</li>
+  </ul>
+</dd>
+
+<dt>XML editors:</dt>
+<dd>
+<ul>
+  <li>Code completion has been significantly improved. It now works
+  with {@code &lt;style&gt;} elements, completes dimensional units,
+  sorts resource paths in values based on the attribute name, and more. There are also many fixes to
+handle text replacement (<a
+href="http://tools.android.com/recent/xmlcodecompletionimprovements">more info</a>).</li>
+  <li>AAPT errors are handled better. They are now underlined for the
+  relevant range in the editor, and a new quickfix makes it trivial
+  to create missing resources.</li>
+  <li>Code completion for drawable, animation and color XML files (<a
+href="http://tools.android.com/recent/codecompletionfordrawablescolorsandanimationfiles">more
+info</a>).</li>
+</ul>
+</dd>
+
+<dt>DDMS:</dt>
+<dd>
+<ul>
+  <li>"New Folder" action in the File Explorer.</li>
+  <li>The screenshot dialog will add timestamps to the filenames and preserve the orientation on
+snapshot refresh.</li>
+</ul>
+</dd>
+
+<dt>General notes:</dt>
+<dd>
+  <ul>
+    <li>TraceView supports zooming with the mouse-wheel in the timeline.</li>
+    <li>The New Android Project wizard now supports Eclipse working sets.</li>
+  </ul>
+</dd>
+</dl>
+<p>More information about tool changes are available on the <a
+href="http://tools.android.com/recent">Android Tools Project Site</a>.</p>
+</div>
+</div>
+
+
+
+
+
+<div class="toggleable closed">
+  <a href="#" onclick="return toggleDiv(this)">
+        <img src="{@docRoot}assets/images/triangle-closed.png" class="toggle-img" height="9px"
+width="9px" />
+ADT 10.0.1</a> <em>(March 2011)</em>
+  <div class="toggleme">
+
+<dl>
+
+<dt>Dependencies:</dt>
+
+<dd>ADT 10.0.1 is designed for use with SDK Tools r10. If you haven't
+already installed SDK Tools r10 into your SDK, use the Android SDK and AVD Manager to do
+so.</dd>
+
+<dt>General notes:</dt>
+<dd>
+  <ul>
+    <li>Temporary work-around to resolve the rare cases in which the layout editor will
+not open.</li>
+    <li>Fix issue in which ADT 10.0.0 would install on Eclipse 3.4 and lower, even though ADT
+requires Eclipse 3.5 or higher (as of 10.0.0).</li>
+  </ul>
+</dd>
+</dl>
+</div>
+</div>
+
+
+
+<div class="toggleable closed">
+  <a href="#" onclick="return toggleDiv(this)">
+        <img src="{@docRoot}assets/images/triangle-closed.png" class="toggle-img" height="9px"
+width="9px" />
+ADT 10.0.0</a> <em>(February 2011)</em>
+  <div class="toggleme">
+
+<dl>
+
+<dt>Dependencies:</dt>
+
+<dd>ADT 10.0.0 is designed for use with SDK Tools r10. If you haven't
+already installed SDK Tools r10 into your SDK, use the Android SDK and AVD Manager to do
+so.</dd>
+
+<dt>General notes:</dt>
+<dd>
+  <ul>
+  <li>The tools now automatically generate Java Programming Language source files (in the <code>gen/</code> directory) and
+    bytecode (in the <code>res/raw/</code> directory) from your <code>.rs</code> files.</li>
+  <li>A Binary XML editor has been added (<a href="http://tools.android.com/recent/binaryxmleditor">details</a>).</li>
+  <li>Traceview is now integrated into the Eclipse UI (<a href="http://tools.android.com/recent/traceviewineclipse">details</a>).</li>
+  <li>The "Go To Declaration" feature for XML and <code>.java</code> files quickly show all the matches in the project
+  and allows you jump to specific items such as string translations or <code>onClick</code> handlers
+  (<a href="http://tools.android.com/recent/gotodeclarationimprovements">details</a>).</li>
+  <li>The Resource Chooser can create items such as dimensions, integers, ids, and booleans
+  (<a href="http://tools.android.com/recent/resourcechoosercannowcreatearbitraryvalues">details</a>).</li>
+  <li>Improvements to the Visual Layout Editor:
+      <ul>
+        <li>A new Palette with categories and rendering previews
+        (<a href="http://tools.android.com/recent/newpalette">details</a>).</li>
+        <li>A Layout Actions bar that provides quick access to common layout operations
+        (<a href="http://tools.android.com/recent/layoutactionsbar">details</a>).</li>
+        <li>When the Android 3.0 rendering library is selected, layouts render more like they do on devices.
+        This includes rendering of status and title bars to more accurately reflect the actual
+        screen space available to applications
+        (<a href="http://tools.android.com/recent/systembarandactionbar">details</a>).</li>
+        <li>Zoom improvements such as fit to view, persistent scale, and keyboard access.
+        (<a href="http://tools.android.com/recent/zoomimprovements">details</a>).</li>
+        <li>Further improvements to <code>&lt;merge&gt;</code> layouts, as well as layouts with gesture overlays
+        (<a href="http://tools.android.com/recent/improvedsupportformergetags">details</a>).</li>
+        <li>Improved rendering error diagnostics.</li>
+      </ul>
+    </li>
+  </ul>
+</dd>
+</dl>
+</div>
+</div>
+
+<div class="toggleable closed">
+  <a href="#" onclick="return toggleDiv(this)">
+        <img src="{@docRoot}assets/images/triangle-closed.png" class="toggle-img" height="9px"
+width="9px" />
 ADT 9.0.0</a> <em>(January 2011)</em>
   <div class="toggleme">
 
@@ -112,14 +543,14 @@ so.</dd>
 
 <dt>General notes:</dt>
 <dd>
-  <ul>    
+  <ul>
     <li>"Go To Declaration" hyperlink support: You can jump directly from code references (such as
     <code>R.id.main</code>) to the corresponding XML declaration, or from XML attributes (such as
     <code>@string</code>) to the corresponding resource definition, or from manifest XML
     registrations to activities and services.</li>
     <li>Improvements were made to name refactoring.</li>
     <li>AVDs now automatically save their state, so they can restart almost instantly. You can enable this feature when
-    creating an AVD or by editing an AVD with the AVD Manager.</li> 
+    creating an AVD or by editing an AVD with the AVD Manager.</li>
     <li>Improvements to the Visual Layout Editor:
       <ul>
         <li>Support for rendering targets: You can now choose an arbitrary Android platform to
@@ -157,10 +588,10 @@ so.</dd>
         into an {@link android.widget.AdapterView}.</li>
         <li>Outline reordering: Reordering your views in the Outline tab is much easier
         (<a href="http://tools.android.com/recent/outlineimprovements">Details</a>).</li>
-        <li>Fix for keybinding bug where keyboard shortcuts did not work (Issues 
-        <a href="http://code.google.com/p/android/issues/detail?id=13231">13231</a> and 
+        <li>Fix for keybinding bug where keyboard shortcuts did not work (Issues
+        <a href="http://code.google.com/p/android/issues/detail?id=13231">13231</a> and
         <a href="http://code.google.com/p/android/issues/detail?id=13134">13134</a>).</li>
-        <li>Fix for problems with Custom layout attribute menu (Issue 
+        <li>Fix for problems with Custom layout attribute menu (Issue
         <a href="http://code.google.com/p/android/issues/detail?id=13134">13134</a>).</li>
         <li>Automatic configuration for various view types: Certain views have properties configured
         by default. For example, the width of an {@link android.widget.EditText} object is set to
@@ -176,7 +607,7 @@ so.</dd>
         and <a href="http://code.google.com/p/android/issues/detail?id=13092">13092</a>).</li>
         <li>Included layouts can be rendered and edited in the context of the layouts that include
         them. From a layout using an <a href="{@docRoot}guide/topics/resources/layout-resource.html#include-element">
-        <code>&lt;include&gt;</code></a> tag, double-clicking on the 
+        <code>&lt;include&gt;</code></a> tag, double-clicking on the
         <a href="{@docRoot}guide/topics/resources/layout-resource.html#include-element">
         <code>&lt;include&gt;</code></a> element edits the referenced layout in the context of the
         current layout. Additionally, when editing a layout that is included by other layouts,
@@ -187,12 +618,12 @@ so.</dd>
     <li>This release fixes many other bugs, but the most important ones are listed below:
   <ul>
    <li>Fixed issue that prevented launching debug builds on productions devices when
-    <code>debuggable=true</code> was not set in the Android manifest.</li>    
+    <code>debuggable=true</code> was not set in the Android manifest.</li>
     <li>The LogCat view in DDMS properly handles UTF-8 characters.</li>
     <li>The SDK Manager is more reliable on Windows
     (<a href="http://tools.android.com/recent/sdkmanagerfixes">Details</a>).</li>
-    <li>A JUnit initialization bug that prevented you from working with JUnit tests was fixed 
-    (Issue <a href="http://code.google.com/p/android/issues/detail?id=12411">12411</a>).</li>   
+    <li>A JUnit initialization bug that prevented you from working with JUnit tests was fixed
+    (Issue <a href="http://code.google.com/p/android/issues/detail?id=12411">12411</a>).</li>
   </ul>
 </li>
   </ul>
@@ -333,7 +764,7 @@ called <code>src/</code>. There is now support for any number of source folders,
 with no name restriction. They can even be in subfolder such as
 <code>src/java</code>. If you are already working with library projects created
 in ADT 0.9.7, see <a
-href="{@docRoot}guide/developing/eclipse-adt.html#libraryMigrating">Migrating
+href="{@docRoot}guide/developing/projects/index.html#libraryMigrating">Migrating
 library projects to ADT 0.9.8</a> for important information about moving
 to the new ADT environment.</li>
 <li>Adds support for library projects that depend on other library
@@ -371,8 +802,7 @@ code and resources in a separate development project. You can then reference the
 library project from other Android projects and, at build time, the tools
 compile the shared code and resources as part of the dependent applications.
 More information about this feature is available in the <a
-href="{@docRoot}guide/developing/eclipse-adt.html#libraryProject">Developing
-in Eclipse with ADT</a> document. </p>
+href="{@docRoot}guide/developing/projects/index.html#LibraryProjects">Creating and Managing Projects</a> document. </p>
 <p>If you are not developing in Eclipse, <a
 href="tools-notes.html">SDK Tools r6</a> provides the equivalent library
 project support through the Ant build system.</p>
@@ -544,13 +974,14 @@ href="#troubleshooting">Troubleshooting</a> section.</p>
 
 <p>ADT is a plugin for the Eclipse IDE. Before you can install or use ADT,
 you must have a compatible version of Eclipse installed on your development
-computer. </p>
+computer. Check the <a
+href="requirements.html">System Requirements</a> document for
+a list of Eclipse versions that are compatible with the Android SDK.</li></p>
 
 <ul>
 <li>If Eclipse is already installed on your computer, make sure that it is
-a version that is compatible with ADT and the Android SDK. Check the <a
-href="requirements.html">System Requirements</a> document for
-a list of Eclipse versions that are compatible with the Android SDK.</li>
+a version that is compatible with ADT and the Android SDK.
+
 <li>If you need to install or update Eclipse, you can download it from this
 location:
 
@@ -558,7 +989,7 @@ location:
 "http://www.eclipse.org/downloads/">http://www.eclipse.org/downloads/</a>
 </p>
 
-<p>For Eclipse 3.5 or newer, the "Eclipse Classic" version is recommended. Otherwise, a Java or RCP
+<p>The "Eclipse Classic" version is recommended. Otherwise, a Java or RCP
 version of Eclipse is recommended.</p></li>
 </ul>
 
@@ -574,19 +1005,15 @@ ADT installation as described in the steps below. </p>
 
 <h3 id="downloading">Downloading the ADT Plugin</h3>
 
-<p>Use Update Manager feature of your Eclipse installation to install the latest
-revision of ADT on your development computer.<p>
+<p>Use the Update Manager feature of your Eclipse installation to install the latest
+revision of ADT on your development computer.<>
 
 <p>Assuming that you have a compatible version of the Eclipse IDE installed, as
 described in <a href="#preparing">Preparing for Installation</a>, above, follow
 these steps to download the ADT plugin and install it in your Eclipse
-environment. </p>
+environment.</p>
 
-<table style="font-size:100%">
-<tr><th>Eclipse 3.5 (Galileo) and 3.6 (Helios)</th><th>Eclipse 3.4 (Ganymede)</th></tr>
-<tr>
-<td width="45%">
-<!-- 3.5+ steps -->
+
 <ol>
     <li>Start Eclipse, then select <strong>Help</strong> &gt; <strong>Install New
 Software...</strong>.</li>
@@ -594,55 +1021,32 @@ Software...</strong>.</li>
     <li>In the Add Repository dialog that appears, enter "ADT Plugin" for the <em>Name</em> and the
 following URL for the <em>Location</em>:
       <pre>https://dl-ssl.google.com/android/eclipse/</pre>
-        <p>Note: If you have trouble acquiring the plugin, try using "http" in the Location URL,
-        instead of "https" (https is preferred for security reasons).</p>
-      <p>Click <strong>OK</strong>.</p></li>
-    <li>In the Available Software dialog, select
-the checkbox next to Developer Tools and click <strong>Next</strong>.</li>
+    </li>
+    <li>Click <strong>OK</strong>
+      <p>Note: If you have trouble acquiring the plugin, try using "http" in the Location URL,
+instead of "https" (https is preferred for security reasons).</p></li>
+    <li>In the Available Software dialog, select the checkbox next to Developer Tools and click
+<strong>Next</strong>.</li>
     <li>In the next window, you'll see a list of the tools to be downloaded. Click
 <strong>Next</strong>. </li>
-    <li>Read and accept the license agreements, then click <strong>Finish</strong>.</li>
+    <li>Read and accept the license agreements, then click <strong>Finish</strong>.
+      <p>Note: If you get a security warning saying that the authenticity or validity of
+the software can't be established, click <strong>OK</strong>.</p></li>
     <li>When the installation completes, restart Eclipse. </li>
 </ol>
-
-</td>
-<td width="50%">
-
-<!-- 3.4 steps -->
-<ol>
-    <li>Start Eclipse, then select <strong>Help</strong> &gt; <strong>Software Updates...</strong>.
-In the dialog that appears, click the <strong>Available Software</strong> tab.</li>
-    <li>Click <strong>Add Site</strong>.</li>
-    <li>In the Add Site dialog that appears, enter this URL in the "Location" field:
-        <pre>https://dl-ssl.google.com/android/eclipse/</pre>
-        <p>Note: If you have trouble acquiring the plugin, you can try
-           using "http" in the URL, instead of "https" (https is preferred for
-           security reasons).</p>
-        <p>Click <strong>OK</strong>.</p>
-    </li>
-    <li>Back in the Available Software view, you should see the plugin listed by the URL,
-       with "Developer Tools" nested within it. Select the checkbox next to Developer Tools,
-        which will automatically select the nested tools. Then click
-        <strong>Install</strong></li>
-    <li>On the subsequent Install window, all of the included tools
-        should be checked. Click <strong>Next</strong>. </li>
-    <li>Read and accept the license agreements, then click <strong>Finish</strong>.</li>
-    <li>When the installation completes, restart Eclipse. </li>
-
-</ol>
-</td>
-</tr>
-</table>
 
 <h3 id="configuring">Configuring the ADT Plugin</h3>
 
-<p>Once you've successfully downloaded ADT as described above, the next step
+<p>After you've successfully downloaded the ADT as described above, the next step
 is to modify your ADT preferences in Eclipse to point to the Android SDK directory:</p>
 
 <ol>
     <li>Select <strong>Window</strong> &gt; <strong>Preferences...</strong> to open the Preferences
         panel (Mac OS X: <strong>Eclipse</strong> &gt; <strong>Preferences</strong>).</li>
-    <li>Select <strong>Android</strong> from the left panel. </li>
+    <li>Select <strong>Android</strong> from the left panel.</li>
+      <p>You may see a dialog asking whether you want to send usage statistics to Google. If so,
+make your choice and click <strong>Proceed</strong>. You cannot continue with this procedure until
+you click <strong>Proceed</strong>.</p>
     <li>For the <em>SDK Location</em> in the main panel, click <strong>Browse...</strong> and
         locate your downloaded SDK directory. </li>
     <li>Click <strong>Apply</strong>, then <strong>OK</strong>.</li>
@@ -757,11 +1161,6 @@ Eclipse Installed Software window using <strong>Help</strong>
 <p>Follow the steps below to check whether an update is available and, if so,
 to install it. </p>
 
-<table style="font-size:100%">
-<tr><th>Eclipse 3.5 (Galileo) and 3.6 (Helios)</th><th>Eclipse 3.4 (Ganymede)</th></tr>
-<tr>
-<td>
-<!-- 3.5+ steps -->
 <ol>
     <li>Select <strong>Help</strong> &gt; <strong>Check for Updates</strong>.
       <p>If there are no updates available, a dialog will say so and you're done.</p></li>
@@ -773,25 +1172,6 @@ to install it. </p>
       Android Development Tools.</li>
     <li>Restart Eclipse.</li>
 </ol>
-</td>
-
-<td width="50%">
-<!-- 3.4 steps -->
-<ol>
-    <li>Select <strong>Help</strong> &gt; <strong>Software Updates</strong>.</li>
-    <li>Select the <strong>Available Software</strong> tab.</li>
-    <li>If there are updates available, select Android DDMS, Android Development Tools,
-      and Android Hierarchy Viewer, then click <strong>Update</strong>.</li>
-    <li>In the resulting Available Updates dialog, ensure that each of the listed tools
-      are selected, then click <strong>Next</strong>.</li>
-    <li>Read and accept the license agreement and then click <strong>Finish</strong>.
-      This will download and install the latest version of Android DDMS and
-      Android Development Tools.</li>
-    <li>Restart Eclipse.</li>
-</ol>
-</td>
-</tr>
-</table>
 
 
 <p>If you encounter problems during the update, remove the existing ADT plugin from Eclipse, then

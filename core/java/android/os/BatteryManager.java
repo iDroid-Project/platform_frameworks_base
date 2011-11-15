@@ -84,7 +84,15 @@ public class BatteryManager {
      * String describing the technology of the current battery.
      */
     public static final String EXTRA_TECHNOLOGY = "technology";
-    
+
+    /**
+     * Extra for {@link android.content.Intent#ACTION_BATTERY_CHANGED}:
+     * Int value set to nonzero if an unsupported charger is attached
+     * to the device.
+     * {@hide}
+     */
+    public static final String EXTRA_INVALID_CHARGER = "invalid_charger";
+
     // values for "status" field in the ACTION_BATTERY_CHANGED Intent
     public static final int BATTERY_STATUS_UNKNOWN = 1;
     public static final int BATTERY_STATUS_CHARGING = 2;
@@ -99,6 +107,7 @@ public class BatteryManager {
     public static final int BATTERY_HEALTH_DEAD = 4;
     public static final int BATTERY_HEALTH_OVER_VOLTAGE = 5;
     public static final int BATTERY_HEALTH_UNSPECIFIED_FAILURE = 6;
+    public static final int BATTERY_HEALTH_COLD = 7;
 
     // values of the "plugged" field in the ACTION_BATTERY_CHANGED intent.
     // These must be powers of 2.

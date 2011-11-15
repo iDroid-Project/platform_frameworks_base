@@ -24,11 +24,6 @@ import android.os.Parcelable;
  */
 public abstract class InputEvent implements Parcelable {
     /** @hide */
-    protected int mDeviceId;
-    /** @hide */
-    protected int mSource;
-    
-    /** @hide */
     protected static final int PARCEL_TOKEN_MOTION_EVENT = 1;
     /** @hide */
     protected static final int PARCEL_TOKEN_KEY_EVENT = 2;
@@ -45,55 +40,83 @@ public abstract class InputEvent implements Parcelable {
      * @return The device id.
      * @see InputDevice#getDevice
      */
-    public final int getDeviceId() {
-        return mDeviceId;
-    }
-    
+    public abstract int getDeviceId();
+
     /**
      * Gets the device that this event came from.
      * 
      * @return The device, or null if unknown.
      */
     public final InputDevice getDevice() {
-        return InputDevice.getDevice(mDeviceId);
+        return InputDevice.getDevice(getDeviceId());
     }
-    
+
     /**
      * Gets the source of the event.
      * 
      * @return The event source or {@link InputDevice#SOURCE_UNKNOWN} if unknown.
      * @see InputDevice#getSourceInfo
      */
-    public final int getSource() {
-        return mSource;
-    }
-    
+    public abstract int getSource();
+
     /**
      * Modifies the source of the event.
-     * @param source The source.
-     * 
+     *
+     * @param source The new source.
      * @hide
      */
-    public final void setSource(int source) {
-        mSource = source;
-    }
-    
+    public abstract void setSource(int source);
+
+    /**
+     * Copies the event.
+     *
+     * @return A deep copy of the event.
+     * @hide
+     */
+    public abstract InputEvent copy();
+
+    /**
+     * Recycles the event.
+     * This method should only be used by the system since applications do not
+     * expect {@link KeyEvent} objects to be recycled, although {@link MotionEvent}
+     * objects are fine.  See {@link KeyEvent#recycle()} for details.
+     * @hide
+     */
+    public abstract void recycle();
+
+    /**
+     * Gets a private flag that indicates when the system has detected that this input event
+     * may be inconsistent with respect to the sequence of previously delivered input events,
+     * such as when a key up event is sent but the key was not down or when a pointer
+     * move event is sent but the pointer is not down.
+     *
+     * @return True if this event is tainted.
+     * @hide
+     */
+    public abstract boolean isTainted();
+
+    /**
+     * Sets a private flag that indicates when the system has detected that this input event
+     * may be inconsistent with respect to the sequence of previously delivered input events,
+     * such as when a key up event is sent but the key was not down or when a pointer
+     * move event is sent but the pointer is not down.
+     *
+     * @param tainted True if this event is tainted.
+     * @hide
+     */
+    public abstract void setTainted(boolean tainted);
+
+    /**
+     * Returns the time (in ns) when this specific event was generated.
+     * The value is in nanosecond precision but it may not have nanosecond accuracy.
+     * @hide
+     */
+    public abstract long getEventTimeNano();
+
     public int describeContents() {
         return 0;
     }
-    
-    /** @hide */
-    protected final void readBaseFromParcel(Parcel in) {
-        mDeviceId = in.readInt();
-        mSource = in.readInt();
-    }
-    
-    /** @hide */
-    protected final void writeBaseToParcel(Parcel out) {
-        out.writeInt(mDeviceId);
-        out.writeInt(mSource);
-    }
-    
+
     public static final Parcelable.Creator<InputEvent> CREATOR
             = new Parcelable.Creator<InputEvent>() {
         public InputEvent createFromParcel(Parcel in) {

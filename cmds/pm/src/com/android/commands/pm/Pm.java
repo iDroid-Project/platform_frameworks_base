@@ -37,6 +37,7 @@ import android.content.res.AssetManager;
 import android.content.res.Resources;
 import android.net.Uri;
 import android.os.Parcel;
+import android.os.Process;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 
@@ -61,6 +62,7 @@ public final class Pm {
 
     private static final String PM_NOT_RUNNING_ERR =
         "Error: Could not access the Package Manager.  Is the system running?";
+    private static final int ROOT_UID = 0;
 
     public static void main(String[] args) {
         new Pm().run(args);
@@ -118,13 +120,28 @@ public final class Pm {
             return;
         }
 
-        if ("setInstallLocation".equals(op)) {
+        if ("disable-user".equals(op)) {
+            runSetEnabledSetting(PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER);
+            return;
+        }
+
+        if ("set-install-location".equals(op)) {
             runSetInstallLocation();
             return;
         }
 
-        if ("getInstallLocation".equals(op)) {
+        if ("get-install-location".equals(op)) {
             runGetInstallLocation();
+            return;
+        }
+
+        if ("createUser".equals(op)) {
+            runCreateUser();
+            return;
+        }
+
+        if ("removeUser".equals(op)) {
+            runRemoveUser();
             return;
         }
 
@@ -194,6 +211,7 @@ public final class Pm {
     private void runListPackages(boolean showApplicationPackage) {
         int getFlags = 0;
         boolean listDisabled = false, listEnabled = false;
+        boolean listSystem = false, listThirdParty = false;
         try {
             String opt;
             while ((opt=nextOption()) != null) {
@@ -207,6 +225,10 @@ public final class Pm {
                     listDisabled = true;
                 } else if (opt.equals("-e")) {
                     listEnabled = true;
+                } else if (opt.equals("-s")) {
+                    listSystem = true;
+                } else if (opt.equals("-3")) {
+                    listThirdParty = true;
                 } else if (opt.equals("-u")) {
                     getFlags |= PackageManager.GET_UNINSTALLED_PACKAGES;
                 } else {
@@ -232,8 +254,12 @@ public final class Pm {
                 if (filter != null && !info.packageName.contains(filter)) {
                     continue;
                 }
+                final boolean isSystem =
+                        (info.applicationInfo.flags&ApplicationInfo.FLAG_SYSTEM) != 0;
                 if ((!listDisabled || !info.applicationInfo.enabled) &&
-                        (!listEnabled || info.applicationInfo.enabled)) {
+                        (!listEnabled || info.applicationInfo.enabled) &&
+                        (!listSystem || isSystem) &&
+                        (!listThirdParty || !isSystem)) {
                     System.out.print("package:");
                     if (showApplicationPackage) {
                         System.out.print(info.applicationInfo.sourceDir);
@@ -276,7 +302,7 @@ public final class Pm {
             for (int i=0; i<rawList.length; i++) {
                 list.add(rawList[i]);
             }
-                    
+
 
             // Sort by name
             Collections.sort(list, new Comparator<FeatureInfo>() {
@@ -420,9 +446,11 @@ public final class Pm {
         if (nonLocalized != null) {
             return nonLocalized.toString();
         }
-        Resources r = getResources(pii);
-        if (r != null) {
-            return r.getString(res);
+        if (res != 0) {
+            Resources r = getResources(pii);
+            if (r != null) {
+                return r.getString(res);
+            }
         }
         return null;
     }
@@ -744,18 +772,33 @@ public final class Pm {
             }
         }
 
-        String apkFilePath = nextArg();
+        final Uri apkURI;
+        final Uri verificationURI;
+
+        // Populate apkURI, must be present
+        final String apkFilePath = nextArg();
         System.err.println("\tpkg: " + apkFilePath);
-        if (apkFilePath == null) {
+        if (apkFilePath != null) {
+            apkURI = Uri.fromFile(new File(apkFilePath));
+        } else {
             System.err.println("Error: no package specified");
             showUsage();
             return;
         }
 
+        // Populate verificationURI, optionally present
+        final String verificationFilePath = nextArg();
+        if (verificationFilePath != null) {
+            System.err.println("\tver: " + verificationFilePath);
+            verificationURI = Uri.fromFile(new File(verificationFilePath));
+        } else {
+            verificationURI = null;
+        }
+
         PackageInstallObserver obs = new PackageInstallObserver();
         try {
-            mPm.installPackage(Uri.fromFile(new File(apkFilePath)), obs, installFlags,
-                    installerPackageName);
+            mPm.installPackageWithVerification(apkURI, obs, installFlags, installerPackageName,
+                    verificationURI, null);
 
             synchronized (obs) {
                 while (!obs.finished) {
@@ -778,14 +821,71 @@ public final class Pm {
         }
     }
 
+    public void runCreateUser() {
+        // Need to be run as root
+        if (Process.myUid() != ROOT_UID) {
+            System.err.println("Error: createUser must be run as root");
+            return;
+        }
+        String name;
+        String arg = nextArg();
+        if (arg == null) {
+            System.err.println("Error: no user name specified.");
+            showUsage();
+            return;
+        }
+        name = arg;
+        try {
+            if (mPm.createUser(name, 0) == null) {
+                System.err.println("Error: couldn't create user.");
+                showUsage();
+            }
+        } catch (RemoteException e) {
+            System.err.println(e.toString());
+            System.err.println(PM_NOT_RUNNING_ERR);
+        }
+
+    }
+
+    public void runRemoveUser() {
+        // Need to be run as root
+        if (Process.myUid() != ROOT_UID) {
+            System.err.println("Error: removeUser must be run as root");
+            return;
+        }
+        int userId;
+        String arg = nextArg();
+        if (arg == null) {
+            System.err.println("Error: no user id specified.");
+            showUsage();
+            return;
+        }
+        try {
+            userId = Integer.parseInt(arg);
+        } catch (NumberFormatException e) {
+            System.err.println("Error: user id has to be a number.");
+            showUsage();
+            return;
+        }
+        try {
+            if (!mPm.removeUser(userId)) {
+                System.err.println("Error: couldn't remove user.");
+                showUsage();
+            }
+        } catch (RemoteException e) {
+            System.err.println(e.toString());
+            System.err.println(PM_NOT_RUNNING_ERR);
+        }
+    }
+
     class PackageDeleteObserver extends IPackageDeleteObserver.Stub {
         boolean finished;
         boolean result;
 
-        public void packageDeleted(boolean succeeded) {
+        public void packageDeleted(String packageName, int returnCode) {
             synchronized (this) {
                 finished = true;
-                result = succeeded;
+                result = returnCode == PackageManager.DELETE_SUCCEEDED;
                 notifyAll();
             }
         }
@@ -890,6 +990,8 @@ public final class Pm {
                 return "enabled";
             case PackageManager.COMPONENT_ENABLED_STATE_DISABLED:
                 return "disabled";
+            case PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER:
+                return "disabled-user";
         }
         return "unknown";
     }
@@ -1007,8 +1109,7 @@ public final class Pm {
     }
 
     private static void showUsage() {
-        System.err.println("usage: pm [list|path|install|uninstall]");
-        System.err.println("       pm list packages [-f] [-d] [-e] [-u] [FILTER]");
+        System.err.println("usage: pm list packages [-f] [-d] [-e] [-s] [-e] [-u] [FILTER]");
         System.err.println("       pm list permission-groups");
         System.err.println("       pm list permissions [-g] [-f] [-d] [-u] [GROUP]");
         System.err.println("       pm list instrumentation [-f] [TARGET-PACKAGE]");
@@ -1020,59 +1121,66 @@ public final class Pm {
         System.err.println("       pm clear PACKAGE");
         System.err.println("       pm enable PACKAGE_OR_COMPONENT");
         System.err.println("       pm disable PACKAGE_OR_COMPONENT");
-        System.err.println("       pm setInstallLocation [0/auto] [1/internal] [2/external]");
+        System.err.println("       pm disable-user PACKAGE_OR_COMPONENT");
+        System.err.println("       pm set-install-location [0/auto] [1/internal] [2/external]");
+        System.err.println("       pm get-install-location");
+        System.err.println("       pm createUser USER_NAME");
+        System.err.println("       pm removeUser USER_ID");
         System.err.println("");
-        System.err.println("The list packages command prints all packages, optionally only");
-        System.err.println("those whose package name contains the text in FILTER.  Options:");
-        System.err.println("  -f: see their associated file.");
-        System.err.println("  -d: filter to include disbled packages.");
-        System.err.println("  -e: filter to include enabled packages.");
-        System.err.println("  -u: also include uninstalled packages.");
+        System.err.println("pm list packages: prints all packages, optionally only");
+        System.err.println("  those whose package name contains the text in FILTER.  Options:");
+        System.err.println("    -f: see their associated file.");
+        System.err.println("    -d: filter to only show disbled packages.");
+        System.err.println("    -e: filter to only show enabled packages.");
+        System.err.println("    -s: filter to only show system packages.");
+        System.err.println("    -3: filter to only show third party packages.");
+        System.err.println("    -u: also include uninstalled packages.");
         System.err.println("");
-        System.err.println("The list permission-groups command prints all known");
-        System.err.println("permission groups.");
+        System.err.println("pm list permission-groups: prints all known permission groups.");
         System.err.println("");
-        System.err.println("The list permissions command prints all known");
-        System.err.println("permissions, optionally only those in GROUP.  Options:");
-        System.err.println("  -g: organize by group.");
-        System.err.println("  -f: print all information.");
-        System.err.println("  -s: short summary.");
-        System.err.println("  -d: only list dangerous permissions.");
-        System.err.println("  -u: list only the permissions users will see.");
+        System.err.println("pm list permissions: prints all known permissions, optionally only");
+        System.err.println("  those in GROUP.  Options:");
+        System.err.println("    -g: organize by group.");
+        System.err.println("    -f: print all information.");
+        System.err.println("    -s: short summary.");
+        System.err.println("    -d: only list dangerous permissions.");
+        System.err.println("    -u: list only the permissions users will see.");
         System.err.println("");
-        System.err.println("The list instrumentation command prints all instrumentations,");
-        System.err.println("or only those that target a specified package.  Options:");
-        System.err.println("  -f: see their associated file.");
+        System.err.println("pm list instrumentation: use to list all test packages; optionally");
+        System.err.println("  supply <TARGET-PACKAGE> to list the test packages for a particular");
+        System.err.println("  application.  Options:");
+        System.err.println("    -f: list the .apk file for the test package.");
         System.err.println("");
-        System.err.println("The list features command prints all features of the system.");
+        System.err.println("pm list features: prints all features of the system.");
         System.err.println("");
-        System.err.println("The path command prints the path to the .apk of a package.");
+        System.err.println("pm path: print the path to the .apk of the given PACKAGE.");
         System.err.println("");
-        System.err.println("The install command installs a package to the system.  Options:");
-        System.err.println("  -l: install the package with FORWARD_LOCK.");
-        System.err.println("  -r: reinstall an exisiting app, keeping its data.");
-        System.err.println("  -t: allow test .apks to be installed.");
-        System.err.println("  -i: specify the installer package name.");
-        System.err.println("  -s: install package on sdcard.");
-        System.err.println("  -f: install package on internal flash.");
+        System.err.println("pm install: installs a package to the system.  Options:");
+        System.err.println("    -l: install the package with FORWARD_LOCK.");
+        System.err.println("    -r: reinstall an exisiting app, keeping its data.");
+        System.err.println("    -t: allow test .apks to be installed.");
+        System.err.println("    -i: specify the installer package name.");
+        System.err.println("    -s: install package on sdcard.");
+        System.err.println("    -f: install package on internal flash.");
         System.err.println("");
-        System.err.println("The uninstall command removes a package from the system. Options:");
-        System.err.println("  -k: keep the data and cache directories around.");
-        System.err.println("after the package removal.");
+        System.err.println("pm uninstall: removes a package from the system. Options:");
+        System.err.println("    -k: keep the data and cache directories around after package removal.");
         System.err.println("");
-        System.err.println("The clear command deletes all data associated with a package.");
+        System.err.println("pm clear: deletes all data associated with a package.");
         System.err.println("");
-        System.err.println("The enable and disable commands change the enabled state of");
-        System.err.println("a given package or component (written as \"package/class\").");
+        System.err.println("pm enable, disable, disable-user: these commands change the enabled state");
+        System.err.println("  of a given package or component (written as \"package/class\").");
         System.err.println("");
-        System.err.println("The getInstallLocation command gets the current install location");
-        System.err.println("  0 [auto]: Let system decide the best location");
-        System.err.println("  1 [internal]: Install on internal device storage");
-        System.err.println("  2 [external]: Install on external media");
+        System.err.println("pm get-install-location: returns the current install location.");
+        System.err.println("    0 [auto]: Let system decide the best location");
+        System.err.println("    1 [internal]: Install on internal device storage");
+        System.err.println("    2 [external]: Install on external media");
         System.err.println("");
-        System.err.println("The setInstallLocation command changes the default install location");
-        System.err.println("  0 [auto]: Let system decide the best location");
-        System.err.println("  1 [internal]: Install on internal device storage");
-        System.err.println("  2 [external]: Install on external media");
+        System.err.println("pm set-install-location: changes the default install location.");
+        System.err.println("  NOTE: this is only intended for debugging; using this can cause");
+        System.err.println("  applications to break and other undersireable behavior.");
+        System.err.println("    0 [auto]: Let system decide the best location");
+        System.err.println("    1 [internal]: Install on internal device storage");
+        System.err.println("    2 [external]: Install on external media");
     }
 }

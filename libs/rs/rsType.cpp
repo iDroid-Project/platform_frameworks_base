@@ -15,35 +15,33 @@
  */
 
 #include "rsContext.h"
-#include <GLES/gl.h>
 
 using namespace android;
 using namespace android::renderscript;
 
-Type::Type(Context *rsc) : ObjectBase(rsc)
-{
-    mAllocFile = __FILE__;
-    mAllocLine = __LINE__;
+Type::Type(Context *rsc) : ObjectBase(rsc) {
     mLODs = 0;
     mLODCount = 0;
     clear();
 }
 
-Type::~Type()
-{
+void Type::preDestroy() const {
     for (uint32_t ct = 0; ct < mRSC->mStateType.mTypes.size(); ct++) {
         if (mRSC->mStateType.mTypes[ct] == this) {
             mRSC->mStateType.mTypes.removeAt(ct);
             break;
         }
     }
+}
+
+Type::~Type() {
     if (mLODs) {
         delete [] mLODs;
+        mLODs = NULL;
     }
 }
 
-void Type::clear()
-{
+void Type::clear() {
     if (mLODs) {
         delete [] mLODs;
         mLODs = NULL;
@@ -56,22 +54,19 @@ void Type::clear()
     mElement.clear();
 }
 
-TypeState::TypeState()
-{
+TypeState::TypeState() {
 }
 
-TypeState::~TypeState()
-{
+TypeState::~TypeState() {
+    rsAssert(!mTypes.size());
 }
 
-size_t Type::getOffsetForFace(uint32_t face) const
-{
+size_t Type::getOffsetForFace(uint32_t face) const {
     rsAssert(mFaces);
     return 0;
 }
 
-void Type::compute()
-{
+void Type::compute() {
     uint32_t oldLODCount = mLODCount;
     if (mDimLOD) {
         uint32_t l2x = rsFindHighBit(mDimX) + 1;
@@ -84,7 +79,9 @@ void Type::compute()
         mLODCount = 1;
     }
     if (mLODCount != oldLODCount) {
-        delete [] mLODs;
+        if (mLODs){
+            delete [] mLODs;
+        }
         mLODs = new LOD[mLODCount];
     }
 
@@ -110,181 +107,89 @@ void Type::compute()
         offset *= 6;
     }
     mTotalSizeBytes = offset;
-
-    makeGLComponents();
 }
 
-uint32_t Type::getLODOffset(uint32_t lod, uint32_t x) const
-{
+uint32_t Type::getLODOffset(uint32_t lod, uint32_t x) const {
     uint32_t offset = mLODs[lod].mOffset;
     offset += x * mElement->getSizeBytes();
     return offset;
 }
 
-uint32_t Type::getLODOffset(uint32_t lod, uint32_t x, uint32_t y) const
-{
+uint32_t Type::getLODOffset(uint32_t lod, uint32_t x, uint32_t y) const {
     uint32_t offset = mLODs[lod].mOffset;
     offset += (x + y * mLODs[lod].mX) * mElement->getSizeBytes();
     return offset;
 }
 
-uint32_t Type::getLODOffset(uint32_t lod, uint32_t x, uint32_t y, uint32_t z) const
-{
+uint32_t Type::getLODOffset(uint32_t lod, uint32_t x, uint32_t y, uint32_t z) const {
     uint32_t offset = mLODs[lod].mOffset;
     offset += (x + y*mLODs[lod].mX + z*mLODs[lod].mX*mLODs[lod].mY) * mElement->getSizeBytes();
     return offset;
 }
 
+uint32_t Type::getLODFaceOffset(uint32_t lod, RsAllocationCubemapFace face, uint32_t x, uint32_t y) const {
+    uint32_t offset = mLODs[lod].mOffset;
+    offset += (x + y * mLODs[lod].mX) * mElement->getSizeBytes();
 
-void Type::makeGLComponents()
-{
-    uint32_t userNum = 0;
-
-    for (uint32_t ct=0; ct < getElement()->getFieldCount(); ct++) {
-        const Component &c = getElement()->getField(ct)->getComponent();
-
-        switch(c.getKind()) {
-        case RS_KIND_USER:
-            mGL.mUser[userNum].size = c.getVectorSize();
-            mGL.mUser[userNum].offset = mElement->getFieldOffsetBytes(ct);
-            mGL.mUser[userNum].type = c.getGLType();
-            mGL.mUser[userNum].normalized = c.getType() != RS_TYPE_FLOAT_32;//c.getIsNormalized();
-            mGL.mUser[userNum].name.setTo(getElement()->getFieldName(ct));
-            userNum ++;
-            break;
-
-        case RS_KIND_POSITION:
-            rsAssert(mGL.mVtx.size == 0);
-            mGL.mVtx.size = c.getVectorSize();
-            mGL.mVtx.offset = mElement->getFieldOffsetBytes(ct);
-            mGL.mVtx.type = c.getGLType();
-            mGL.mVtx.normalized = false;
-            mGL.mVtx.name.setTo("Position");
-            break;
-
-        case RS_KIND_COLOR:
-            rsAssert(mGL.mColor.size == 0);
-            mGL.mColor.size = c.getVectorSize();
-            mGL.mColor.offset = mElement->getFieldOffsetBytes(ct);
-            mGL.mColor.type = c.getGLType();
-            mGL.mColor.normalized = c.getType() != RS_TYPE_FLOAT_32;
-            mGL.mColor.name.setTo("Color");
-            break;
-
-        case RS_KIND_NORMAL:
-            rsAssert(mGL.mNorm.size == 0);
-            mGL.mNorm.size = c.getVectorSize();
-            mGL.mNorm.offset = mElement->getFieldOffsetBytes(ct);
-            mGL.mNorm.type = c.getGLType();
-            mGL.mNorm.normalized = false;
-            mGL.mNorm.name.setTo("Normal");
-            break;
-
-        case RS_KIND_TEXTURE:
-            rsAssert(mGL.mTex.size == 0);
-            mGL.mTex.size = c.getVectorSize();
-            mGL.mTex.offset = mElement->getFieldOffsetBytes(ct);
-            mGL.mTex.type = c.getGLType();
-            mGL.mTex.normalized = false;
-            mGL.mTex.name.setTo("Texture");
-            break;
-
-        case RS_KIND_POINT_SIZE:
-            rsAssert(!mGL.mPointSize.size);
-            mGL.mPointSize.size = c.getVectorSize();
-            mGL.mPointSize.offset = mElement->getFieldOffsetBytes(ct);
-            mGL.mPointSize.type = c.getGLType();
-            mGL.mPointSize.normalized = false;
-            mGL.mPointSize.name.setTo("PointSize");
-        break;
-
-        default:
-            break;
-        }
+    if (face != 0) {
+        uint32_t faceOffset = getSizeBytes() / 6;
+        offset += faceOffset * face;
     }
+    return offset;
 }
 
-void Type::enableGLVertexBuffer(VertexArray *va) const
-{
-    // Note: We are only going to enable buffers and never disable them
-    // here.  The reason is more than one Allocation may be used as a vertex
-    // source.  So we cannot disable arrays that may have been in use by
-    // another allocation.
-
-    uint32_t stride = mElement->getSizeBytes();
-    if (mGL.mVtx.size) {
-        va->addLegacy(mGL.mVtx.type,
-                      mGL.mVtx.size,
-                      stride,
-                      RS_KIND_POSITION,
-                      false,
-                      mGL.mVtx.offset);
-    }
-
-    if (mGL.mNorm.size) {
-        va->addLegacy(mGL.mNorm.type,
-                     3,
-                     stride,
-                     RS_KIND_NORMAL,
-                     false,
-                     mGL.mNorm.offset);
-    }
-
-    if (mGL.mColor.size) {
-        va->addLegacy(mGL.mColor.type,
-                     mGL.mColor.size,
-                     stride,
-                     RS_KIND_COLOR,
-                     true,
-                     mGL.mColor.offset);
-    }
-
-    if (mGL.mTex.size) {
-        va->addLegacy(mGL.mTex.type,
-                     mGL.mTex.size,
-                     stride,
-                     RS_KIND_TEXTURE,
-                     false,
-                     mGL.mTex.offset);
-    }
-
-    if (mGL.mPointSize.size) {
-        va->addLegacy(mGL.mPointSize.type,
-                     1,
-                     stride,
-                     RS_KIND_POINT_SIZE,
-                     false,
-                     mGL.mPointSize.offset);
-    }
-
-}
-
-void Type::enableGLVertexBuffer2(VertexArray *va) const
-{
-    // Do legacy buffers
-    enableGLVertexBuffer(va);
-
-    uint32_t stride = mElement->getSizeBytes();
-    for (uint32_t ct=0; ct < RS_MAX_ATTRIBS; ct++) {
-        if (mGL.mUser[ct].size) {
-            va->addUser(mGL.mUser[ct], stride);
-        }
-    }
-}
-
-
-
-void Type::dumpLOGV(const char *prefix) const
-{
+void Type::dumpLOGV(const char *prefix) const {
     char buf[1024];
     ObjectBase::dumpLOGV(prefix);
-    LOGV("%s   Type: x=%i y=%i z=%i mip=%i face=%i", prefix, mDimX, mDimY, mDimZ, mDimLOD, mFaces);
-    sprintf(buf, "%s element: ", prefix);
+    LOGV("%s   Type: x=%zu y=%zu z=%zu mip=%i face=%i", prefix, mDimX, mDimY, mDimZ, mDimLOD, mFaces);
+    snprintf(buf, sizeof(buf), "%s element: ", prefix);
     mElement->dumpLOGV(buf);
 }
 
-bool Type::getIsNp2() const
-{
+void Type::serialize(OStream *stream) const {
+    // Need to identify ourselves
+    stream->addU32((uint32_t)getClassId());
+
+    String8 name(getName());
+    stream->addString(&name);
+
+    mElement->serialize(stream);
+
+    stream->addU32(mDimX);
+    stream->addU32(mDimY);
+    stream->addU32(mDimZ);
+
+    stream->addU8((uint8_t)(mDimLOD ? 1 : 0));
+    stream->addU8((uint8_t)(mFaces ? 1 : 0));
+}
+
+Type *Type::createFromStream(Context *rsc, IStream *stream) {
+    // First make sure we are reading the correct object
+    RsA3DClassID classID = (RsA3DClassID)stream->loadU32();
+    if (classID != RS_A3D_CLASS_ID_TYPE) {
+        LOGE("type loading skipped due to invalid class id\n");
+        return NULL;
+    }
+
+    String8 name;
+    stream->loadString(&name);
+
+    Element *elem = Element::createFromStream(rsc, stream);
+    if (!elem) {
+        return NULL;
+    }
+
+    uint32_t x = stream->loadU32();
+    uint32_t y = stream->loadU32();
+    uint32_t z = stream->loadU32();
+    uint8_t lod = stream->loadU8();
+    uint8_t faces = stream->loadU8();
+    Type *type = Type::getType(rsc, elem, x, y, z, lod != 0, faces !=0 );
+    elem->decUserRef();
+    return type;
+}
+
+bool Type::getIsNp2() const {
     uint32_t x = getDimX();
     uint32_t y = getDimY();
     uint32_t z = getDimZ();
@@ -301,97 +206,85 @@ bool Type::getIsNp2() const
     return false;
 }
 
+ObjectBaseRef<Type> Type::getTypeRef(Context *rsc, const Element *e,
+                                     uint32_t dimX, uint32_t dimY, uint32_t dimZ,
+                                     bool dimLOD, bool dimFaces) {
+    ObjectBaseRef<Type> returnRef;
+
+    TypeState * stc = &rsc->mStateType;
+
+    ObjectBase::asyncLock();
+    for (uint32_t ct=0; ct < stc->mTypes.size(); ct++) {
+        Type *t = stc->mTypes[ct];
+        if (t->getElement() != e) continue;
+        if (t->getDimX() != dimX) continue;
+        if (t->getDimY() != dimY) continue;
+        if (t->getDimZ() != dimZ) continue;
+        if (t->getDimLOD() != dimLOD) continue;
+        if (t->getDimFaces() != dimFaces) continue;
+        returnRef.set(t);
+        ObjectBase::asyncUnlock();
+        return returnRef;
+    }
+    ObjectBase::asyncUnlock();
+
+
+    Type *nt = new Type(rsc);
+    returnRef.set(nt);
+    nt->mElement.set(e);
+    nt->mDimX = dimX;
+    nt->mDimY = dimY;
+    nt->mDimZ = dimZ;
+    nt->mDimLOD = dimLOD;
+    nt->mFaces = dimFaces;
+    nt->compute();
+
+    ObjectBase::asyncLock();
+    stc->mTypes.push(nt);
+    ObjectBase::asyncUnlock();
+
+    return returnRef;
+}
+
+ObjectBaseRef<Type> Type::cloneAndResize1D(Context *rsc, uint32_t dimX) const {
+    return getTypeRef(rsc, mElement.get(), dimX,
+                      mDimY, mDimZ, mDimLOD, mFaces);
+}
+
+ObjectBaseRef<Type> Type::cloneAndResize2D(Context *rsc,
+                              uint32_t dimX,
+                              uint32_t dimY) const {
+    return getTypeRef(rsc, mElement.get(), dimX, dimY,
+                      mDimZ, mDimLOD, mFaces);
+}
+
 
 //////////////////////////////////////////////////
 //
 namespace android {
 namespace renderscript {
 
-void rsi_TypeBegin(Context *rsc, RsElement vse)
-{
-    TypeState * stc = &rsc->mStateType;
+RsType rsi_TypeCreate(Context *rsc, RsElement _e, uint32_t dimX,
+                     uint32_t dimY, uint32_t dimZ, bool mips, bool faces) {
+    Element *e = static_cast<Element *>(_e);
 
-    stc->mX = 0;
-    stc->mY = 0;
-    stc->mZ = 0;
-    stc->mLOD = false;
-    stc->mFaces = false;
-    stc->mElement.set(static_cast<const Element *>(vse));
+    return Type::getType(rsc, e, dimX, dimY, dimZ, mips, faces);
 }
-
-void rsi_TypeAdd(Context *rsc, RsDimension dim, size_t value)
-{
-    TypeState * stc = &rsc->mStateType;
-
-    if (dim < 0) {
-        //error
-        return;
-    }
-
-
-    switch (dim) {
-    case RS_DIMENSION_X:
-        stc->mX = value;
-        return;
-    case RS_DIMENSION_Y:
-        stc->mY = value;
-        return;
-    case RS_DIMENSION_Z:
-        stc->mZ = value;
-        return;
-    case RS_DIMENSION_FACE:
-        stc->mFaces = (value != 0);
-        return;
-    case RS_DIMENSION_LOD:
-        stc->mLOD = (value != 0);
-        return;
-    default:
-        break;
-    }
-
-
-    int32_t arrayNum = dim - RS_DIMENSION_ARRAY_0;
-    if ((dim < 0) || (dim > RS_DIMENSION_MAX)) {
-        LOGE("rsTypeAdd: Bad dimension");
-        //error
-        return;
-    }
-
-    // todo: implement array support
-
-}
-
-RsType rsi_TypeCreate(Context *rsc)
-{
-    TypeState * stc = &rsc->mStateType;
-
-    for (uint32_t ct=0; ct < stc->mTypes.size(); ct++) {
-        Type *t = stc->mTypes[ct];
-        if (t->getElement() != stc->mElement.get()) continue;
-        if (t->getDimX() != stc->mX) continue;
-        if (t->getDimY() != stc->mY) continue;
-        if (t->getDimZ() != stc->mZ) continue;
-        if (t->getDimLOD() != stc->mLOD) continue;
-        if (t->getDimFaces() != stc->mFaces) continue;
-        t->incUserRef();
-        return t;
-    }
-
-    Type * st = new Type(rsc);
-    st->incUserRef();
-    st->setDimX(stc->mX);
-    st->setDimY(stc->mY);
-    st->setDimZ(stc->mZ);
-    st->setElement(stc->mElement.get());
-    st->setDimLOD(stc->mLOD);
-    st->setDimFaces(stc->mFaces);
-    st->compute();
-    stc->mElement.clear();
-    stc->mTypes.push(st);
-    return st;
-}
-
 
 }
 }
 
+void rsaTypeGetNativeData(RsContext con, RsType type, uint32_t *typeData, uint32_t typeDataSize) {
+    rsAssert(typeDataSize == 6);
+    // Pack the data in the follofing way mDimX; mDimY; mDimZ;
+    // mDimLOD; mDimFaces; mElement; into typeData
+    Type *t = static_cast<Type *>(type);
+
+    (*typeData++) = t->getDimX();
+    (*typeData++) = t->getDimY();
+    (*typeData++) = t->getDimZ();
+    (*typeData++) = t->getDimLOD();
+    (*typeData++) = t->getDimFaces() ? 1 : 0;
+    (*typeData++) = (uint32_t)t->getElement();
+    t->getElement()->incUserRef();
+}

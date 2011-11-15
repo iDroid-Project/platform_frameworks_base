@@ -21,7 +21,6 @@
 
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sys/resource.h>
 #include <dirent.h>
 #include <unistd.h>
 
@@ -35,23 +34,10 @@
 #include <binder/IServiceManager.h>
 #include <media/MediaMetadataRetrieverInterface.h>
 #include <media/MediaPlayerInterface.h>
-#include <media/PVMetadataRetriever.h>
 #include <private/media/VideoFrame.h>
 #include "MidiMetadataRetriever.h"
 #include "MetadataRetrieverClient.h"
 #include "StagefrightMetadataRetriever.h"
-
-/* desktop Linux needs a little help with gettid() */
-#if defined(HAVE_GETTID) && !defined(HAVE_ANDROID_OS)
-#define __KERNEL__
-# include <linux/unistd.h>
-#ifdef _syscall0
-_syscall0(pid_t,gettid)
-#else
-pid_t gettid() { return syscall(__NR_gettid);}
-#endif
-#undef __KERNEL__
-#endif
 
 namespace android {
 
@@ -105,12 +91,6 @@ static sp<MediaMetadataRetrieverBase> createRetriever(player_type playerType)
             p = new StagefrightMetadataRetriever;
             break;
         }
-#ifndef NO_OPENCORE
-        case PV_PLAYER:
-            LOGV("create pv metadata retriever");
-            p = new PVMetadataRetriever();
-            break;
-#endif
         case SONIVOX_PLAYER:
             LOGV("create midi metadata retriever");
             p = new MidiMetadataRetriever();
@@ -127,7 +107,8 @@ static sp<MediaMetadataRetrieverBase> createRetriever(player_type playerType)
     return p;
 }
 
-status_t MetadataRetrieverClient::setDataSource(const char *url)
+status_t MetadataRetrieverClient::setDataSource(
+        const char *url, const KeyedVector<String8, String8> *headers)
 {
     LOGV("setDataSource(%s)", url);
     Mutex::Autolock lock(mLock);
@@ -138,7 +119,7 @@ status_t MetadataRetrieverClient::setDataSource(const char *url)
     LOGV("player type = %d", playerType);
     sp<MediaMetadataRetrieverBase> p = createRetriever(playerType);
     if (p == NULL) return NO_INIT;
-    status_t ret = p->setDataSource(url);
+    status_t ret = p->setDataSource(url, headers);
     if (ret == NO_ERROR) mRetriever = p;
     return ret;
 }

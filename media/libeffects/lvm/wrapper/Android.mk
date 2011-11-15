@@ -13,24 +13,20 @@ LOCAL_MODULE:= libbundlewrapper
 
 LOCAL_MODULE_PATH := $(TARGET_OUT_SHARED_LIBRARIES)/soundfx
 
-LOCAL_PRELINK_MODULE := false
+
 
 LOCAL_STATIC_LIBRARIES += libmusicbundle
 
 LOCAL_SHARED_LIBRARIES := \
      libcutils \
-
-ifeq ($(TARGET_SIMULATOR),true)
-LOCAL_LDLIBS += -ldl
-else
-LOCAL_SHARED_LIBRARIES += libdl
-endif
+     libdl
 
 
 LOCAL_C_INCLUDES += \
 	$(LOCAL_PATH)/Bundle \
 	$(LOCAL_PATH)/../lib/Common/lib/ \
-	$(LOCAL_PATH)/../lib/Bundle/lib/
+	$(LOCAL_PATH)/../lib/Bundle/lib/ \
+	system/media/audio_effects/include
 
 
 include $(BUILD_SHARED_LIBRARY)
@@ -47,23 +43,18 @@ LOCAL_MODULE:= libreverbwrapper
 
 LOCAL_MODULE_PATH := $(TARGET_OUT_SHARED_LIBRARIES)/soundfx
 
-LOCAL_PRELINK_MODULE := false
+
 
 LOCAL_STATIC_LIBRARIES += libreverb
 
 LOCAL_SHARED_LIBRARIES := \
      libcutils \
-
-ifeq ($(TARGET_SIMULATOR),true)
-LOCAL_LDLIBS += -ldl
-else
-LOCAL_SHARED_LIBRARIES += libdl
-endif
+     libdl
 
 LOCAL_C_INCLUDES += \
     $(LOCAL_PATH)/Reverb \
     $(LOCAL_PATH)/../lib/Common/lib/ \
     $(LOCAL_PATH)/../lib/Reverb/lib/ \
-
+    system/media/audio_effects/include
 
 include $(BUILD_SHARED_LIBRARY)

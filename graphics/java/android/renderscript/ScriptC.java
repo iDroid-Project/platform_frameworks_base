@@ -16,9 +16,11 @@
 
 package android.renderscript;
 
+import android.content.Context;
 import android.content.res.Resources;
 import android.util.Log;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Map.Entry;
@@ -28,134 +30,75 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 
 /**
- * @hide
+ *
  **/
 public class ScriptC extends Script {
     private static final String TAG = "ScriptC";
 
-    ScriptC(int id, RenderScript rs) {
+    /**
+     * Only intended for use by the generated derived classes.
+     *
+     * @param id
+     * @param rs
+     */
+    protected ScriptC(int id, RenderScript rs) {
         super(id, rs);
     }
 
-    public static class Builder extends Script.Builder {
-        byte[] mProgram;
-        int mProgramLength;
-        HashMap<String,Integer> mIntDefines = new HashMap();
-        HashMap<String,Float> mFloatDefines = new HashMap();
-
-        public Builder(RenderScript rs) {
-            super(rs);
+    /**
+     * Only intended for use by the generated derived classes.
+     *
+     *
+     * @param rs
+     * @param resources
+     * @param resourceID
+     */
+    protected ScriptC(RenderScript rs, Resources resources, int resourceID) {
+        super(0, rs);
+        int id = internalCreate(rs, resources, resourceID);
+        if (id == 0) {
+            throw new RSRuntimeException("Loading of ScriptC script failed.");
         }
+        setID(id);
+    }
 
-        public void setScript(String s) {
+
+    private static synchronized int internalCreate(RenderScript rs, Resources resources, int resourceID) {
+        byte[] pgm;
+        int pgmLength;
+        InputStream is = resources.openRawResource(resourceID);
+        try {
             try {
-                mProgram = s.getBytes("UTF-8");
-                mProgramLength = mProgram.length;
-            } catch (java.io.UnsupportedEncodingException e) {
-                throw new RuntimeException(e);
-            }
-        }
-
-        public void setScript(Resources resources, int id) {
-            InputStream is = resources.openRawResource(id);
-            try {
-                try {
-                    setScript(is);
-                } finally {
-                    is.close();
-                }
-            } catch(IOException e) {
-                throw new Resources.NotFoundException();
-            }
-        }
-
-        public void setScript(InputStream is) throws IOException {
-            byte[] buf = new byte[1024];
-            int currentPos = 0;
-            while(true) {
-                int bytesLeft = buf.length - currentPos;
-                if (bytesLeft == 0) {
-                    byte[] buf2 = new byte[buf.length * 2];
-                    System.arraycopy(buf, 0, buf2, 0, buf.length);
-                    buf = buf2;
-                    bytesLeft = buf.length - currentPos;
-                }
-                int bytesRead = is.read(buf, currentPos, bytesLeft);
-                if (bytesRead <= 0) {
-                    break;
-                }
-                currentPos += bytesRead;
-            }
-            mProgram = buf;
-            mProgramLength = currentPos;
-        }
-
-        static synchronized ScriptC internalCreate(Builder b) {
-            b.mRS.nScriptCBegin();
-            b.transferCreate();
-
-            for (Entry<String,Integer> e: b.mIntDefines.entrySet()) {
-                b.mRS.nScriptCAddDefineI32(e.getKey(), e.getValue().intValue());
-            }
-            for (Entry<String,Float> e: b.mFloatDefines.entrySet()) {
-                b.mRS.nScriptCAddDefineF(e.getKey(), e.getValue().floatValue());
-            }
-
-            b.mRS.nScriptCSetScript(b.mProgram, 0, b.mProgramLength);
-
-            int id = b.mRS.nScriptCCreate();
-            ScriptC obj = new ScriptC(id, b.mRS);
-            b.transferObject(obj);
-
-            return obj;
-        }
-
-        public void addDefine(String name, int value) {
-            mIntDefines.put(name, value);
-        }
-
-        public void addDefine(String name, float value) {
-            mFloatDefines.put(name, value);
-        }
-
-        /**
-         * Takes the all public static final fields for a class, and adds defines
-         * for them, using the name of the field as the name of the define.
-         */
-        public void addDefines(Class cl) {
-            addDefines(cl.getFields(), (Modifier.STATIC | Modifier.FINAL | Modifier.PUBLIC), null);
-        }
-
-        /**
-         * Takes the all public fields for an object, and adds defines
-         * for them, using the name of the field as the name of the define.
-         */
-        public void addDefines(Object o) {
-            addDefines(o.getClass().getFields(), Modifier.PUBLIC, o);
-        }
-
-        void addDefines(Field[] fields, int mask, Object o) {
-            for (Field f: fields) {
-                try {
-                    if ((f.getModifiers() & mask) == mask) {
-                        Class t = f.getType();
-                        if (t == int.class) {
-                            mIntDefines.put(f.getName(), f.getInt(o));
-                        }
-                        else if (t == float.class) {
-                            mFloatDefines.put(f.getName(), f.getFloat(o));
-                        }
+                pgm = new byte[1024];
+                pgmLength = 0;
+                while(true) {
+                    int bytesLeft = pgm.length - pgmLength;
+                    if (bytesLeft == 0) {
+                        byte[] buf2 = new byte[pgm.length * 2];
+                        System.arraycopy(pgm, 0, buf2, 0, pgm.length);
+                        pgm = buf2;
+                        bytesLeft = pgm.length - pgmLength;
                     }
-                } catch (IllegalAccessException ex) {
-                    // TODO: Do we want this log?
-                    Log.d(TAG, "addDefines skipping field " + f.getName());
+                    int bytesRead = is.read(pgm, pgmLength, bytesLeft);
+                    if (bytesRead <= 0) {
+                        break;
+                    }
+                    pgmLength += bytesRead;
                 }
+            } finally {
+                is.close();
             }
+        } catch(IOException e) {
+            throw new Resources.NotFoundException();
         }
 
-        public ScriptC create() {
-            return internalCreate(this);
-        }
+        // E.g, /system/apps/Fountain.apk
+        //String packageName = rs.getApplicationContext().getPackageResourcePath();
+        // For res/raw/fountain.bc, it wil be /com.android.fountain:raw/fountain
+        String resName = resources.getResourceEntryName(resourceID);
+        String cacheDir = rs.getApplicationContext().getCacheDir().toString();
+
+        Log.v(TAG, "Create script for resource = " + resName);
+        return rs.nScriptCCreate(resName, cacheDir, pgm, pgmLength);
     }
 }
-

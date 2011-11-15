@@ -16,20 +16,26 @@
 
 package android.hardware;
 
+import android.annotation.SdkConstant;
+import android.annotation.SdkConstant.SdkConstantType;
+import android.graphics.ImageFormat;
+import android.graphics.Point;
+import android.graphics.Rect;
+import android.graphics.SurfaceTexture;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.Message;
+import android.util.Log;
+import android.view.Surface;
+import android.view.SurfaceHolder;
+
+import java.io.IOException;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.StringTokenizer;
-import java.io.IOException;
 
-import android.util.Log;
-import android.view.Surface;
-import android.view.SurfaceHolder;
-import android.graphics.ImageFormat;
-import android.os.Handler;
-import android.os.Looper;
-import android.os.Message;
 
 /**
  * The Camera class is used to set image capture settings, start/stop preview,
@@ -110,6 +116,12 @@ import android.os.Message;
  * auto-focus capabilities. In order for your application to be compatible with
  * more devices, you should not make assumptions about the device camera
  * specifications.</p>
+ *
+ * <div class="special reference">
+ * <h3>Developer Guides</h3>
+ * <p>For more information about using cameras, read the
+ * <a href="{@docRoot}guide/topics/media/camera.html">Camera</a> developer guide.</p>
+ * </div>
  */
 public class Camera {
     private static final String TAG = "Camera";
@@ -124,7 +136,9 @@ public class Camera {
     private static final int CAMERA_MSG_POSTVIEW_FRAME   = 0x040;
     private static final int CAMERA_MSG_RAW_IMAGE        = 0x080;
     private static final int CAMERA_MSG_COMPRESSED_IMAGE = 0x100;
-    private static final int CAMERA_MSG_ALL_MSGS         = 0x1FF;
+    private static final int CAMERA_MSG_RAW_IMAGE_NOTIFY = 0x200;
+    private static final int CAMERA_MSG_PREVIEW_METADATA = 0x400;
+    private static final int CAMERA_MSG_ALL_MSGS         = 0x4FF;
 
     private int mNativeContext; // accessed by native methods
     private EventHandler mEventHandler;
@@ -135,9 +149,37 @@ public class Camera {
     private PictureCallback mPostviewCallback;
     private AutoFocusCallback mAutoFocusCallback;
     private OnZoomChangeListener mZoomListener;
+    private FaceDetectionListener mFaceListener;
     private ErrorCallback mErrorCallback;
     private boolean mOneShot;
     private boolean mWithBuffer;
+    private boolean mFaceDetectionRunning = false;
+
+    /**
+     * Broadcast Action:  A new picture is taken by the camera, and the entry of
+     * the picture has been added to the media store.
+     * {@link android.content.Intent#getData} is URI of the picture.
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String ACTION_NEW_PICTURE = "android.hardware.action.NEW_PICTURE";
+
+    /**
+     * Broadcast Action:  A new video is recorded by the camera, and the entry
+     * of the video has been added to the media store.
+     * {@link android.content.Intent#getData} is URI of the video.
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String ACTION_NEW_VIDEO = "android.hardware.action.NEW_VIDEO";
+
+    /**
+     * Hardware face detection. It does not use much CPU.
+     */
+    private static final int CAMERA_FACE_DETECTION_HW = 0;
+
+    /**
+     * Software face detection. It uses some CPU.
+     */
+    private static final int CAMERA_FACE_DETECTION_SW = 1;
 
     /**
      * Returns the number of physical cameras available on this device.
@@ -165,22 +207,22 @@ public class Camera {
         public static final int CAMERA_FACING_FRONT = 1;
 
         /**
-         * The direction that the camera faces to. It should be
+         * The direction that the camera faces. It should be
          * CAMERA_FACING_BACK or CAMERA_FACING_FRONT.
          */
         public int facing;
 
         /**
-         * The orientation of the camera image. The value is the angle that the
+         * <p>The orientation of the camera image. The value is the angle that the
          * camera image needs to be rotated clockwise so it shows correctly on
-         * the display in its natural orientation. It should be 0, 90, 180, or 270.
+         * the display in its natural orientation. It should be 0, 90, 180, or 270.</p>
          *
-         * For example, suppose a device has a naturally tall screen. The
+         * <p>For example, suppose a device has a naturally tall screen. The
          * back-facing camera sensor is mounted in landscape. You are looking at
          * the screen. If the top side of the camera sensor is aligned with the
          * right edge of the screen in natural orientation, the value should be
          * 90. If the top side of a front-facing camera sensor is aligned with
-         * the right of the screen, the value should be 270.
+         * the right of the screen, the value should be 270.</p>
          *
          * @see #setDisplayOrientation(int)
          * @see Parameters#setRotation(int)
@@ -214,7 +256,9 @@ public class Camera {
      *     {@link #getNumberOfCameras()}-1.
      * @return a new Camera object, connected, locked and ready for use.
      * @throws RuntimeException if connection to the camera service fails (for
-     *     example, if the camera is in use by another process).
+     *     example, if the camera is in use by another process or device policy
+     *     manager has disabled the camera).
+     * @see android.app.admin.DevicePolicyManager#getCameraDisabled(android.content.ComponentName)
      */
     public static Camera open(int cameraId) {
         return new Camera(cameraId);
@@ -273,6 +317,7 @@ public class Camera {
      */
     public final void release() {
         native_release();
+        mFaceDetectionRunning = false;
     }
 
     /**
@@ -284,7 +329,8 @@ public class Camera {
      * you can call {@link #reconnect()} to reclaim the camera.
      *
      * <p>This must be done before calling
-     * {@link android.media.MediaRecorder#setCamera(Camera)}.
+     * {@link android.media.MediaRecorder#setCamera(Camera)}. This cannot be
+     * called after recording starts.
      *
      * <p>If you are not recording video, you probably do not need this method.
      *
@@ -296,6 +342,11 @@ public class Camera {
      * Re-locks the camera to prevent other processes from accessing it.
      * Camera objects are locked by default unless {@link #unlock()} is
      * called.  Normally {@link #reconnect()} is used instead.
+     *
+     * <p>Since API level 14, camera is automatically locked for applications in
+     * {@link android.media.MediaRecorder#start()}. Applications can use the
+     * camera (ex: zoom) after recording starts. There is no need to call this
+     * after recording starts or stops.
      *
      * <p>If you are not recording video, you probably do not need this method.
      *
@@ -311,9 +362,10 @@ public class Camera {
      * which will re-acquire the lock and allow you to continue using the
      * camera.
      *
-     * <p>This must be done after {@link android.media.MediaRecorder} is
-     * done recording if {@link android.media.MediaRecorder#setCamera(Camera)}
-     * was used.
+     * <p>Since API level 14, camera is automatically locked for applications in
+     * {@link android.media.MediaRecorder#start()}. Applications can use the
+     * camera (ex: zoom) after recording starts. There is no need to call this
+     * after recording starts or stops.
      *
      * <p>If you are not recording video, you probably do not need this method.
      *
@@ -324,8 +376,10 @@ public class Camera {
 
     /**
      * Sets the {@link Surface} to be used for live preview.
-     * A surface is necessary for preview, and preview is necessary to take
-     * pictures.  The same surface can be re-set without harm.
+     * Either a surface or surface texture is necessary for preview, and
+     * preview is necessary to take pictures.  The same surface can be re-set
+     * without harm.  Setting a preview surface will un-set any preview surface
+     * texture that was set via {@link #setPreviewTexture}.
      *
      * <p>The {@link SurfaceHolder} must already contain a surface when this
      * method is called.  If you are using {@link android.view.SurfaceView},
@@ -354,7 +408,36 @@ public class Camera {
         }
     }
 
-    private native final void setPreviewDisplay(Surface surface);
+    private native final void setPreviewDisplay(Surface surface) throws IOException;
+
+    /**
+     * Sets the {@link SurfaceTexture} to be used for live preview.
+     * Either a surface or surface texture is necessary for preview, and
+     * preview is necessary to take pictures.  The same surface texture can be
+     * re-set without harm.  Setting a preview surface texture will un-set any
+     * preview surface that was set via {@link #setPreviewDisplay}.
+     *
+     * <p>This method must be called before {@link #startPreview()}.  The
+     * one exception is that if the preview surface texture is not set (or set
+     * to null) before startPreview() is called, then this method may be called
+     * once with a non-null parameter to set the preview surface.  (This allows
+     * camera setup and surface creation to happen in parallel, saving time.)
+     * The preview surface texture may not otherwise change while preview is
+     * running.
+     *
+     * <p>The timestamps provided by {@link SurfaceTexture#getTimestamp()} for a
+     * SurfaceTexture set as the preview texture have an unspecified zero point,
+     * and cannot be directly compared between different cameras or different
+     * instances of the same camera, or across multiple runs of the same
+     * program.
+     *
+     * @param surfaceTexture the {@link SurfaceTexture} to which the preview
+     *     images are to be sent or null to remove the current preview surface
+     *     texture
+     * @throws IOException if the method fails (for example, if the surface
+     *     texture is unavailable or unsuitable).
+     */
+    public native final void setPreviewTexture(SurfaceTexture surfaceTexture) throws IOException;
 
     /**
      * Callback interface used to deliver copies of preview frames as
@@ -384,8 +467,9 @@ public class Camera {
 
     /**
      * Starts capturing and drawing preview frames to the screen.
-     * Preview will not actually start until a surface is supplied with
-     * {@link #setPreviewDisplay(SurfaceHolder)}.
+     * Preview will not actually start until a surface is supplied
+     * with {@link #setPreviewDisplay(SurfaceHolder)} or
+     * {@link #setPreviewTexture(SurfaceTexture)}.
      *
      * <p>If {@link #setPreviewCallback(Camera.PreviewCallback)},
      * {@link #setOneShotPreviewCallback(Camera.PreviewCallback)}, or
@@ -399,7 +483,18 @@ public class Camera {
      * Stops capturing and drawing preview frames to the surface, and
      * resets the camera for a future call to {@link #startPreview()}.
      */
-    public native final void stopPreview();
+    public final void stopPreview() {
+        _stopPreview();
+        mFaceDetectionRunning = false;
+
+        mShutterCallback = null;
+        mRawImageCallback = null;
+        mPostviewCallback = null;
+        mJpegCallback = null;
+        mAutoFocusCallback = null;
+    }
+
+    private native final void _stopPreview();
 
     /**
      * Return current preview state.
@@ -482,23 +577,86 @@ public class Camera {
      * finish processing the data in them.
      *
      * <p>The size of the buffer is determined by multiplying the preview
-     * image width, height, and bytes per pixel.  The width and height can be
-     * read from {@link Camera.Parameters#getPreviewSize()}.  Bytes per pixel
+     * image width, height, and bytes per pixel. The width and height can be
+     * read from {@link Camera.Parameters#getPreviewSize()}. Bytes per pixel
      * can be computed from
      * {@link android.graphics.ImageFormat#getBitsPerPixel(int)} / 8,
      * using the image format from {@link Camera.Parameters#getPreviewFormat()}.
      *
      * <p>This method is only necessary when
-     * {@link #setPreviewCallbackWithBuffer(PreviewCallback)} is used.  When
+     * {@link #setPreviewCallbackWithBuffer(PreviewCallback)} is used. When
      * {@link #setPreviewCallback(PreviewCallback)} or
      * {@link #setOneShotPreviewCallback(PreviewCallback)} are used, buffers
-     * are automatically allocated.
+     * are automatically allocated. When a supplied buffer is too small to
+     * hold the preview frame data, preview callback will return null and
+     * the buffer will be removed from the buffer queue.
      *
      * @param callbackBuffer the buffer to add to the queue.
      *     The size should be width * height * bits_per_pixel / 8.
      * @see #setPreviewCallbackWithBuffer(PreviewCallback)
      */
-    public native final void addCallbackBuffer(byte[] callbackBuffer);
+    public final void addCallbackBuffer(byte[] callbackBuffer)
+    {
+        _addCallbackBuffer(callbackBuffer, CAMERA_MSG_PREVIEW_FRAME);
+    }
+
+    /**
+     * Adds a pre-allocated buffer to the raw image callback buffer queue.
+     * Applications can add one or more buffers to the queue. When a raw image
+     * frame arrives and there is still at least one available buffer, the
+     * buffer will be used to hold the raw image data and removed from the
+     * queue. Then raw image callback is invoked with the buffer. If a raw
+     * image frame arrives but there is no buffer left, the frame is
+     * discarded. Applications should add buffers back when they finish
+     * processing the data in them by calling this method again in order
+     * to avoid running out of raw image callback buffers.
+     *
+     * <p>The size of the buffer is determined by multiplying the raw image
+     * width, height, and bytes per pixel. The width and height can be
+     * read from {@link Camera.Parameters#getPictureSize()}. Bytes per pixel
+     * can be computed from
+     * {@link android.graphics.ImageFormat#getBitsPerPixel(int)} / 8,
+     * using the image format from {@link Camera.Parameters#getPreviewFormat()}.
+     *
+     * <p>This method is only necessary when the PictureCallbck for raw image
+     * is used while calling {@link #takePicture(Camera.ShutterCallback,
+     * Camera.PictureCallback, Camera.PictureCallback, Camera.PictureCallback)}.
+     *
+     * <p>Please note that by calling this method, the mode for
+     * application-managed callback buffers is triggered. If this method has
+     * never been called, null will be returned by the raw image callback since
+     * there is no image callback buffer available. Furthermore, When a supplied
+     * buffer is too small to hold the raw image data, raw image callback will
+     * return null and the buffer will be removed from the buffer queue.
+     *
+     * @param callbackBuffer the buffer to add to the raw image callback buffer
+     *     queue. The size should be width * height * (bits per pixel) / 8. An
+     *     null callbackBuffer will be ignored and won't be added to the queue.
+     *
+     * @see #takePicture(Camera.ShutterCallback,
+     * Camera.PictureCallback, Camera.PictureCallback, Camera.PictureCallback)}.
+     *
+     * {@hide}
+     */
+    public final void addRawImageCallbackBuffer(byte[] callbackBuffer)
+    {
+        addCallbackBuffer(callbackBuffer, CAMERA_MSG_RAW_IMAGE);
+    }
+
+    private final void addCallbackBuffer(byte[] callbackBuffer, int msgType)
+    {
+        // CAMERA_MSG_VIDEO_FRAME may be allowed in the future.
+        if (msgType != CAMERA_MSG_PREVIEW_FRAME &&
+            msgType != CAMERA_MSG_RAW_IMAGE) {
+            throw new IllegalArgumentException(
+                            "Unsupported message type: " + msgType);
+        }
+
+        _addCallbackBuffer(callbackBuffer, msgType);
+    }
+
+    private native final void _addCallbackBuffer(
+                                byte[] callbackBuffer, int msgType);
 
     private class EventHandler extends Handler
     {
@@ -566,6 +724,12 @@ public class Camera {
                 }
                 return;
 
+            case CAMERA_MSG_PREVIEW_METADATA:
+                if (mFaceListener != null) {
+                    mFaceListener.onFaceDetection((Face[])msg.obj, mCamera);
+                }
+                return;
+
             case CAMERA_MSG_ERROR :
                 Log.e(TAG, "Error " + msg.arg1);
                 if (mErrorCallback != null) {
@@ -614,11 +778,16 @@ public class Camera {
          * onAutoFocus will be called immediately with a fake value of
          * <code>success</code> set to <code>true</code>.
          *
+         * The auto-focus routine does not lock auto-exposure and auto-white
+         * balance after it completes.
+         *
          * @param success true if focus was successful, false if otherwise
          * @param camera  the Camera service object
+         * @see android.hardware.Camera.Parameters#setAutoExposureLock(boolean)
+         * @see android.hardware.Camera.Parameters#setAutoWhiteBalanceLock(boolean)
          */
         void onAutoFocus(boolean success, Camera camera);
-    };
+    }
 
     /**
      * Starts camera auto-focus and registers a callback function to run when
@@ -641,8 +810,21 @@ public class Camera {
      * {@link android.hardware.Camera.Parameters#FLASH_MODE_OFF}, flash may be
      * fired during auto-focus, depending on the driver and camera hardware.<p>
      *
+     * <p>Auto-exposure lock {@link android.hardware.Camera.Parameters#getAutoExposureLock()}
+     * and auto-white balance locks {@link android.hardware.Camera.Parameters#getAutoWhiteBalanceLock()}
+     * do not change during and after autofocus. But auto-focus routine may stop
+     * auto-exposure and auto-white balance transiently during focusing.
+     *
+     * <p>Stopping preview with {@link #stopPreview()}, or triggering still
+     * image capture with {@link #takePicture(Camera.ShutterCallback,
+     * Camera.PictureCallback, Camera.PictureCallback)}, will not change the
+     * the focus position. Applications must call cancelAutoFocus to reset the
+     * focus.</p>
+     *
      * @param cb the callback to run
      * @see #cancelAutoFocus()
+     * @see android.hardware.Camera.Parameters#setAutoExposureLock(boolean)
+     * @see android.hardware.Camera.Parameters#setAutoWhiteBalanceLock(boolean)
      */
     public final void autoFocus(AutoFocusCallback cb)
     {
@@ -709,7 +891,7 @@ public class Camera {
             PictureCallback jpeg) {
         takePicture(shutter, raw, null, jpeg);
     }
-    private native final void native_takePicture();
+    private native final void native_takePicture(int msgType);
 
     /**
      * Triggers an asynchronous image capture. The camera service will initiate
@@ -717,7 +899,8 @@ public class Camera {
      * The shutter callback occurs after the image is captured. This can be used
      * to trigger a sound to let the user know that image has been captured. The
      * raw callback occurs when the raw image data is available (NOTE: the data
-     * may be null if the hardware does not have enough memory to make a copy).
+     * will be null if there is no raw image callback buffer available or the
+     * raw image callback buffer is not large enough to hold the raw image).
      * The postview callback occurs when a scaled, fully processed postview
      * image is available (NOTE: not all hardware supports this). The jpeg
      * callback occurs when the compressed image is available. If the
@@ -727,7 +910,9 @@ public class Camera {
      * <p>This method is only valid when preview is active (after
      * {@link #startPreview()}).  Preview will be stopped after the image is
      * taken; callers must call {@link #startPreview()} again if they want to
-     * re-start preview or take more pictures.
+     * re-start preview or take more pictures. This should not be called between
+     * {@link android.media.MediaRecorder#start()} and
+     * {@link android.media.MediaRecorder#stop()}.
      *
      * <p>After calling this method, you must not call {@link #startPreview()}
      * or take another picture until the JPEG callback has returned.
@@ -743,7 +928,23 @@ public class Camera {
         mRawImageCallback = raw;
         mPostviewCallback = postview;
         mJpegCallback = jpeg;
-        native_takePicture();
+
+        // If callback is not set, do not send me callbacks.
+        int msgType = 0;
+        if (mShutterCallback != null) {
+            msgType |= CAMERA_MSG_SHUTTER;
+        }
+        if (mRawImageCallback != null) {
+            msgType |= CAMERA_MSG_RAW_IMAGE;
+        }
+        if (mPostviewCallback != null) {
+            msgType |= CAMERA_MSG_POSTVIEW_FRAME;
+        }
+        if (mJpegCallback != null) {
+            msgType |= CAMERA_MSG_COMPRESSED_IMAGE;
+        }
+
+        native_takePicture(msgType);
     }
 
     /**
@@ -818,6 +1019,10 @@ public class Camera {
      *     camera.setDisplayOrientation(result);
      * }
      * </pre>
+     *
+     * <p>Starting from API level 14, this method can be called when preview is
+     * active.
+     *
      * @param degrees the angle that the picture will be rotated clockwise.
      *                Valid values are 0, 90, 180, and 270. The starting
      *                position is 0 (landscape).
@@ -855,6 +1060,153 @@ public class Camera {
     public final void setZoomChangeListener(OnZoomChangeListener listener)
     {
         mZoomListener = listener;
+    }
+
+    /**
+     * Callback interface for face detected in the preview frame.
+     *
+     */
+    public interface FaceDetectionListener
+    {
+        /**
+         * Notify the listener of the detected faces in the preview frame.
+         *
+         * @param faces The detected faces in a list
+         * @param camera  The {@link Camera} service object
+         */
+        void onFaceDetection(Face[] faces, Camera camera);
+    }
+
+    /**
+     * Registers a listener to be notified about the faces detected in the
+     * preview frame.
+     *
+     * @param listener the listener to notify
+     * @see #startFaceDetection()
+     */
+    public final void setFaceDetectionListener(FaceDetectionListener listener)
+    {
+        mFaceListener = listener;
+    }
+
+    /**
+     * Starts the face detection. This should be called after preview is started.
+     * The camera will notify {@link FaceDetectionListener} of the detected
+     * faces in the preview frame. The detected faces may be the same as the
+     * previous ones. Applications should call {@link #stopFaceDetection} to
+     * stop the face detection. This method is supported if {@link
+     * Parameters#getMaxNumDetectedFaces()} returns a number larger than 0.
+     * If the face detection has started, apps should not call this again.
+     *
+     * When the face detection is running, {@link Parameters#setWhiteBalance(String)},
+     * {@link Parameters#setFocusAreas(List)}, and {@link Parameters#setMeteringAreas(List)}
+     * have no effect.
+     *
+     * @throws IllegalArgumentException if the face detection is unsupported.
+     * @throws RuntimeException if the method fails or the face detection is
+     *         already running.
+     * @see FaceDetectionListener
+     * @see #stopFaceDetection()
+     * @see Parameters#getMaxNumDetectedFaces()
+     */
+    public final void startFaceDetection() {
+        if (mFaceDetectionRunning) {
+            throw new RuntimeException("Face detection is already running");
+        }
+        _startFaceDetection(CAMERA_FACE_DETECTION_HW);
+        mFaceDetectionRunning = true;
+    }
+
+    /**
+     * Stops the face detection.
+     *
+     * @see #startFaceDetection()
+     */
+    public final void stopFaceDetection() {
+        _stopFaceDetection();
+        mFaceDetectionRunning = false;
+    }
+
+    private native final void _startFaceDetection(int type);
+    private native final void _stopFaceDetection();
+
+    /**
+     * Information about a face identified through camera face detection.
+     *
+     * <p>When face detection is used with a camera, the {@link FaceDetectionListener} returns a
+     * list of face objects for use in focusing and metering.</p>
+     *
+     * @see FaceDetectionListener
+     */
+    public static class Face {
+        /**
+         * Create an empty face.
+         */
+        public Face() {
+        }
+
+        /**
+         * Bounds of the face. (-1000, -1000) represents the top-left of the
+         * camera field of view, and (1000, 1000) represents the bottom-right of
+         * the field of view. For example, suppose the size of the viewfinder UI
+         * is 800x480. The rect passed from the driver is (-1000, -1000, 0, 0).
+         * The corresponding viewfinder rect should be (0, 0, 400, 240). The
+         * width and height of the rect will not be 0 or negative. The
+         * coordinates can be smaller than -1000 or bigger than 1000. But at
+         * least one vertex will be within (-1000, -1000) and (1000, 1000).
+         *
+         * <p>The direction is relative to the sensor orientation, that is, what
+         * the sensor sees. The direction is not affected by the rotation or
+         * mirroring of {@link #setDisplayOrientation(int)}.</p>
+         *
+         * @see #startFaceDetection()
+         */
+        public Rect rect;
+
+        /**
+         * The confidence level for the detection of the face. The range is 1 to 100. 100 is the
+         * highest confidence.
+         *
+         * @see #startFaceDetection()
+         */
+        public int score;
+
+        /**
+         * An unique id per face while the face is visible to the tracker. If
+         * the face leaves the field-of-view and comes back, it will get a new
+         * id. This is an optional field, may not be supported on all devices.
+         * If not supported, id will always be set to -1. The optional fields
+         * are supported as a set. Either they are all valid, or none of them
+         * are.
+         */
+        public int id = -1;
+
+        /**
+         * The coordinates of the center of the left eye. The coordinates are in
+         * the same space as the ones for {@link #rect}. This is an optional
+         * field, may not be supported on all devices. If not supported, the
+         * value will always be set to null. The optional fields are supported
+         * as a set. Either they are all valid, or none of them are.
+         */
+        public Point leftEye = null;
+
+        /**
+         * The coordinates of the center of the right eye. The coordinates are
+         * in the same space as the ones for {@link #rect}.This is an optional
+         * field, may not be supported on all devices. If not supported, the
+         * value will always be set to null. The optional fields are supported
+         * as a set. Either they are all valid, or none of them are.
+         */
+        public Point rightEye = null;
+
+        /**
+         * The coordinates of the center of the mouth.  The coordinates are in
+         * the same space as the ones for {@link #rect}. This is an optional
+         * field, may not be supported on all devices. If not supported, the
+         * value will always be set to null. The optional fields are supported
+         * as a set. Either they are all valid, or none of them are.
+         */
+        public Point mouth = null;
     }
 
     // Error codes match the enum in include/ui/Camera.h
@@ -968,6 +1320,94 @@ public class Camera {
     };
 
     /**
+     * <p>The Area class is used for choosing specific metering and focus areas for
+     * the camera to use when calculating auto-exposure, auto-white balance, and
+     * auto-focus.</p>
+     *
+     * <p>To find out how many simultaneous areas a given camera supports, use
+     * {@link Parameters#getMaxNumMeteringAreas()} and
+     * {@link Parameters#getMaxNumFocusAreas()}. If metering or focusing area
+     * selection is unsupported, these methods will return 0.</p>
+     *
+     * <p>Each Area consists of a rectangle specifying its bounds, and a weight
+     * that determines its importance. The bounds are relative to the camera's
+     * current field of view. The coordinates are mapped so that (-1000, -1000)
+     * is always the top-left corner of the current field of view, and (1000,
+     * 1000) is always the bottom-right corner of the current field of
+     * view. Setting Areas with bounds outside that range is not allowed. Areas
+     * with zero or negative width or height are not allowed.</p>
+     *
+     * <p>The weight must range from 1 to 1000, and represents a weight for
+     * every pixel in the area. This means that a large metering area with
+     * the same weight as a smaller area will have more effect in the
+     * metering result.  Metering areas can overlap and the driver
+     * will add the weights in the overlap region.</p>
+     *
+     * @see Parameters#setFocusAreas(List)
+     * @see Parameters#getFocusAreas()
+     * @see Parameters#getMaxNumFocusAreas()
+     * @see Parameters#setMeteringAreas(List)
+     * @see Parameters#getMeteringAreas()
+     * @see Parameters#getMaxNumMeteringAreas()
+     */
+    public static class Area {
+        /**
+         * Create an area with specified rectangle and weight.
+         *
+         * @param rect the bounds of the area.
+         * @param weight the weight of the area.
+         */
+        public Area(Rect rect, int weight) {
+            this.rect = rect;
+            this.weight = weight;
+        }
+        /**
+         * Compares {@code obj} to this area.
+         *
+         * @param obj the object to compare this area with.
+         * @return {@code true} if the rectangle and weight of {@code obj} is
+         *         the same as those of this area. {@code false} otherwise.
+         */
+        @Override
+        public boolean equals(Object obj) {
+            if (!(obj instanceof Area)) {
+                return false;
+            }
+            Area a = (Area) obj;
+            if (rect == null) {
+                if (a.rect != null) return false;
+            } else {
+                if (!rect.equals(a.rect)) return false;
+            }
+            return weight == a.weight;
+        }
+
+        /**
+         * Bounds of the area. (-1000, -1000) represents the top-left of the
+         * camera field of view, and (1000, 1000) represents the bottom-right of
+         * the field of view. Setting bounds outside that range is not
+         * allowed. Bounds with zero or negative width or height are not
+         * allowed.
+         *
+         * @see Parameters#getFocusAreas()
+         * @see Parameters#getMeteringAreas()
+         */
+        public Rect rect;
+
+        /**
+         * Weight of the area. The weight must range from 1 to 1000, and
+         * represents a weight for every pixel in the area. This means that a
+         * large metering area with the same weight as a smaller area will have
+         * more effect in the metering result.  Metering areas can overlap and
+         * the driver will add the weights in the overlap region.
+         *
+         * @see Parameters#getFocusAreas()
+         * @see Parameters#getMeteringAreas()
+         */
+        public int weight;
+    }
+
+    /**
      * Camera service settings.
      *
      * <p>To make camera parameters take effect, applications have to call
@@ -1009,6 +1449,8 @@ public class Camera {
         private static final String KEY_SCENE_MODE = "scene-mode";
         private static final String KEY_FLASH_MODE = "flash-mode";
         private static final String KEY_FOCUS_MODE = "focus-mode";
+        private static final String KEY_FOCUS_AREAS = "focus-areas";
+        private static final String KEY_MAX_NUM_FOCUS_AREAS = "max-num-focus-areas";
         private static final String KEY_FOCAL_LENGTH = "focal-length";
         private static final String KEY_HORIZONTAL_VIEW_ANGLE = "horizontal-view-angle";
         private static final String KEY_VERTICAL_VIEW_ANGLE = "vertical-view-angle";
@@ -1016,17 +1458,33 @@ public class Camera {
         private static final String KEY_MAX_EXPOSURE_COMPENSATION = "max-exposure-compensation";
         private static final String KEY_MIN_EXPOSURE_COMPENSATION = "min-exposure-compensation";
         private static final String KEY_EXPOSURE_COMPENSATION_STEP = "exposure-compensation-step";
+        private static final String KEY_AUTO_EXPOSURE_LOCK = "auto-exposure-lock";
+        private static final String KEY_AUTO_EXPOSURE_LOCK_SUPPORTED = "auto-exposure-lock-supported";
+        private static final String KEY_AUTO_WHITEBALANCE_LOCK = "auto-whitebalance-lock";
+        private static final String KEY_AUTO_WHITEBALANCE_LOCK_SUPPORTED = "auto-whitebalance-lock-supported";
+        private static final String KEY_METERING_AREAS = "metering-areas";
+        private static final String KEY_MAX_NUM_METERING_AREAS = "max-num-metering-areas";
         private static final String KEY_ZOOM = "zoom";
         private static final String KEY_MAX_ZOOM = "max-zoom";
         private static final String KEY_ZOOM_RATIOS = "zoom-ratios";
         private static final String KEY_ZOOM_SUPPORTED = "zoom-supported";
         private static final String KEY_SMOOTH_ZOOM_SUPPORTED = "smooth-zoom-supported";
         private static final String KEY_FOCUS_DISTANCES = "focus-distances";
+        private static final String KEY_VIDEO_SIZE = "video-size";
+        private static final String KEY_PREFERRED_PREVIEW_SIZE_FOR_VIDEO =
+                                            "preferred-preview-size-for-video";
+        private static final String KEY_MAX_NUM_DETECTED_FACES_HW = "max-num-detected-faces-hw";
+        private static final String KEY_MAX_NUM_DETECTED_FACES_SW = "max-num-detected-faces-sw";
+        private static final String KEY_RECORDING_HINT = "recording-hint";
+        private static final String KEY_VIDEO_SNAPSHOT_SUPPORTED = "video-snapshot-supported";
+        private static final String KEY_VIDEO_STABILIZATION = "video-stabilization";
+        private static final String KEY_VIDEO_STABILIZATION_SUPPORTED = "video-stabilization-supported";
 
         // Parameter key suffix for supported values.
         private static final String SUPPORTED_VALUES_SUFFIX = "-values";
 
         private static final String TRUE = "true";
+        private static final String FALSE = "false";
 
         // Values for white balance settings.
         public static final String WHITE_BALANCE_AUTO = "auto";
@@ -1203,16 +1661,48 @@ public class Camera {
 
         /**
          * Continuous auto focus mode intended for video recording. The camera
-         * continuously tries to focus. This is ideal for shooting video.
-         * Applications still can call {@link
-         * #takePicture(Camera.ShutterCallback, Camera.PictureCallback,
-         * Camera.PictureCallback)} in this mode but the subject may not be in
-         * focus. Auto focus starts when the parameter is set. Applications
-         * should not call {@link #autoFocus(AutoFocusCallback)} in this mode.
-         * To stop continuous focus, applications should change the focus mode
-         * to other modes.
+         * continuously tries to focus. This is the best choice for video
+         * recording because the focus changes smoothly . Applications still can
+         * call {@link #takePicture(Camera.ShutterCallback,
+         * Camera.PictureCallback, Camera.PictureCallback)} in this mode but the
+         * subject may not be in focus. Auto focus starts when the parameter is
+         * set.
+         *
+         * <p>Since API level 14, applications can call {@link
+         * #autoFocus(AutoFocusCallback)} in this mode. The focus callback will
+         * immediately return with a boolean that indicates whether the focus is
+         * sharp or not. The focus position is locked after autoFocus call. If
+         * applications want to resume the continuous focus, cancelAutoFocus
+         * must be called. Restarting the preview will not resume the continuous
+         * autofocus. To stop continuous focus, applications should change the
+         * focus mode to other modes.
+         *
+         * @see #FOCUS_MODE_CONTINUOUS_PICTURE
          */
         public static final String FOCUS_MODE_CONTINUOUS_VIDEO = "continuous-video";
+
+        /**
+         * Continuous auto focus mode intended for taking pictures. The camera
+         * continuously tries to focus. The speed of focus change is more
+         * aggressive than {@link #FOCUS_MODE_CONTINUOUS_VIDEO}. Auto focus
+         * starts when the parameter is set.
+         *
+         * <p>Applications can call {@link #autoFocus(AutoFocusCallback)} in
+         * this mode. If the autofocus is in the middle of scanning, the focus
+         * callback will return when it completes. If the autofocus is not
+         * scanning, the focus callback will immediately return with a boolean
+         * that indicates whether the focus is sharp or not. The apps can then
+         * decide if they want to take a picture immediately or to change the
+         * focus mode to auto, and run a full autofocus cycle. The focus
+         * position is locked after autoFocus call. If applications want to
+         * resume the continuous focus, cancelAutoFocus must be called.
+         * Restarting the preview will not resume the continuous autofocus. To
+         * stop continuous focus, applications should change the focus mode to
+         * other modes.
+         *
+         * @see #FOCUS_MODE_CONTINUOUS_VIDEO
+         */
+        public static final String FOCUS_MODE_CONTINUOUS_PICTURE = "continuous-picture";
 
         // Indices for focus distance array.
         /**
@@ -1251,8 +1741,10 @@ public class Camera {
         private static final String PIXEL_FORMAT_YUV422SP = "yuv422sp";
         private static final String PIXEL_FORMAT_YUV420SP = "yuv420sp";
         private static final String PIXEL_FORMAT_YUV422I = "yuv422i-yuyv";
+        private static final String PIXEL_FORMAT_YUV420P = "yuv420p";
         private static final String PIXEL_FORMAT_RGB565 = "rgb565";
         private static final String PIXEL_FORMAT_JPEG = "jpeg";
+        private static final String PIXEL_FORMAT_BAYER_RGGB = "bayer-rggb";
 
         private HashMap<String, String> mMap;
 
@@ -1350,6 +1842,31 @@ public class Camera {
             mMap.put(key, Integer.toString(value));
         }
 
+        private void set(String key, List<Area> areas) {
+            if (areas == null) {
+                set(key, "(0,0,0,0,0)");
+            } else {
+                StringBuilder buffer = new StringBuilder();
+                for (int i = 0; i < areas.size(); i++) {
+                    Area area = areas.get(i);
+                    Rect rect = area.rect;
+                    buffer.append('(');
+                    buffer.append(rect.left);
+                    buffer.append(',');
+                    buffer.append(rect.top);
+                    buffer.append(',');
+                    buffer.append(rect.right);
+                    buffer.append(',');
+                    buffer.append(rect.bottom);
+                    buffer.append(',');
+                    buffer.append(area.weight);
+                    buffer.append(')');
+                    if (i != areas.size() - 1) buffer.append(',');
+                }
+                set(key, buffer.toString());
+            }
+        }
+
         /**
          * Returns the value of a String parameter.
          *
@@ -1371,7 +1888,9 @@ public class Camera {
         }
 
         /**
-         * Sets the dimensions for preview pictures.
+         * Sets the dimensions for preview pictures. If the preview has already
+         * started, applications should stop the preview first before changing
+         * preview size.
          *
          * The sides of width and height are based on camera orientation. That
          * is, the preview size is the size before it is rotated by display
@@ -1399,7 +1918,7 @@ public class Camera {
         /**
          * Returns the dimensions setting for preview pictures.
          *
-         * @return a Size object with the height and width setting
+         * @return a Size object with the width and height setting
          *          for the preview picture
          */
         public Size getPreviewSize() {
@@ -1419,12 +1938,52 @@ public class Camera {
         }
 
         /**
-         * Sets the dimensions for EXIF thumbnail in Jpeg picture. If
-         * applications set both width and height to 0, EXIF will not contain
-         * thumbnail.
+         * <p>Gets the supported video frame sizes that can be used by
+         * MediaRecorder.</p>
          *
-         * Applications need to consider the display orientation. See {@link
-         * #setPreviewSize(int,int)} for reference.
+         * <p>If the returned list is not null, the returned list will contain at
+         * least one Size and one of the sizes in the returned list must be
+         * passed to MediaRecorder.setVideoSize() for camcorder application if
+         * camera is used as the video source. In this case, the size of the
+         * preview can be different from the resolution of the recorded video
+         * during video recording.</p>
+         *
+         * @return a list of Size object if camera has separate preview and
+         *         video output; otherwise, null is returned.
+         * @see #getPreferredPreviewSizeForVideo()
+         */
+        public List<Size> getSupportedVideoSizes() {
+            String str = get(KEY_VIDEO_SIZE + SUPPORTED_VALUES_SUFFIX);
+            return splitSize(str);
+        }
+
+        /**
+         * Returns the preferred or recommended preview size (width and height)
+         * in pixels for video recording. Camcorder applications should
+         * set the preview size to a value that is not larger than the
+         * preferred preview size. In other words, the product of the width
+         * and height of the preview size should not be larger than that of
+         * the preferred preview size. In addition, we recommend to choose a
+         * preview size that has the same aspect ratio as the resolution of
+         * video to be recorded.
+         *
+         * @return the preferred preview size (width and height) in pixels for
+         *         video recording if getSupportedVideoSizes() does not return
+         *         null; otherwise, null is returned.
+         * @see #getSupportedVideoSizes()
+         */
+        public Size getPreferredPreviewSizeForVideo() {
+            String pair = get(KEY_PREFERRED_PREVIEW_SIZE_FOR_VIDEO);
+            return strToSize(pair);
+        }
+
+        /**
+         * <p>Sets the dimensions for EXIF thumbnail in Jpeg picture. If
+         * applications set both width and height to 0, EXIF will not contain
+         * thumbnail.</p>
+         *
+         * <p>Applications need to consider the display orientation. See {@link
+         * #setPreviewSize(int,int)} for reference.</p>
          *
          * @param width  the width of the thumbnail, in pixels
          * @param height the height of the thumbnail, in pixels
@@ -1624,7 +2183,9 @@ public class Camera {
         }
 
         /**
-         * Gets the supported preview formats.
+         * Gets the supported preview formats. {@link android.graphics.ImageFormat#NV21}
+         * is always supported. {@link android.graphics.ImageFormat#YV12}
+         * is always supported since API level 12.
          *
          * @return a list of supported preview formats. This method will always
          *         return a list with at least one element.
@@ -1642,10 +2203,10 @@ public class Camera {
         }
 
         /**
-         * Sets the dimensions for pictures.
+         * <p>Sets the dimensions for pictures.</p>
          *
-         * Applications need to consider the display orientation. See {@link
-         * #setPreviewSize(int,int)} for reference.
+         * <p>Applications need to consider the display orientation. See {@link
+         * #setPreviewSize(int,int)} for reference.</p>
          *
          * @param width  the width for pictures, in pixels
          * @param height the height for pictures, in pixels
@@ -1731,8 +2292,10 @@ public class Camera {
             case ImageFormat.NV16:      return PIXEL_FORMAT_YUV422SP;
             case ImageFormat.NV21:      return PIXEL_FORMAT_YUV420SP;
             case ImageFormat.YUY2:      return PIXEL_FORMAT_YUV422I;
+            case ImageFormat.YV12:      return PIXEL_FORMAT_YUV420P;
             case ImageFormat.RGB_565:   return PIXEL_FORMAT_RGB565;
             case ImageFormat.JPEG:      return PIXEL_FORMAT_JPEG;
+            case ImageFormat.BAYER_RGGB: return PIXEL_FORMAT_BAYER_RGGB;
             default:                    return null;
             }
         }
@@ -1749,6 +2312,9 @@ public class Camera {
 
             if (format.equals(PIXEL_FORMAT_YUV422I))
                 return ImageFormat.YUY2;
+
+            if (format.equals(PIXEL_FORMAT_YUV420P))
+                return ImageFormat.YV12;
 
             if (format.equals(PIXEL_FORMAT_RGB565))
                 return ImageFormat.RGB_565;
@@ -1789,7 +2355,7 @@ public class Camera {
          * <p>The reference code is as follows.
          *
 	 * <pre>
-         * public void public void onOrientationChanged(int orientation) {
+         * public void onOrientationChanged(int orientation) {
          *     if (orientation == ORIENTATION_UNKNOWN) return;
          *     android.hardware.Camera.CameraInfo info =
          *            new android.hardware.Camera.CameraInfo();
@@ -1903,13 +2469,16 @@ public class Camera {
         }
 
         /**
-         * Sets the white balance.
+         * Sets the white balance. Changing the setting will release the
+         * auto-white balance lock.
          *
          * @param value new white balance.
          * @see #getWhiteBalance()
+         * @see #setAutoWhiteBalanceLock(boolean)
          */
         public void setWhiteBalance(String value) {
             set(KEY_WHITE_BALANCE, value);
+            set(KEY_AUTO_WHITEBALANCE_LOCK, FALSE);
         }
 
         /**
@@ -2223,6 +2792,145 @@ public class Camera {
         }
 
         /**
+         * <p>Sets the auto-exposure lock state. Applications should check
+         * {@link #isAutoExposureLockSupported} before using this method.</p>
+         *
+         * <p>If set to true, the camera auto-exposure routine will immediately
+         * pause until the lock is set to false. Exposure compensation settings
+         * changes will still take effect while auto-exposure is locked.</p>
+         *
+         * <p>If auto-exposure is already locked, setting this to true again has
+         * no effect (the driver will not recalculate exposure values).</p>
+         *
+         * <p>Stopping preview with {@link #stopPreview()}, or triggering still
+         * image capture with {@link #takePicture(Camera.ShutterCallback,
+         * Camera.PictureCallback, Camera.PictureCallback)}, will not change the
+         * lock.</p>
+         *
+         * <p>Exposure compensation, auto-exposure lock, and auto-white balance
+         * lock can be used to capture an exposure-bracketed burst of images,
+         * for example.</p>
+         *
+         * <p>Auto-exposure state, including the lock state, will not be
+         * maintained after camera {@link #release()} is called.  Locking
+         * auto-exposure after {@link #open()} but before the first call to
+         * {@link #startPreview()} will not allow the auto-exposure routine to
+         * run at all, and may result in severely over- or under-exposed
+         * images.</p>
+         *
+         * @param toggle new state of the auto-exposure lock. True means that
+         *        auto-exposure is locked, false means that the auto-exposure
+         *        routine is free to run normally.
+         *
+         * @see #getAutoExposureLock()
+         */
+        public void setAutoExposureLock(boolean toggle) {
+            set(KEY_AUTO_EXPOSURE_LOCK, toggle ? TRUE : FALSE);
+        }
+
+        /**
+         * Gets the state of the auto-exposure lock. Applications should check
+         * {@link #isAutoExposureLockSupported} before using this method. See
+         * {@link #setAutoExposureLock} for details about the lock.
+         *
+         * @return State of the auto-exposure lock. Returns true if
+         *         auto-exposure is currently locked, and false otherwise.
+         *
+         * @see #setAutoExposureLock(boolean)
+         *
+         */
+        public boolean getAutoExposureLock() {
+            String str = get(KEY_AUTO_EXPOSURE_LOCK);
+            return TRUE.equals(str);
+        }
+
+        /**
+         * Returns true if auto-exposure locking is supported. Applications
+         * should call this before trying to lock auto-exposure. See
+         * {@link #setAutoExposureLock} for details about the lock.
+         *
+         * @return true if auto-exposure lock is supported.
+         * @see #setAutoExposureLock(boolean)
+         *
+         */
+        public boolean isAutoExposureLockSupported() {
+            String str = get(KEY_AUTO_EXPOSURE_LOCK_SUPPORTED);
+            return TRUE.equals(str);
+        }
+
+        /**
+         * <p>Sets the auto-white balance lock state. Applications should check
+         * {@link #isAutoWhiteBalanceLockSupported} before using this
+         * method.</p>
+         *
+         * <p>If set to true, the camera auto-white balance routine will
+         * immediately pause until the lock is set to false.</p>
+         *
+         * <p>If auto-white balance is already locked, setting this to true
+         * again has no effect (the driver will not recalculate white balance
+         * values).</p>
+         *
+         * <p>Stopping preview with {@link #stopPreview()}, or triggering still
+         * image capture with {@link #takePicture(Camera.ShutterCallback,
+         * Camera.PictureCallback, Camera.PictureCallback)}, will not change the
+         * the lock.</p>
+         *
+         * <p> Changing the white balance mode with {@link #setWhiteBalance}
+         * will release the auto-white balance lock if it is set.</p>
+         *
+         * <p>Exposure compensation, AE lock, and AWB lock can be used to
+         * capture an exposure-bracketed burst of images, for example.
+         * Auto-white balance state, including the lock state, will not be
+         * maintained after camera {@link #release()} is called.  Locking
+         * auto-white balance after {@link #open()} but before the first call to
+         * {@link #startPreview()} will not allow the auto-white balance routine
+         * to run at all, and may result in severely incorrect color in captured
+         * images.</p>
+         *
+         * @param toggle new state of the auto-white balance lock. True means
+         *        that auto-white balance is locked, false means that the
+         *        auto-white balance routine is free to run normally.
+         *
+         * @see #getAutoWhiteBalanceLock()
+         * @see #setWhiteBalance(String)
+         */
+        public void setAutoWhiteBalanceLock(boolean toggle) {
+            set(KEY_AUTO_WHITEBALANCE_LOCK, toggle ? TRUE : FALSE);
+        }
+
+        /**
+         * Gets the state of the auto-white balance lock. Applications should
+         * check {@link #isAutoWhiteBalanceLockSupported} before using this
+         * method. See {@link #setAutoWhiteBalanceLock} for details about the
+         * lock.
+         *
+         * @return State of the auto-white balance lock. Returns true if
+         *         auto-white balance is currently locked, and false
+         *         otherwise.
+         *
+         * @see #setAutoWhiteBalanceLock(boolean)
+         *
+         */
+        public boolean getAutoWhiteBalanceLock() {
+            String str = get(KEY_AUTO_WHITEBALANCE_LOCK);
+            return TRUE.equals(str);
+        }
+
+        /**
+         * Returns true if auto-white balance locking is supported. Applications
+         * should call this before trying to lock auto-white balance. See
+         * {@link #setAutoWhiteBalanceLock} for details about the lock.
+         *
+         * @return true if auto-white balance lock is supported.
+         * @see #setAutoWhiteBalanceLock(boolean)
+         *
+         */
+        public boolean isAutoWhiteBalanceLockSupported() {
+            String str = get(KEY_AUTO_WHITEBALANCE_LOCK_SUPPORTED);
+            return TRUE.equals(str);
+        }
+
+        /**
          * Gets current zoom value. This also works when smooth zoom is in
          * progress. Applications should check {@link #isZoomSupported} before
          * using this method.
@@ -2298,26 +3006,26 @@ public class Camera {
         }
 
         /**
-         * Gets the distances from the camera to where an object appears to be
+         * <p>Gets the distances from the camera to where an object appears to be
          * in focus. The object is sharpest at the optimal focus distance. The
-         * depth of field is the far focus distance minus near focus distance.
+         * depth of field is the far focus distance minus near focus distance.</p>
          *
-         * Focus distances may change after calling {@link
+         * <p>Focus distances may change after calling {@link
          * #autoFocus(AutoFocusCallback)}, {@link #cancelAutoFocus}, or {@link
          * #startPreview()}. Applications can call {@link #getParameters()}
          * and this method anytime to get the latest focus distances. If the
          * focus mode is FOCUS_MODE_CONTINUOUS_VIDEO, focus distances may change
-         * from time to time.
+         * from time to time.</p>
          *
-         * This method is intended to estimate the distance between the camera
+         * <p>This method is intended to estimate the distance between the camera
          * and the subject. After autofocus, the subject distance may be within
          * near and far focus distance. However, the precision depends on the
          * camera hardware, autofocus algorithm, the focus area, and the scene.
-         * The error can be large and it should be only used as a reference.
+         * The error can be large and it should be only used as a reference.</p>
          *
-         * Far focus distance >= optimal focus distance >= near focus distance.
+         * <p>Far focus distance >= optimal focus distance >= near focus distance.
          * If the focus distance is infinity, the value will be
-         * Float.POSITIVE_INFINITY.
+         * {@code Float.POSITIVE_INFINITY}.</p>
          *
          * @param output focus distances in meters. output must be a float
          *        array with three elements. Near focus distance, optimal focus
@@ -2332,6 +3040,257 @@ public class Camera {
                         "output must be an float array with three elements.");
             }
             splitFloat(get(KEY_FOCUS_DISTANCES), output);
+        }
+
+        /**
+         * Gets the maximum number of focus areas supported. This is the maximum
+         * length of the list in {@link #setFocusAreas(List)} and
+         * {@link #getFocusAreas()}.
+         *
+         * @return the maximum number of focus areas supported by the camera.
+         * @see #getFocusAreas()
+         */
+        public int getMaxNumFocusAreas() {
+            return getInt(KEY_MAX_NUM_FOCUS_AREAS, 0);
+        }
+
+        /**
+         * <p>Gets the current focus areas. Camera driver uses the areas to decide
+         * focus.</p>
+         *
+         * <p>Before using this API or {@link #setFocusAreas(List)}, apps should
+         * call {@link #getMaxNumFocusAreas()} to know the maximum number of
+         * focus areas first. If the value is 0, focus area is not supported.</p>
+         *
+         * <p>Each focus area is a rectangle with specified weight. The direction
+         * is relative to the sensor orientation, that is, what the sensor sees.
+         * The direction is not affected by the rotation or mirroring of
+         * {@link #setDisplayOrientation(int)}. Coordinates of the rectangle
+         * range from -1000 to 1000. (-1000, -1000) is the upper left point.
+         * (1000, 1000) is the lower right point. The width and height of focus
+         * areas cannot be 0 or negative.</p>
+         *
+         * <p>The weight must range from 1 to 1000. The weight should be
+         * interpreted as a per-pixel weight - all pixels in the area have the
+         * specified weight. This means a small area with the same weight as a
+         * larger area will have less influence on the focusing than the larger
+         * area. Focus areas can partially overlap and the driver will add the
+         * weights in the overlap region.</p>
+         *
+         * <p>A special case of a {@code null} focus area list means the driver is
+         * free to select focus targets as it wants. For example, the driver may
+         * use more signals to select focus areas and change them
+         * dynamically. Apps can set the focus area list to {@code null} if they
+         * want the driver to completely control focusing.</p>
+         *
+         * <p>Focus areas are relative to the current field of view
+         * ({@link #getZoom()}). No matter what the zoom level is, (-1000,-1000)
+         * represents the top of the currently visible camera frame. The focus
+         * area cannot be set to be outside the current field of view, even
+         * when using zoom.</p>
+         *
+         * <p>Focus area only has effect if the current focus mode is
+         * {@link #FOCUS_MODE_AUTO}, {@link #FOCUS_MODE_MACRO},
+         * {@link #FOCUS_MODE_CONTINUOUS_VIDEO}, or
+         * {@link #FOCUS_MODE_CONTINUOUS_PICTURE}.</p>
+         *
+         * @return a list of current focus areas
+         */
+        public List<Area> getFocusAreas() {
+            return splitArea(get(KEY_FOCUS_AREAS));
+        }
+
+        /**
+         * Sets focus areas. See {@link #getFocusAreas()} for documentation.
+         *
+         * @param focusAreas the focus areas
+         * @see #getFocusAreas()
+         */
+        public void setFocusAreas(List<Area> focusAreas) {
+            set(KEY_FOCUS_AREAS, focusAreas);
+        }
+
+        /**
+         * Gets the maximum number of metering areas supported. This is the
+         * maximum length of the list in {@link #setMeteringAreas(List)} and
+         * {@link #getMeteringAreas()}.
+         *
+         * @return the maximum number of metering areas supported by the camera.
+         * @see #getMeteringAreas()
+         */
+        public int getMaxNumMeteringAreas() {
+            return getInt(KEY_MAX_NUM_METERING_AREAS, 0);
+        }
+
+        /**
+         * <p>Gets the current metering areas. Camera driver uses these areas to
+         * decide exposure.</p>
+         *
+         * <p>Before using this API or {@link #setMeteringAreas(List)}, apps should
+         * call {@link #getMaxNumMeteringAreas()} to know the maximum number of
+         * metering areas first. If the value is 0, metering area is not
+         * supported.</p>
+         *
+         * <p>Each metering area is a rectangle with specified weight. The
+         * direction is relative to the sensor orientation, that is, what the
+         * sensor sees. The direction is not affected by the rotation or
+         * mirroring of {@link #setDisplayOrientation(int)}. Coordinates of the
+         * rectangle range from -1000 to 1000. (-1000, -1000) is the upper left
+         * point. (1000, 1000) is the lower right point. The width and height of
+         * metering areas cannot be 0 or negative.</p>
+         *
+         * <p>The weight must range from 1 to 1000, and represents a weight for
+         * every pixel in the area. This means that a large metering area with
+         * the same weight as a smaller area will have more effect in the
+         * metering result.  Metering areas can partially overlap and the driver
+         * will add the weights in the overlap region.</p>
+         *
+         * <p>A special case of a {@code null} metering area list means the driver
+         * is free to meter as it chooses. For example, the driver may use more
+         * signals to select metering areas and change them dynamically. Apps
+         * can set the metering area list to {@code null} if they want the
+         * driver to completely control metering.</p>
+         *
+         * <p>Metering areas are relative to the current field of view
+         * ({@link #getZoom()}). No matter what the zoom level is, (-1000,-1000)
+         * represents the top of the currently visible camera frame. The
+         * metering area cannot be set to be outside the current field of view,
+         * even when using zoom.</p>
+         *
+         * <p>No matter what metering areas are, the final exposure are compensated
+         * by {@link #setExposureCompensation(int)}.</p>
+         *
+         * @return a list of current metering areas
+         */
+        public List<Area> getMeteringAreas() {
+            return splitArea(get(KEY_METERING_AREAS));
+        }
+
+        /**
+         * Sets metering areas. See {@link #getMeteringAreas()} for
+         * documentation.
+         *
+         * @param meteringAreas the metering areas
+         * @see #getMeteringAreas()
+         */
+        public void setMeteringAreas(List<Area> meteringAreas) {
+            set(KEY_METERING_AREAS, meteringAreas);
+        }
+
+        /**
+         * Gets the maximum number of detected faces supported. This is the
+         * maximum length of the list returned from {@link FaceDetectionListener}.
+         * If the return value is 0, face detection of the specified type is not
+         * supported.
+         *
+         * @return the maximum number of detected face supported by the camera.
+         * @see #startFaceDetection()
+         */
+        public int getMaxNumDetectedFaces() {
+            return getInt(KEY_MAX_NUM_DETECTED_FACES_HW, 0);
+        }
+
+        /**
+         * Sets recording mode hint. This tells the camera that the intent of
+         * the application is to record videos {@link
+         * android.media.MediaRecorder#start()}, not to take still pictures
+         * {@link #takePicture(Camera.ShutterCallback, Camera.PictureCallback,
+         * Camera.PictureCallback, Camera.PictureCallback)}. Using this hint can
+         * allow MediaRecorder.start() to start faster or with fewer glitches on
+         * output. This should be called before starting preview for the best
+         * result, but can be changed while the preview is active. The default
+         * value is false.
+         *
+         * The app can still call takePicture() when the hint is true or call
+         * MediaRecorder.start() when the hint is false. But the performance may
+         * be worse.
+         *
+         * @param hint true if the apps intend to record videos using
+         *             {@link android.media.MediaRecorder}.
+         */
+        public void setRecordingHint(boolean hint) {
+            set(KEY_RECORDING_HINT, hint ? TRUE : FALSE);
+        }
+
+        /**
+         * Returns true if video snapshot is supported. That is, applications
+         * can call {@link #takePicture(Camera.ShutterCallback,
+         * Camera.PictureCallback, Camera.PictureCallback, Camera.PictureCallback)}
+         * during recording. Applications do not need to call {@link
+         * #startPreview()} after taking a picture. The preview will be still
+         * active. Other than that, taking a picture during recording is
+         * identical to taking a picture normally. All settings and methods
+         * related to takePicture work identically. Ex: {@link
+         * #getPictureSize()}, {@link #getSupportedPictureSizes()}, {@link
+         * #setJpegQuality(int)}, {@link #setRotation(int)}, and etc. The
+         * picture will have an EXIF header. {@link #FLASH_MODE_AUTO} and {@link
+         * #FLASH_MODE_ON} also still work, but the video will record the flash.
+         *
+         * Applications can set shutter callback as null to avoid the shutter
+         * sound. It is also recommended to set raw picture and post view
+         * callbacks to null to avoid the interrupt of preview display.
+         *
+         * Field-of-view of the recorded video may be different from that of the
+         * captured pictures.
+         *
+         * @return true if video snapshot is supported.
+         */
+        public boolean isVideoSnapshotSupported() {
+            String str = get(KEY_VIDEO_SNAPSHOT_SUPPORTED);
+            return TRUE.equals(str);
+        }
+
+        /**
+         * <p>Enables and disables video stabilization. Use
+         * {@link #isVideoStabilizationSupported} to determine if calling this
+         * method is valid.</p>
+         *
+         * <p>Video stabilization reduces the shaking due to the motion of the
+         * camera in both the preview stream and in recorded videos, including
+         * data received from the preview callback. It does not reduce motion
+         * blur in images captured with
+         * {@link Camera#takePicture takePicture}.</p>
+         *
+         * <p>Video stabilization can be enabled and disabled while preview or
+         * recording is active, but toggling it may cause a jump in the video
+         * stream that may be undesirable in a recorded video.</p>
+         *
+         * @param toggle Set to true to enable video stabilization, and false to
+         * disable video stabilization.
+         * @see #isVideoStabilizationSupported()
+         * @see #getVideoStabilization()
+         * @hide
+         */
+        public void setVideoStabilization(boolean toggle) {
+            set(KEY_VIDEO_STABILIZATION, toggle ? TRUE : FALSE);
+        }
+
+        /**
+         * Get the current state of video stabilization. See
+         * {@link #setVideoStabilization} for details of video stabilization.
+         *
+         * @return true if video stabilization is enabled
+         * @see #isVideoStabilizationSupported()
+         * @see #setVideoStabilization(boolean)
+         * @hide
+         */
+        public boolean getVideoStabilization() {
+            String str = get(KEY_VIDEO_STABILIZATION);
+            return TRUE.equals(str);
+        }
+
+        /**
+         * Returns true if video stabilization is supported. See
+         * {@link #setVideoStabilization} for details of video stabilization.
+         *
+         * @return true if video stabilization is supported
+         * @see #setVideoStabilization(boolean)
+         * @see #getVideoStabilization()
+         * @hide
+         */
+        public boolean isVideoStabilizationSupported() {
+            String str = get(KEY_VIDEO_STABILIZATION_SUPPORTED);
+            return TRUE.equals(str);
         }
 
         // Splits a comma delimited string to an ArrayList of String.
@@ -2458,6 +3417,42 @@ public class Camera {
 
             if (rangeList.size() == 0) return null;
             return rangeList;
+        }
+
+        // Splits a comma delimited string to an ArrayList of Area objects.
+        // Example string: "(-10,-10,0,0,300),(0,0,10,10,700)". Return null if
+        // the passing string is null or the size is 0 or (0,0,0,0,0).
+        private ArrayList<Area> splitArea(String str) {
+            if (str == null || str.charAt(0) != '('
+                    || str.charAt(str.length() - 1) != ')') {
+                Log.e(TAG, "Invalid area string=" + str);
+                return null;
+            }
+
+            ArrayList<Area> result = new ArrayList<Area>();
+            int endIndex, fromIndex = 1;
+            int[] array = new int[5];
+            do {
+                endIndex = str.indexOf("),(", fromIndex);
+                if (endIndex == -1) endIndex = str.length() - 1;
+                splitInt(str.substring(fromIndex, endIndex), array);
+                Rect rect = new Rect(array[0], array[1], array[2], array[3]);
+                result.add(new Area(rect, array[4]));
+                fromIndex = endIndex + 3;
+            } while (endIndex != str.length() - 1);
+
+            if (result.size() == 0) return null;
+
+            if (result.size() == 1) {
+                Area area = result.get(0);
+                Rect rect = area.rect;
+                if (rect.left == 0 && rect.top == 0 && rect.right == 0
+                        && rect.bottom == 0 && area.weight == 0) {
+                    return null;
+                }
+            }
+
+            return result;
         }
     };
 }

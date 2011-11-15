@@ -20,6 +20,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <time.h>
+#include <system/graphics.h>
 
 #if defined(HAVE_PTHREADS)
 # include <pthread.h>
@@ -42,8 +43,8 @@ enum {
      * ** Keep in sync with android.os.Process.java **
      * ***********************************************
      * 
-     * This maps directly to the "nice" priorites we use in Android.
-     * A thread priority should be chosen inverse-proportinally to
+     * This maps directly to the "nice" priorities we use in Android.
+     * A thread priority should be chosen inverse-proportionally to
      * the amount of work the thread is expected to do. The more work
      * a thread will do, the less favorable priority it should get so that 
      * it doesn't starve the system. Threads not behaving properly might
@@ -66,7 +67,7 @@ enum {
     ANDROID_PRIORITY_DISPLAY        =  -4,
     
     /* ui service treads might want to run at a urgent display (uncommon) */
-    ANDROID_PRIORITY_URGENT_DISPLAY =  -8,
+    ANDROID_PRIORITY_URGENT_DISPLAY =  HAL_PRIORITY_URGENT_DISPLAY,
     
     /* all normal audio threads */
     ANDROID_PRIORITY_AUDIO          = -16,
@@ -133,14 +134,25 @@ extern pid_t androidGetTid();
 // Change the scheduling group of a particular thread.  The group
 // should be one of the ANDROID_TGROUP constants.  Returns BAD_VALUE if
 // grp is out of range, else another non-zero value with errno set if
-// the operation failed.
+// the operation failed.  Thread ID zero means current thread.
 extern int androidSetThreadSchedulingGroup(pid_t tid, int grp);
 
 // Change the priority AND scheduling group of a particular thread.  The priority
 // should be one of the ANDROID_PRIORITY constants.  Returns INVALID_OPERATION
 // if the priority set failed, else another value if just the group set failed;
-// in either case errno is set.
+// in either case errno is set.  Thread ID zero means current thread.
 extern int androidSetThreadPriority(pid_t tid, int prio);
+
+// Get the current priority of a particular thread. Returns one of the
+// ANDROID_PRIORITY constants or a negative result in case of error.
+extern int androidGetThreadPriority(pid_t tid);
+
+// Get the current scheduling group of a particular thread. Normally returns
+// one of the ANDROID_TGROUP constants other than ANDROID_TGROUP_DEFAULT.
+// Returns ANDROID_TGROUP_DEFAULT if no pthread support (e.g. on host) or if
+// scheduling groups are disabled.  Returns INVALID_OPERATION if unexpected error.
+// Thread ID zero means current thread.
+extern int androidGetThreadSchedulingGroup(pid_t tid);
 
 #ifdef __cplusplus
 }
@@ -510,6 +522,10 @@ public:
     // that case.
             status_t    requestExitAndWait();
 
+    // Wait until this object's thread exits. Returns immediately if not yet running.
+    // Do not call from this object's thread; will return WOULD_BLOCK in that case.
+            status_t    join();
+
 protected:
     // exitPending() returns true if requestExit() has been called.
             bool        exitPending() const;
@@ -526,10 +542,12 @@ private:
     Thread& operator=(const Thread&);
     static  int             _threadLoop(void* user);
     const   bool            mCanCallJava;
+    // always hold mLock when reading or writing
             thread_id_t     mThread;
-            Mutex           mLock;
+    mutable Mutex           mLock;
             Condition       mThreadExitedCondition;
             status_t        mStatus;
+    // note that all accesses of mExitPending and mRunning need to hold mLock
     volatile bool           mExitPending;
     volatile bool           mRunning;
             sp<Thread>      mHoldSelf;

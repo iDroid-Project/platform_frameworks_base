@@ -442,6 +442,286 @@ back_up_files(int oldSnapshotFD, BackupDataWriter* dataStream, int newSnapshotFD
     return 0;
 }
 
+// Utility function, equivalent to stpcpy(): perform a strcpy, but instead of
+// returning the initial dest, return a pointer to the trailing NUL.
+static char* strcpy_ptr(char* dest, const char* str) {
+    if (dest && str) {
+        while ((*dest = *str) != 0) {
+            dest++;
+            str++;
+        }
+    }
+    return dest;
+}
+
+static void calc_tar_checksum(char* buf) {
+    // [ 148 :   8 ] checksum -- to be calculated with this field as space chars
+    memset(buf + 148, ' ', 8);
+
+    uint16_t sum = 0;
+    for (uint8_t* p = (uint8_t*) buf; p < ((uint8_t*)buf) + 512; p++) {
+        sum += *p;
+    }
+
+    // Now write the real checksum value:
+    // [ 148 :   8 ]  checksum: 6 octal digits [leading zeroes], NUL, SPC
+    sprintf(buf + 148, "%06o", sum); // the trailing space is already in place
+}
+
+// Returns number of bytes written
+static int write_pax_header_entry(char* buf, const char* key, const char* value) {
+    // start with the size of "1 key=value\n"
+    int len = strlen(key) + strlen(value) + 4;
+    if (len > 9) len++;
+    if (len > 99) len++;
+    if (len > 999) len++;
+    // since PATH_MAX is 4096 we don't expect to have to generate any single
+    // header entry longer than 9999 characters
+
+    return sprintf(buf, "%d %s=%s\n", len, key, value);
+}
+
+// Wire format to the backup manager service is chunked:  each chunk is prefixed by
+// a 4-byte count of its size.  A chunk size of zero (four zero bytes) indicates EOD.
+void send_tarfile_chunk(BackupDataWriter* writer, const char* buffer, size_t size) {
+    uint32_t chunk_size_no = htonl(size);
+    writer->WriteEntityData(&chunk_size_no, 4);
+    if (size != 0) writer->WriteEntityData(buffer, size);
+}
+
+int write_tarfile(const String8& packageName, const String8& domain,
+        const String8& rootpath, const String8& filepath, BackupDataWriter* writer)
+{
+    // In the output stream everything is stored relative to the root
+    const char* relstart = filepath.string() + rootpath.length();
+    if (*relstart == '/') relstart++;     // won't be true when path == rootpath
+    String8 relpath(relstart);
+
+    // If relpath is empty, it means this is the top of one of the standard named
+    // domain directories, so we should just skip it
+    if (relpath.length() == 0) {
+        return 0;
+    }
+
+    // Too long a name for the ustar format?
+    //    "apps/" + packagename + '/' + domainpath < 155 chars
+    //    relpath < 100 chars
+    bool needExtended = false;
+    if ((5 + packageName.length() + 1 + domain.length() >= 155) || (relpath.length() >= 100)) {
+        needExtended = true;
+    }
+
+    // Non-7bit-clean path also means needing pax extended format
+    if (!needExtended) {
+        for (size_t i = 0; i < filepath.length(); i++) {
+            if ((filepath[i] & 0x80) != 0) {
+                needExtended = true;
+                break;
+            }
+        }
+    }
+
+    int err = 0;
+    struct stat64 s;
+    if (lstat64(filepath.string(), &s) != 0) {
+        err = errno;
+        LOGE("Error %d (%s) from lstat64(%s)", err, strerror(err), filepath.string());
+        return err;
+    }
+
+    String8 fullname;   // for pax later on
+    String8 prefix;
+
+    const int isdir = S_ISDIR(s.st_mode);
+    if (isdir) s.st_size = 0;   // directories get no actual data in the tar stream
+
+    // !!! TODO: use mmap when possible to avoid churning the buffer cache
+    // !!! TODO: this will break with symlinks; need to use readlink(2)
+    int fd = open(filepath.string(), O_RDONLY);
+    if (fd < 0) {
+        err = errno;
+        LOGE("Error %d (%s) from open(%s)", err, strerror(err), filepath.string());
+        return err;
+    }
+
+    // read/write up to this much at a time.
+    const size_t BUFSIZE = 32 * 1024;
+    char* buf = new char[BUFSIZE];
+    char* paxHeader = buf + 512;    // use a different chunk of it as separate scratch
+    char* paxData = buf + 1024;
+
+    if (buf == NULL) {
+        LOGE("Out of mem allocating transfer buffer");
+        err = ENOMEM;
+        goto cleanup;
+    }
+
+    // Good to go -- first construct the standard tar header at the start of the buffer
+    memset(buf, 0, BUFSIZE);
+
+    // Magic fields for the ustar file format
+    strcat(buf + 257, "ustar");
+    strcat(buf + 263, "00");
+
+    // [ 265 : 32 ] user name, ignored on restore
+    // [ 297 : 32 ] group name, ignored on restore
+
+    // [ 100 :   8 ] file mode
+    snprintf(buf + 100, 8, "%06o ", s.st_mode & ~S_IFMT);
+
+    // [ 108 :   8 ] uid -- ignored in Android format; uids are remapped at restore time
+    // [ 116 :   8 ] gid -- ignored in Android format
+    snprintf(buf + 108, 8, "0%lo", s.st_uid);
+    snprintf(buf + 116, 8, "0%lo", s.st_gid);
+
+    // [ 124 :  12 ] file size in bytes
+    if (s.st_size > 077777777777LL) {
+        // very large files need a pax extended size header
+        needExtended = true;
+    }
+    snprintf(buf + 124, 12, "%011llo", (isdir) ? 0LL : s.st_size);
+
+    // [ 136 :  12 ] last mod time as a UTC time_t
+    snprintf(buf + 136, 12, "%0lo", s.st_mtime);
+
+    // [ 156 :   1 ] link/file type
+    uint8_t type;
+    if (isdir) {
+        type = '5';     // tar magic: '5' == directory
+    } else if (S_ISREG(s.st_mode)) {
+        type = '0';     // tar magic: '0' == normal file
+    } else {
+        LOGW("Error: unknown file mode 0%o [%s]", s.st_mode, filepath.string());
+        goto cleanup;
+    }
+    buf[156] = type;
+
+    // [ 157 : 100 ] name of linked file [not implemented]
+
+    {
+        // Prefix and main relative path.  Path lengths have been preflighted.
+        if (packageName.length() > 0) {
+            prefix = "apps/";
+            prefix += packageName;
+        }
+        if (domain.length() > 0) {
+            prefix.appendPath(domain);
+        }
+
+        // pax extended means we don't put in a prefix field, and put a different
+        // string in the basic name field.  We can also construct the full path name
+        // out of the substrings we've now built.
+        fullname = prefix;
+        fullname.appendPath(relpath);
+
+        // ustar:
+        //    [   0 : 100 ]; file name/path
+        //    [ 345 : 155 ] filename path prefix
+        // We only use the prefix area if fullname won't fit in the path
+        if (fullname.length() > 100) {
+            strncpy(buf, relpath.string(), 100);
+            strncpy(buf + 345, prefix.string(), 155);
+        } else {
+            strncpy(buf, fullname.string(), 100);
+        }
+    }
+
+    // [ 329 : 8 ] and [ 337 : 8 ] devmajor/devminor, not used
+
+    LOGI("   Name: %s", fullname.string());
+
+    // If we're using a pax extended header, build & write that here; lengths are
+    // already preflighted
+    if (needExtended) {
+        char sizeStr[32];   // big enough for a 64-bit unsigned value in decimal
+        char* p = paxData;
+
+        // construct the pax extended header data block
+        memset(paxData, 0, BUFSIZE - (paxData - buf));
+        int len;
+
+        // size header -- calc len in digits by actually rendering the number
+        // to a string - brute force but simple
+        snprintf(sizeStr, sizeof(sizeStr), "%lld", s.st_size);
+        p += write_pax_header_entry(p, "size", sizeStr);
+
+        // fullname was generated above with the ustar paths
+        p += write_pax_header_entry(p, "path", fullname.string());
+
+        // Now we know how big the pax data is
+        int paxLen = p - paxData;
+
+        // Now build the pax *header* templated on the ustar header
+        memcpy(paxHeader, buf, 512);
+
+        String8 leaf = fullname.getPathLeaf();
+        memset(paxHeader, 0, 100);                  // rewrite the name area
+        snprintf(paxHeader, 100, "PaxHeader/%s", leaf.string());
+        memset(paxHeader + 345, 0, 155);            // rewrite the prefix area
+        strncpy(paxHeader + 345, prefix.string(), 155);
+
+        paxHeader[156] = 'x';                       // mark it as a pax extended header
+
+        // [ 124 :  12 ] size of pax extended header data
+        memset(paxHeader + 124, 0, 12);
+        snprintf(paxHeader + 124, 12, "%011o", p - paxData);
+
+        // Checksum and write the pax block header
+        calc_tar_checksum(paxHeader);
+        send_tarfile_chunk(writer, paxHeader, 512);
+
+        // Now write the pax data itself
+        int paxblocks = (paxLen + 511) / 512;
+        send_tarfile_chunk(writer, paxData, 512 * paxblocks);
+    }
+
+    // Checksum and write the 512-byte ustar file header block to the output
+    calc_tar_checksum(buf);
+    send_tarfile_chunk(writer, buf, 512);
+
+    // Now write the file data itself, for real files.  We honor tar's convention that
+    // only full 512-byte blocks are sent to write().
+    if (!isdir) {
+        off64_t toWrite = s.st_size;
+        while (toWrite > 0) {
+            size_t toRead = (toWrite < BUFSIZE) ? toWrite : BUFSIZE;
+            ssize_t nRead = read(fd, buf, toRead);
+            if (nRead < 0) {
+                err = errno;
+                LOGE("Unable to read file [%s], err=%d (%s)", filepath.string(),
+                        err, strerror(err));
+                break;
+            } else if (nRead == 0) {
+                LOGE("EOF but expect %lld more bytes in [%s]", (long long) toWrite,
+                        filepath.string());
+                err = EIO;
+                break;
+            }
+
+            // At EOF we might have a short block; NUL-pad that to a 512-byte multiple.  This
+            // depends on the OS guarantee that for ordinary files, read() will never return
+            // less than the number of bytes requested.
+            ssize_t partial = (nRead+512) % 512;
+            if (partial > 0) {
+                ssize_t remainder = 512 - partial;
+                memset(buf + nRead, 0, remainder);
+                nRead += remainder;
+            }
+            send_tarfile_chunk(writer, buf, nRead);
+            toWrite -= nRead;
+        }
+    }
+
+cleanup:
+    delete [] buf;
+done:
+    close(fd);
+    return err;
+}
+// end tarfile
+
+
+
 #define RESTORE_BUF_SIZE (8*1024)
 
 RestoreHelperBase::RestoreHelperBase()

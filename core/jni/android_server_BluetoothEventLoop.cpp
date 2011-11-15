@@ -50,6 +50,8 @@ static jmethodID method_onDeviceDisappeared;
 static jmethodID method_onDeviceCreated;
 static jmethodID method_onDeviceRemoved;
 static jmethodID method_onDeviceDisconnectRequested;
+static jmethodID method_onNetworkDeviceDisconnected;
+static jmethodID method_onNetworkDeviceConnected;
 
 static jmethodID method_onCreatePairedDeviceResult;
 static jmethodID method_onCreateDeviceResult;
@@ -66,6 +68,14 @@ static jmethodID method_onAgentOutOfBandDataAvailable;
 static jmethodID method_onAgentAuthorize;
 static jmethodID method_onAgentCancel;
 
+static jmethodID method_onInputDevicePropertyChanged;
+static jmethodID method_onInputDeviceConnectionResult;
+static jmethodID method_onPanDevicePropertyChanged;
+static jmethodID method_onPanDeviceConnectionResult;
+static jmethodID method_onHealthDevicePropertyChanged;
+static jmethodID method_onHealthDeviceChannelChanged;
+static jmethodID method_onHealthDeviceConnectionResult;
+
 typedef event_loop_native_data_t native_data_t;
 
 #define EVENT_LOOP_REFS 10
@@ -81,7 +91,7 @@ native_data_t *get_EventLoop_native_data(JNIEnv *env, jobject object) {
 
 #endif
 static void classInitNative(JNIEnv* env, jclass clazz) {
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 
 #ifdef HAVE_BLUETOOTH
     method_onPropertyChanged = env->GetMethodID(clazz, "onPropertyChanged",
@@ -97,6 +107,10 @@ static void classInitNative(JNIEnv* env, jclass clazz) {
     method_onDeviceRemoved = env->GetMethodID(clazz, "onDeviceRemoved", "(Ljava/lang/String;)V");
     method_onDeviceDisconnectRequested = env->GetMethodID(clazz, "onDeviceDisconnectRequested",
                                                         "(Ljava/lang/String;)V");
+    method_onNetworkDeviceConnected = env->GetMethodID(clazz, "onNetworkDeviceConnected",
+                                                     "(Ljava/lang/String;Ljava/lang/String;I)V");
+    method_onNetworkDeviceDisconnected = env->GetMethodID(clazz, "onNetworkDeviceDisconnected",
+                                                              "(Ljava/lang/String;)V");
 
     method_onCreatePairedDeviceResult = env->GetMethodID(clazz, "onCreatePairedDeviceResult",
                                                          "(Ljava/lang/String;I)V");
@@ -120,6 +134,21 @@ static void classInitNative(JNIEnv* env, jclass clazz) {
                                                "(Ljava/lang/String;I)V");
     method_onDisplayPasskey = env->GetMethodID(clazz, "onDisplayPasskey",
                                                "(Ljava/lang/String;II)V");
+    method_onInputDevicePropertyChanged = env->GetMethodID(clazz, "onInputDevicePropertyChanged",
+                                               "(Ljava/lang/String;[Ljava/lang/String;)V");
+    method_onInputDeviceConnectionResult = env->GetMethodID(clazz, "onInputDeviceConnectionResult",
+                                               "(Ljava/lang/String;I)V");
+    method_onPanDevicePropertyChanged = env->GetMethodID(clazz, "onPanDevicePropertyChanged",
+                                               "(Ljava/lang/String;[Ljava/lang/String;)V");
+    method_onPanDeviceConnectionResult = env->GetMethodID(clazz, "onPanDeviceConnectionResult",
+                                               "(Ljava/lang/String;I)V");
+    method_onHealthDeviceConnectionResult = env->GetMethodID(clazz,
+                                                             "onHealthDeviceConnectionResult",
+                                                             "(II)V");
+    method_onHealthDevicePropertyChanged = env->GetMethodID(clazz, "onHealthDevicePropertyChanged",
+                                               "(Ljava/lang/String;[Ljava/lang/String;)V");
+    method_onHealthDeviceChannelChanged = env->GetMethodID(clazz, "onHealthDeviceChannelChanged",
+                                               "(Ljava/lang/String;Ljava/lang/String;Z)V");
     method_onRequestOobData = env->GetMethodID(clazz, "onRequestOobData",
                                                "(Ljava/lang/String;I)V");
 
@@ -128,7 +157,7 @@ static void classInitNative(JNIEnv* env, jclass clazz) {
 }
 
 static void initializeNativeDataNative(JNIEnv* env, jobject object) {
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 #ifdef HAVE_BLUETOOTH
     native_data_t *nat = (native_data_t *)calloc(1, sizeof(native_data_t));
     if (NULL == nat) {
@@ -156,7 +185,7 @@ static void initializeNativeDataNative(JNIEnv* env, jobject object) {
 }
 
 static void cleanupNativeDataNative(JNIEnv* env, jobject object) {
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 #ifdef HAVE_BLUETOOTH
     native_data_t *nat =
             (native_data_t *)env->GetIntField(object, field_mNativeData);
@@ -197,12 +226,19 @@ static short dbus_flags_to_unix_events(unsigned int flags) {
 }
 
 static jboolean setUpEventLoop(native_data_t *nat) {
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 
     if (nat != NULL && nat->conn != NULL) {
         dbus_threads_init_default();
         DBusError err;
         dbus_error_init(&err);
+
+        const char *agent_path = "/android/bluetooth/agent";
+        const char *capabilities = "DisplayYesNo";
+        if (register_agent(nat, agent_path, capabilities) < 0) {
+            dbus_connection_unregister_object_path (nat->conn, agent_path);
+            return JNI_FALSE;
+        }
 
         // Add a filter for all incoming messages
         if (!dbus_connection_add_filter(nat->conn, event_filter, nat, NULL)){
@@ -232,6 +268,36 @@ static jboolean setUpEventLoop(native_data_t *nat) {
             return JNI_FALSE;
         }
         dbus_bus_add_match(nat->conn,
+                "type='signal',interface='"BLUEZ_DBUS_BASE_IFC".Input'",
+                &err);
+        if (dbus_error_is_set(&err)) {
+            LOG_AND_FREE_DBUS_ERROR(&err);
+            return JNI_FALSE;
+        }
+        dbus_bus_add_match(nat->conn,
+                "type='signal',interface='"BLUEZ_DBUS_BASE_IFC".Network'",
+                &err);
+        if (dbus_error_is_set(&err)) {
+            LOG_AND_FREE_DBUS_ERROR(&err);
+            return JNI_FALSE;
+        }
+        dbus_bus_add_match(nat->conn,
+                "type='signal',interface='"BLUEZ_DBUS_BASE_IFC".NetworkServer'",
+                &err);
+        if (dbus_error_is_set(&err)) {
+            LOG_AND_FREE_DBUS_ERROR(&err);
+            return JNI_FALSE;
+        }
+
+        dbus_bus_add_match(nat->conn,
+                "type='signal',interface='"BLUEZ_DBUS_BASE_IFC".HealthDevice'",
+                &err);
+        if (dbus_error_is_set(&err)) {
+            LOG_AND_FREE_DBUS_ERROR(&err);
+            return JNI_FALSE;
+        }
+
+        dbus_bus_add_match(nat->conn,
                 "type='signal',interface='org.bluez.AudioSink'",
                 &err);
         if (dbus_error_is_set(&err)) {
@@ -239,12 +305,6 @@ static jboolean setUpEventLoop(native_data_t *nat) {
             return JNI_FALSE;
         }
 
-        const char *agent_path = "/android/bluetooth/agent";
-        const char *capabilities = "DisplayYesNo";
-        if (register_agent(nat, agent_path, capabilities) < 0) {
-            dbus_connection_unregister_object_path (nat->conn, agent_path);
-            return JNI_FALSE;
-        }
         return JNI_TRUE;
     }
     return JNI_FALSE;
@@ -311,7 +371,7 @@ static int register_agent(native_data_t *nat,
 {
     DBusMessage *msg, *reply;
     DBusError err;
-    bool oob = TRUE;
+    dbus_bool_t oob = TRUE;
 
     if (!dbus_connection_register_object_path(nat->conn, agent_path,
             &agent_vtable, nat)) {
@@ -333,7 +393,6 @@ static int register_agent(native_data_t *nat,
     }
     dbus_message_append_args(msg, DBUS_TYPE_OBJECT_PATH, &agent_path,
                              DBUS_TYPE_STRING, &capabilities,
-                             DBUS_TYPE_BOOLEAN, &oob,
                              DBUS_TYPE_INVALID);
 
     dbus_error_init(&err);
@@ -355,7 +414,7 @@ static int register_agent(native_data_t *nat,
 }
 
 static void tearDownEventLoop(native_data_t *nat) {
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
     if (nat != NULL && nat->conn != NULL) {
 
         DBusMessage *msg, *reply;
@@ -390,13 +449,37 @@ static void tearDownEventLoop(native_data_t *nat) {
         dbus_connection_unregister_object_path(nat->conn, agent_path);
 
         dbus_bus_remove_match(nat->conn,
-                "type='signal',interface='org.bluez.AudioSink'",
+                "type='signal',interface='"BLUEZ_DBUS_BASE_IFC".AudioSink'",
                 &err);
         if (dbus_error_is_set(&err)) {
             LOG_AND_FREE_DBUS_ERROR(&err);
         }
         dbus_bus_remove_match(nat->conn,
-                "type='signal',interface='org.bluez.Device'",
+                "type='signal',interface='"BLUEZ_DBUS_BASE_IFC".Device'",
+                &err);
+        if (dbus_error_is_set(&err)) {
+            LOG_AND_FREE_DBUS_ERROR(&err);
+        }
+        dbus_bus_remove_match(nat->conn,
+                "type='signal',interface='"BLUEZ_DBUS_BASE_IFC".Input'",
+                &err);
+        if (dbus_error_is_set(&err)) {
+            LOG_AND_FREE_DBUS_ERROR(&err);
+        }
+        dbus_bus_remove_match(nat->conn,
+                "type='signal',interface='"BLUEZ_DBUS_BASE_IFC".Network'",
+                &err);
+        if (dbus_error_is_set(&err)) {
+            LOG_AND_FREE_DBUS_ERROR(&err);
+        }
+        dbus_bus_remove_match(nat->conn,
+                "type='signal',interface='"BLUEZ_DBUS_BASE_IFC".NetworkServer'",
+                &err);
+        if (dbus_error_is_set(&err)) {
+            LOG_AND_FREE_DBUS_ERROR(&err);
+        }
+        dbus_bus_remove_match(nat->conn,
+                "type='signal',interface='"BLUEZ_DBUS_BASE_IFC".HealthDevice'",
                 &err);
         if (dbus_error_is_set(&err)) {
             LOG_AND_FREE_DBUS_ERROR(&err);
@@ -428,6 +511,7 @@ static void tearDownEventLoop(native_data_t *nat) {
 #define EVENT_LOOP_EXIT 1
 #define EVENT_LOOP_ADD  2
 #define EVENT_LOOP_REMOVE 3
+#define EVENT_LOOP_WAKEUP 4
 
 dbus_bool_t dbusAddWatch(DBusWatch *watch, void *data) {
     native_data_t *nat = (native_data_t *)data;
@@ -470,6 +554,13 @@ void dbusToggleWatch(DBusWatch *watch, void *data) {
     } else {
         dbusRemoveWatch(watch, data);
     }
+}
+
+void dbusWakeup(void *data) {
+    native_data_t *nat = (native_data_t *)data;
+
+    char control = EVENT_LOOP_WAKEUP;
+    write(nat->controlFdW, &control, sizeof(char));
 }
 
 static void handleWatchAdd(native_data_t *nat) {
@@ -555,6 +646,7 @@ static void *eventLoopMain(void *ptr) {
 
     dbus_connection_set_watch_functions(nat->conn, dbusAddWatch,
             dbusRemoveWatch, dbusToggleWatch, ptr, NULL);
+    dbus_connection_set_wakeup_main_function(nat->conn, dbusWakeup, ptr, NULL);
 
     nat->running = true;
 
@@ -588,6 +680,11 @@ static void *eventLoopMain(void *ptr) {
                     case EVENT_LOOP_REMOVE:
                     {
                         handleWatchRemove(nat);
+                        break;
+                    }
+                    case EVENT_LOOP_WAKEUP:
+                    {
+                        // noop
                         break;
                     }
                     }
@@ -755,7 +852,7 @@ static DBusHandlerResult event_filter(DBusConnection *conn, DBusMessage *msg,
         return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
     }
 
-    LOGE("%s: Received signal %s:%s from %s", __FUNCTION__,
+    LOGV("%s: Received signal %s:%s from %s", __FUNCTION__,
         dbus_message_get_interface(msg), dbus_message_get_member(msg),
         dbus_message_get_path(msg));
 
@@ -861,6 +958,125 @@ static DBusHandlerResult event_filter(DBusConnection *conn, DBusMessage *msg,
                             method_onDeviceDisconnectRequested,
                             env->NewStringUTF(remote_device_path));
         goto success;
+    } else if (dbus_message_is_signal(msg,
+                                      "org.bluez.Input",
+                                      "PropertyChanged")) {
+
+        jobjectArray str_array =
+                    parse_input_property_change(env, msg);
+        if (str_array != NULL) {
+            const char *c_path = dbus_message_get_path(msg);
+            env->CallVoidMethod(nat->me,
+                                method_onInputDevicePropertyChanged,
+                                env->NewStringUTF(c_path),
+                                str_array);
+        } else {
+            LOG_AND_FREE_DBUS_ERROR_WITH_MSG(&err, msg);
+        }
+        goto success;
+    } else if (dbus_message_is_signal(msg,
+                                     "org.bluez.Network",
+                                     "PropertyChanged")) {
+
+       jobjectArray str_array =
+                   parse_pan_property_change(env, msg);
+       if (str_array != NULL) {
+           const char *c_path = dbus_message_get_path(msg);
+           env->CallVoidMethod(nat->me,
+                               method_onPanDevicePropertyChanged,
+                               env->NewStringUTF(c_path),
+                               str_array);
+       } else {
+           LOG_AND_FREE_DBUS_ERROR_WITH_MSG(&err, msg);
+       }
+       goto success;
+    } else if (dbus_message_is_signal(msg,
+                                     "org.bluez.NetworkServer",
+                                     "DeviceDisconnected")) {
+       char *c_address;
+       if (dbus_message_get_args(msg, &err,
+                                  DBUS_TYPE_STRING, &c_address,
+                                  DBUS_TYPE_INVALID)) {
+           env->CallVoidMethod(nat->me,
+                               method_onNetworkDeviceDisconnected,
+                               env->NewStringUTF(c_address));
+       } else {
+           LOG_AND_FREE_DBUS_ERROR_WITH_MSG(&err, msg);
+       }
+       goto success;
+    } else if (dbus_message_is_signal(msg,
+                                     "org.bluez.NetworkServer",
+                                     "DeviceConnected")) {
+       char *c_address;
+       char *c_iface;
+       uint16_t uuid;
+
+       if (dbus_message_get_args(msg, &err,
+                                  DBUS_TYPE_STRING, &c_address,
+                                  DBUS_TYPE_STRING, &c_iface,
+                                  DBUS_TYPE_UINT16, &uuid,
+                                  DBUS_TYPE_INVALID)) {
+           env->CallVoidMethod(nat->me,
+                               method_onNetworkDeviceConnected,
+                               env->NewStringUTF(c_address),
+                               env->NewStringUTF(c_iface),
+                               uuid);
+       } else {
+           LOG_AND_FREE_DBUS_ERROR_WITH_MSG(&err, msg);
+       }
+       goto success;
+    } else if (dbus_message_is_signal(msg,
+                                     "org.bluez.HealthDevice",
+                                     "ChannelConnected")) {
+       const char *c_path = dbus_message_get_path(msg);
+       const char *c_channel_path;
+       jboolean exists = JNI_TRUE;
+       if (dbus_message_get_args(msg, &err,
+                                  DBUS_TYPE_OBJECT_PATH, &c_channel_path,
+                                  DBUS_TYPE_INVALID)) {
+           env->CallVoidMethod(nat->me,
+                               method_onHealthDeviceChannelChanged,
+                               env->NewStringUTF(c_path),
+                               env->NewStringUTF(c_channel_path),
+                               exists);
+       } else {
+           LOG_AND_FREE_DBUS_ERROR_WITH_MSG(&err, msg);
+       }
+       goto success;
+    } else if (dbus_message_is_signal(msg,
+                                     "org.bluez.HealthDevice",
+                                     "ChannelDeleted")) {
+
+       const char *c_path = dbus_message_get_path(msg);
+       const char *c_channel_path;
+       jboolean exists = JNI_FALSE;
+       if (dbus_message_get_args(msg, &err,
+                                  DBUS_TYPE_OBJECT_PATH, &c_channel_path,
+                                  DBUS_TYPE_INVALID)) {
+           env->CallVoidMethod(nat->me,
+                               method_onHealthDeviceChannelChanged,
+                               env->NewStringUTF(c_path),
+                               env->NewStringUTF(c_channel_path),
+                               exists);
+       } else {
+           LOG_AND_FREE_DBUS_ERROR_WITH_MSG(&err, msg);
+       }
+       goto success;
+    } else if (dbus_message_is_signal(msg,
+                                     "org.bluez.HealthDevice",
+                                     "PropertyChanged")) {
+        jobjectArray str_array =
+                    parse_health_device_property_change(env, msg);
+        if (str_array != NULL) {
+            const char *c_path = dbus_message_get_path(msg);
+            env->CallVoidMethod(nat->me,
+                                method_onHealthDevicePropertyChanged,
+                                env->NewStringUTF(c_path),
+                                str_array);
+       } else {
+           LOG_AND_FREE_DBUS_ERROR_WITH_MSG(&err, msg);
+       }
+       goto success;
     }
 
     ret = a2dp_event_filter(msg, env);
@@ -918,7 +1134,7 @@ DBusHandlerResult agent_event_filter(DBusConnection *conn,
         LOGV("... uuid = %s", uuid);
 
         dbus_message_ref(msg);  // increment refcount because we pass to java
-        env->CallBooleanMethod(nat->me, method_onAgentAuthorize,
+        env->CallVoidMethod(nat->me, method_onAgentAuthorize,
                 env->NewStringUTF(object_path), env->NewStringUTF(uuid),
                 int(msg));
 
@@ -1084,19 +1300,9 @@ success:
 
 
 #ifdef HAVE_BLUETOOTH
-//TODO: Unify result codes in a header
-#define BOND_RESULT_ERROR -1000
-#define BOND_RESULT_SUCCESS 0
-#define BOND_RESULT_AUTH_FAILED 1
-#define BOND_RESULT_AUTH_REJECTED 2
-#define BOND_RESULT_AUTH_CANCELED 3
-#define BOND_RESULT_REMOTE_DEVICE_DOWN 4
-#define BOND_RESULT_DISCOVERY_IN_PROGRESS 5
-#define BOND_RESULT_AUTH_TIMEOUT 6
-#define BOND_RESULT_REPEATED_ATTEMPTS 7
 
 void onCreatePairedDeviceResult(DBusMessage *msg, void *user, void *n) {
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 
     native_data_t *nat = (native_data_t *)n;
     const char *address = (const char *)user;
@@ -1165,7 +1371,7 @@ done:
 }
 
 void onCreateDeviceResult(DBusMessage *msg, void *user, void *n) {
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 
     native_data_t *nat = (native_data_t *)n;
     const char *address= (const char *)user;
@@ -1195,7 +1401,7 @@ void onCreateDeviceResult(DBusMessage *msg, void *user, void *n) {
 }
 
 void onDiscoverServicesResult(DBusMessage *msg, void *user, void *n) {
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 
     native_data_t *nat = (native_data_t *)n;
     const char *path = (const char *)user;
@@ -1221,7 +1427,7 @@ void onDiscoverServicesResult(DBusMessage *msg, void *user, void *n) {
 }
 
 void onGetDeviceServiceChannelResult(DBusMessage *msg, void *user, void *n) {
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 
     const char *address = (const char *) user;
     native_data_t *nat = (native_data_t *) n;
@@ -1250,6 +1456,118 @@ done:
                         addr,
                         channel);
     env->DeleteLocalRef(addr);
+    free(user);
+}
+
+void onInputDeviceConnectionResult(DBusMessage *msg, void *user, void *n) {
+    LOGV("%s", __FUNCTION__);
+
+    native_data_t *nat = (native_data_t *)n;
+    const char *path = (const char *)user;
+    DBusError err;
+    dbus_error_init(&err);
+    JNIEnv *env;
+    nat->vm->GetEnv((void**)&env, nat->envVer);
+
+    jint result = INPUT_OPERATION_SUCCESS;
+    if (dbus_set_error_from_message(&err, msg)) {
+        if (!strcmp(err.name, BLUEZ_ERROR_IFC ".ConnectionAttemptFailed")) {
+            result = INPUT_CONNECT_FAILED_ATTEMPT_FAILED;
+        } else if (!strcmp(err.name, BLUEZ_ERROR_IFC ".AlreadyConnected")) {
+            result = INPUT_CONNECT_FAILED_ALREADY_CONNECTED;
+        } else if (!strcmp(err.name, BLUEZ_ERROR_IFC ".Failed")) {
+            // TODO():This is flaky, need to change Bluez to add new error codes
+            if (!strcmp(err.message, "Transport endpoint is not connected")) {
+              result = INPUT_DISCONNECT_FAILED_NOT_CONNECTED;
+            } else {
+              result = INPUT_OPERATION_GENERIC_FAILURE;
+            }
+        } else {
+            result = INPUT_OPERATION_GENERIC_FAILURE;
+        }
+        LOG_AND_FREE_DBUS_ERROR(&err);
+    }
+
+    LOGV("... Device Path = %s, result = %d", path, result);
+    jstring jPath = env->NewStringUTF(path);
+    env->CallVoidMethod(nat->me,
+                        method_onInputDeviceConnectionResult,
+                        jPath,
+                        result);
+    env->DeleteLocalRef(jPath);
+    free(user);
+}
+
+void onPanDeviceConnectionResult(DBusMessage *msg, void *user, void *n) {
+    LOGV("%s", __FUNCTION__);
+
+    native_data_t *nat = (native_data_t *)n;
+    const char *path = (const char *)user;
+    DBusError err;
+    dbus_error_init(&err);
+    JNIEnv *env;
+    nat->vm->GetEnv((void**)&env, nat->envVer);
+
+    jint result = PAN_OPERATION_SUCCESS;
+    if (dbus_set_error_from_message(&err, msg)) {
+        if (!strcmp(err.name, BLUEZ_ERROR_IFC ".ConnectionAttemptFailed")) {
+            result = PAN_CONNECT_FAILED_ATTEMPT_FAILED;
+        } else if (!strcmp(err.name, BLUEZ_ERROR_IFC ".Failed")) {
+            // TODO():This is flaky, need to change Bluez to add new error codes
+            if (!strcmp(err.message, "Device already connected")) {
+                result = PAN_CONNECT_FAILED_ALREADY_CONNECTED;
+            } else if (!strcmp(err.message, "Device not connected")) {
+                result = PAN_DISCONNECT_FAILED_NOT_CONNECTED;
+            } else {
+                result = PAN_OPERATION_GENERIC_FAILURE;
+            }
+        } else {
+            result = PAN_OPERATION_GENERIC_FAILURE;
+        }
+        LOG_AND_FREE_DBUS_ERROR(&err);
+    }
+
+    LOGV("... Pan Device Path = %s, result = %d", path, result);
+    jstring jPath = env->NewStringUTF(path);
+    env->CallVoidMethod(nat->me,
+                        method_onPanDeviceConnectionResult,
+                        jPath,
+                        result);
+    env->DeleteLocalRef(jPath);
+    free(user);
+}
+
+void onHealthDeviceConnectionResult(DBusMessage *msg, void *user, void *n) {
+    LOGV("%s", __FUNCTION__);
+
+    native_data_t *nat = (native_data_t *)n;
+    DBusError err;
+    dbus_error_init(&err);
+    JNIEnv *env;
+    nat->vm->GetEnv((void**)&env, nat->envVer);
+
+    jint result = HEALTH_OPERATION_SUCCESS;
+    if (dbus_set_error_from_message(&err, msg)) {
+        if (!strcmp(err.name, BLUEZ_ERROR_IFC ".InvalidArgs")) {
+            result = HEALTH_OPERATION_INVALID_ARGS;
+        } else if (!strcmp(err.name, BLUEZ_ERROR_IFC ".HealthError")) {
+            result = HEALTH_OPERATION_ERROR;
+        } else if (!strcmp(err.name, BLUEZ_ERROR_IFC ".NotFound")) {
+            result = HEALTH_OPERATION_NOT_FOUND;
+        } else if (!strcmp(err.name, BLUEZ_ERROR_IFC ".NotAllowed")) {
+            result = HEALTH_OPERATION_NOT_ALLOWED;
+        } else {
+            result = HEALTH_OPERATION_GENERIC_FAILURE;
+        }
+        LOG_AND_FREE_DBUS_ERROR(&err);
+    }
+
+    jint code = *(int *) user;
+    LOGV("... Health Device Code = %d, result = %d", code, result);
+    env->CallVoidMethod(nat->me,
+                        method_onHealthDeviceConnectionResult,
+                        code,
+                        result);
     free(user);
 }
 #endif

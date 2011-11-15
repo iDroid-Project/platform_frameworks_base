@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009 The Android Open Source Project
+ * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,65 +26,74 @@ namespace renderscript {
 
 
 // An element is a group of Components that occupies one cell in a structure.
-class Mesh : public ObjectBase
-{
+class Mesh : public ObjectBase {
 public:
     Mesh(Context *);
+    Mesh(Context *, uint32_t vertexBuffersCount, uint32_t primitivesCount);
     ~Mesh();
 
-    struct Verticies_t
-    {
-        Allocation ** mAllocations;
-        uint32_t mAllocationCount;
-
-        size_t mVertexDataSize;
-
-        size_t mOffsetCoord;
-        size_t mOffsetTex;
-        size_t mOffsetNorm;
-
-        size_t mSizeCoord;
-        size_t mSizeTex;
-        size_t mSizeNorm;
-
-        uint32_t mBufferObject;
+    // Either mIndexBuffer, mPrimitiveBuffer or both could have a NULL reference
+    // If both are null, mPrimitive only would be used to render the mesh
+    struct Primitive_t {
+        ObjectBaseRef<Allocation> mIndexBuffer;
+        RsPrimitive mPrimitive;
     };
 
-    struct Primitive_t
-    {
-        RsPrimitive mType;
-        Verticies_t *mVerticies;
+    virtual void serialize(OStream *stream) const;
+    virtual RsA3DClassID getClassId() const { return RS_A3D_CLASS_ID_MESH; }
+    static Mesh *createFromStream(Context *rsc, IStream *stream);
+    void init();
 
-        uint32_t mIndexCount;
-        uint16_t *mIndicies;
+    struct Hal {
+        mutable void *drv;
 
-        uint32_t mRestartCounts;
-        uint16_t *mRestarts;
+        struct State {
+            // Contains vertex data
+            // Position, normal, texcoord, etc could either be strided in one allocation
+            // of provided separetely in multiple ones
+            ObjectBaseRef<Allocation> *vertexBuffers;
+            uint32_t vertexBuffersCount;
+
+            Primitive_t ** primitives;
+            uint32_t primitivesCount;
+        };
+        State state;
     };
+    Hal mHal;
 
-    Verticies_t * mVerticies;
-    uint32_t mVerticiesCount;
+    void setVertexBuffer(Allocation *vb, uint32_t index) {
+        mHal.state.vertexBuffers[index].set(vb);
+    }
 
-    Primitive_t ** mPrimitives;
-    uint32_t mPrimitivesCount;
+    void setPrimitive(Allocation *idx, RsPrimitive prim, uint32_t index) {
+        mHal.state.primitives[index]->mIndexBuffer.set(idx);
+        mHal.state.primitives[index]->mPrimitive = prim;
+    }
 
+    void render(Context *) const;
+    void renderPrimitive(Context *, uint32_t primIndex) const;
+    void renderPrimitiveRange(Context *, uint32_t primIndex, uint32_t start, uint32_t len) const;
+    void uploadAll(Context *);
 
-
-    void analyzeElement();
+    // Bounding volumes
+    float mBBoxMin[3];
+    float mBBoxMax[3];
+    void computeBBox();
 protected:
+    bool mInitialized;
 };
 
-class MeshContext
-{
+class MeshContext {
 public:
-    MeshContext();
-    ~MeshContext();
-
+    MeshContext() {
+    }
+    ~MeshContext() {
+    }
 };
 
+}
+}
+#endif //ANDROID_RS_MESH_H
 
-}
-}
-#endif //ANDROID_RS_TRIANGLE_MESH_H
 
 

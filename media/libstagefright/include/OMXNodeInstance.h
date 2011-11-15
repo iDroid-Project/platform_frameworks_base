@@ -49,8 +49,20 @@ struct OMXNodeInstance {
     status_t getConfig(OMX_INDEXTYPE index, void *params, size_t size);
     status_t setConfig(OMX_INDEXTYPE index, const void *params, size_t size);
 
+    status_t getState(OMX_STATETYPE* state);
+
+    status_t enableGraphicBuffers(OMX_U32 portIndex, OMX_BOOL enable);
+
+    status_t getGraphicBufferUsage(OMX_U32 portIndex, OMX_U32* usage);
+
+    status_t storeMetaDataInBuffers(OMX_U32 portIndex, OMX_BOOL enable);
+
     status_t useBuffer(
             OMX_U32 portIndex, const sp<IMemory> &params,
+            OMX::buffer_id *buffer);
+
+    status_t useGraphicBuffer(
+            OMX_U32 portIndex, const sp<GraphicBuffer> &graphicBuffer,
             OMX::buffer_id *buffer);
 
     status_t allocateBuffer(
@@ -99,7 +111,9 @@ private:
     void addActiveBuffer(OMX_U32 portIndex, OMX::buffer_id id);
     void removeActiveBuffer(OMX_U32 portIndex, OMX::buffer_id id);
     void freeActiveBuffers();
-
+    status_t useGraphicBuffer2_l(
+            OMX_U32 portIndex, const sp<GraphicBuffer> &graphicBuffer,
+            OMX::buffer_id *buffer);
     static OMX_ERRORTYPE OnEvent(
             OMX_IN OMX_HANDLETYPE hComponent,
             OMX_IN OMX_PTR pAppData,
@@ -125,4 +139,3 @@ private:
 }  // namespace android
 
 #endif  // OMX_NODE_INSTANCE_H_
-

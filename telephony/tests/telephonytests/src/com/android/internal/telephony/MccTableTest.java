@@ -28,7 +28,7 @@ public class MccTableTest extends AndroidTestCase {
 
     @SmallTest
     public void testTimeZone() throws Exception {
-        assertEquals(MccTable.defaultTimeZoneForMcc(208), "Europe/Paris");
+        assertEquals(MccTable.defaultTimeZoneForMcc(208), "ECT");
         assertEquals(MccTable.defaultTimeZoneForMcc(232), "Europe/Vienna");
         assertEquals(MccTable.defaultTimeZoneForMcc(655), "Africa/Johannesburg");
         assertEquals(MccTable.defaultTimeZoneForMcc(440), "Asia/Tokyo");
@@ -71,17 +71,5 @@ public class MccTableTest extends AndroidTestCase {
         assertEquals(MccTable.smallestDigitsMccForMnc(352), 2);  // sd not defined, hence default
         assertEquals(MccTable.smallestDigitsMccForMnc(0), 2);    // mcc not defined, hence default
         assertEquals(MccTable.smallestDigitsMccForMnc(2000), 2); // mcc not defined, hence default
-    }
-
-    @SmallTest
-    public void testWifi() throws Exception {
-        assertEquals(MccTable.wifiChannelsForMcc(262), 13);
-        assertEquals(MccTable.wifiChannelsForMcc(234), 13);
-        assertEquals(MccTable.wifiChannelsForMcc(505), 11);
-        assertEquals(MccTable.wifiChannelsForMcc(313), 11);
-        assertEquals(MccTable.wifiChannelsForMcc(330), 0);  // wifi not defined, hence default
-        assertEquals(MccTable.wifiChannelsForMcc(0), 0);    // mcc not defined, hence default
-        assertEquals(MccTable.wifiChannelsForMcc(2000), 0); // mcc not defined, hence default
-
     }
 }

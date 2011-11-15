@@ -20,6 +20,7 @@ import android.content.res.AssetFileDescriptor;
 import android.database.BulkCursorNative;
 import android.database.BulkCursorToCursorAdaptor;
 import android.database.Cursor;
+import android.database.CursorToBulkCursorAdaptor;
 import android.database.CursorWindow;
 import android.database.DatabaseUtils;
 import android.database.IBulkCursor;
@@ -65,6 +66,13 @@ abstract public class ContentProviderNative extends Binder implements IContentPr
         return new ContentProviderProxy(obj);
     }
 
+    /**
+     * Gets the name of the content provider.
+     * Should probably be part of the {@link IContentProvider} interface.
+     * @return The content provider name.
+     */
+    public abstract String getProviderName();
+
     @Override
     public boolean onTransact(int code, Parcel data, Parcel reply, int flags)
             throws RemoteException {
@@ -98,28 +106,26 @@ abstract public class ContentProviderNative extends Binder implements IContentPr
                     }
 
                     String sortOrder = data.readString();
-                    IContentObserver observer = IContentObserver.Stub.
-                        asInterface(data.readStrongBinder());
-                    CursorWindow window = CursorWindow.CREATOR.createFromParcel(data);
+                    IContentObserver observer = IContentObserver.Stub.asInterface(
+                            data.readStrongBinder());
 
-                    // Flag for whether caller wants the number of
-                    // rows in the cursor and the position of the
-                    // "_id" column index (or -1 if non-existent)
-                    // Only to be returned if binder != null.
-                    boolean wantsCursorMetadata = data.readInt() != 0;
+                    Cursor cursor = query(url, projection, selection, selectionArgs, sortOrder);
+                    if (cursor != null) {
+                        CursorToBulkCursorAdaptor adaptor = new CursorToBulkCursorAdaptor(
+                                cursor, observer, getProviderName());
+                        final IBinder binder = adaptor.asBinder();
+                        final int count = adaptor.count();
+                        final int index = BulkCursorToCursorAdaptor.findRowIdColumnIndex(
+                                adaptor.getColumnNames());
+                        final boolean wantsAllOnMoveCalls = adaptor.getWantsAllOnMoveCalls();
 
-                    IBulkCursor bulkCursor = bulkQuery(url, projection, selection,
-                            selectionArgs, sortOrder, observer, window);
-                    reply.writeNoException();
-                    if (bulkCursor != null) {
-                        reply.writeStrongBinder(bulkCursor.asBinder());
-
-                        if (wantsCursorMetadata) {
-                            reply.writeInt(bulkCursor.count());
-                            reply.writeInt(BulkCursorToCursorAdaptor.findRowIdColumnIndex(
-                                bulkCursor.getColumnNames()));
-                        }
+                        reply.writeNoException();
+                        reply.writeStrongBinder(binder);
+                        reply.writeInt(count);
+                        reply.writeInt(index);
+                        reply.writeInt(wantsAllOnMoveCalls ? 1 : 0);
                     } else {
+                        reply.writeNoException();
                         reply.writeStrongBinder(null);
                     }
 
@@ -257,6 +263,38 @@ abstract public class ContentProviderNative extends Binder implements IContentPr
                     reply.writeBundle(responseBundle);
                     return true;
                 }
+
+                case GET_STREAM_TYPES_TRANSACTION:
+                {
+                    data.enforceInterface(IContentProvider.descriptor);
+                    Uri url = Uri.CREATOR.createFromParcel(data);
+                    String mimeTypeFilter = data.readString();
+                    String[] types = getStreamTypes(url, mimeTypeFilter);
+                    reply.writeNoException();
+                    reply.writeStringArray(types);
+
+                    return true;
+                }
+
+                case OPEN_TYPED_ASSET_FILE_TRANSACTION:
+                {
+                    data.enforceInterface(IContentProvider.descriptor);
+                    Uri url = Uri.CREATOR.createFromParcel(data);
+                    String mimeType = data.readString();
+                    Bundle opts = data.readBundle();
+
+                    AssetFileDescriptor fd;
+                    fd = openTypedAssetFile(url, mimeType, opts);
+                    reply.writeNoException();
+                    if (fd != null) {
+                        reply.writeInt(1);
+                        fd.writeToParcel(reply,
+                                Parcelable.PARCELABLE_WRITE_RETURN_VALUE);
+                    } else {
+                        reply.writeInt(0);
+                    }
+                    return true;
+                }
             }
         } catch (Exception e) {
             DatabaseUtils.writeExceptionToParcel(reply, e);
@@ -285,287 +323,301 @@ final class ContentProviderProxy implements IContentProvider
         return mRemote;
     }
 
-    // Like bulkQuery() but sets up provided 'adaptor' if not null.
-    private IBulkCursor bulkQueryInternal(
-        Uri url, String[] projection,
-        String selection, String[] selectionArgs, String sortOrder,
-        IContentObserver observer, CursorWindow window,
-        BulkCursorToCursorAdaptor adaptor) throws RemoteException {
-        Parcel data = Parcel.obtain();
-        Parcel reply = Parcel.obtain();
-
-        data.writeInterfaceToken(IContentProvider.descriptor);
-
-        url.writeToParcel(data, 0);
-        int length = 0;
-        if (projection != null) {
-            length = projection.length;
-        }
-        data.writeInt(length);
-        for (int i = 0; i < length; i++) {
-            data.writeString(projection[i]);
-        }
-        data.writeString(selection);
-        if (selectionArgs != null) {
-            length = selectionArgs.length;
-        } else {
-            length = 0;
-        }
-        data.writeInt(length);
-        for (int i = 0; i < length; i++) {
-            data.writeString(selectionArgs[i]);
-        }
-        data.writeString(sortOrder);
-        data.writeStrongBinder(observer.asBinder());
-        window.writeToParcel(data, 0);
-
-        // Flag for whether or not we want the number of rows in the
-        // cursor and the position of the "_id" column index (or -1 if
-        // non-existent).  Only to be returned if binder != null.
-        final boolean wantsCursorMetadata = (adaptor != null);
-        data.writeInt(wantsCursorMetadata ? 1 : 0);
-
-        mRemote.transact(IContentProvider.QUERY_TRANSACTION, data, reply, 0);
-
-        DatabaseUtils.readExceptionFromParcel(reply);
-
-        IBulkCursor bulkCursor = null;
-        IBinder bulkCursorBinder = reply.readStrongBinder();
-        if (bulkCursorBinder != null) {
-            bulkCursor = BulkCursorNative.asInterface(bulkCursorBinder);
-
-            if (wantsCursorMetadata) {
-                int rowCount = reply.readInt();
-                int idColumnPosition = reply.readInt();
-                if (bulkCursor != null) {
-                    adaptor.set(bulkCursor, rowCount, idColumnPosition);
-                }
-            }
-        }
-
-        data.recycle();
-        reply.recycle();
-
-        return bulkCursor;
-    }
-
-    public IBulkCursor bulkQuery(Uri url, String[] projection,
-            String selection, String[] selectionArgs, String sortOrder, IContentObserver observer,
-            CursorWindow window) throws RemoteException {
-        return bulkQueryInternal(
-            url, projection, selection, selectionArgs, sortOrder,
-            observer, window,
-            null /* BulkCursorToCursorAdaptor */);
-    }
-
     public Cursor query(Uri url, String[] projection, String selection,
             String[] selectionArgs, String sortOrder) throws RemoteException {
-        //TODO make a pool of windows so we can reuse memory dealers
-        CursorWindow window = new CursorWindow(false /* window will be used remotely */);
         BulkCursorToCursorAdaptor adaptor = new BulkCursorToCursorAdaptor();
-        IBulkCursor bulkCursor = bulkQueryInternal(
-            url, projection, selection, selectionArgs, sortOrder,
-            adaptor.getObserver(), window,
-            adaptor);
-        if (bulkCursor == null) {
-            return null;
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(IContentProvider.descriptor);
+
+            url.writeToParcel(data, 0);
+            int length = 0;
+            if (projection != null) {
+                length = projection.length;
+            }
+            data.writeInt(length);
+            for (int i = 0; i < length; i++) {
+                data.writeString(projection[i]);
+            }
+            data.writeString(selection);
+            if (selectionArgs != null) {
+                length = selectionArgs.length;
+            } else {
+                length = 0;
+            }
+            data.writeInt(length);
+            for (int i = 0; i < length; i++) {
+                data.writeString(selectionArgs[i]);
+            }
+            data.writeString(sortOrder);
+            data.writeStrongBinder(adaptor.getObserver().asBinder());
+
+            mRemote.transact(IContentProvider.QUERY_TRANSACTION, data, reply, 0);
+
+            DatabaseUtils.readExceptionFromParcel(reply);
+
+            IBulkCursor bulkCursor = BulkCursorNative.asInterface(reply.readStrongBinder());
+            if (bulkCursor != null) {
+                int rowCount = reply.readInt();
+                int idColumnPosition = reply.readInt();
+                boolean wantsAllOnMoveCalls = reply.readInt() != 0;
+                adaptor.initialize(bulkCursor, rowCount, idColumnPosition, wantsAllOnMoveCalls);
+            } else {
+                adaptor.close();
+                adaptor = null;
+            }
+            return adaptor;
+        } catch (RemoteException ex) {
+            adaptor.close();
+            throw ex;
+        } catch (RuntimeException ex) {
+            adaptor.close();
+            throw ex;
+        } finally {
+            data.recycle();
+            reply.recycle();
         }
-        return adaptor;
     }
 
     public String getType(Uri url) throws RemoteException
     {
         Parcel data = Parcel.obtain();
         Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(IContentProvider.descriptor);
 
-        data.writeInterfaceToken(IContentProvider.descriptor);
+            url.writeToParcel(data, 0);
 
-        url.writeToParcel(data, 0);
+            mRemote.transact(IContentProvider.GET_TYPE_TRANSACTION, data, reply, 0);
 
-        mRemote.transact(IContentProvider.GET_TYPE_TRANSACTION, data, reply, 0);
-
-        DatabaseUtils.readExceptionFromParcel(reply);
-        String out = reply.readString();
-
-        data.recycle();
-        reply.recycle();
-
-        return out;
+            DatabaseUtils.readExceptionFromParcel(reply);
+            String out = reply.readString();
+            return out;
+        } finally {
+            data.recycle();
+            reply.recycle();
+        }
     }
 
     public Uri insert(Uri url, ContentValues values) throws RemoteException
     {
         Parcel data = Parcel.obtain();
         Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(IContentProvider.descriptor);
 
-        data.writeInterfaceToken(IContentProvider.descriptor);
+            url.writeToParcel(data, 0);
+            values.writeToParcel(data, 0);
 
-        url.writeToParcel(data, 0);
-        values.writeToParcel(data, 0);
+            mRemote.transact(IContentProvider.INSERT_TRANSACTION, data, reply, 0);
 
-        mRemote.transact(IContentProvider.INSERT_TRANSACTION, data, reply, 0);
-
-        DatabaseUtils.readExceptionFromParcel(reply);
-        Uri out = Uri.CREATOR.createFromParcel(reply);
-
-        data.recycle();
-        reply.recycle();
-
-        return out;
+            DatabaseUtils.readExceptionFromParcel(reply);
+            Uri out = Uri.CREATOR.createFromParcel(reply);
+            return out;
+        } finally {
+            data.recycle();
+            reply.recycle();
+        }
     }
 
     public int bulkInsert(Uri url, ContentValues[] values) throws RemoteException {
         Parcel data = Parcel.obtain();
         Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(IContentProvider.descriptor);
 
-        data.writeInterfaceToken(IContentProvider.descriptor);
+            url.writeToParcel(data, 0);
+            data.writeTypedArray(values, 0);
 
-        url.writeToParcel(data, 0);
-        data.writeTypedArray(values, 0);
+            mRemote.transact(IContentProvider.BULK_INSERT_TRANSACTION, data, reply, 0);
 
-        mRemote.transact(IContentProvider.BULK_INSERT_TRANSACTION, data, reply, 0);
-
-        DatabaseUtils.readExceptionFromParcel(reply);
-        int count = reply.readInt();
-
-        data.recycle();
-        reply.recycle();
-
-        return count;
+            DatabaseUtils.readExceptionFromParcel(reply);
+            int count = reply.readInt();
+            return count;
+        } finally {
+            data.recycle();
+            reply.recycle();
+        }
     }
 
     public ContentProviderResult[] applyBatch(ArrayList<ContentProviderOperation> operations)
             throws RemoteException, OperationApplicationException {
         Parcel data = Parcel.obtain();
         Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(IContentProvider.descriptor);
+            data.writeInt(operations.size());
+            for (ContentProviderOperation operation : operations) {
+                operation.writeToParcel(data, 0);
+            }
+            mRemote.transact(IContentProvider.APPLY_BATCH_TRANSACTION, data, reply, 0);
 
-        data.writeInterfaceToken(IContentProvider.descriptor);
-        data.writeInt(operations.size());
-        for (ContentProviderOperation operation : operations) {
-            operation.writeToParcel(data, 0);
+            DatabaseUtils.readExceptionWithOperationApplicationExceptionFromParcel(reply);
+            final ContentProviderResult[] results =
+                    reply.createTypedArray(ContentProviderResult.CREATOR);
+            return results;
+        } finally {
+            data.recycle();
+            reply.recycle();
         }
-        mRemote.transact(IContentProvider.APPLY_BATCH_TRANSACTION, data, reply, 0);
-
-        DatabaseUtils.readExceptionWithOperationApplicationExceptionFromParcel(reply);
-        final ContentProviderResult[] results =
-                reply.createTypedArray(ContentProviderResult.CREATOR);
-
-        data.recycle();
-        reply.recycle();
-
-        return results;
     }
 
     public int delete(Uri url, String selection, String[] selectionArgs)
             throws RemoteException {
         Parcel data = Parcel.obtain();
         Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(IContentProvider.descriptor);
 
-        data.writeInterfaceToken(IContentProvider.descriptor);
+            url.writeToParcel(data, 0);
+            data.writeString(selection);
+            data.writeStringArray(selectionArgs);
 
-        url.writeToParcel(data, 0);
-        data.writeString(selection);
-        data.writeStringArray(selectionArgs);
+            mRemote.transact(IContentProvider.DELETE_TRANSACTION, data, reply, 0);
 
-        mRemote.transact(IContentProvider.DELETE_TRANSACTION, data, reply, 0);
-
-        DatabaseUtils.readExceptionFromParcel(reply);
-        int count = reply.readInt();
-
-        data.recycle();
-        reply.recycle();
-
-        return count;
+            DatabaseUtils.readExceptionFromParcel(reply);
+            int count = reply.readInt();
+            return count;
+        } finally {
+            data.recycle();
+            reply.recycle();
+        }
     }
 
     public int update(Uri url, ContentValues values, String selection,
             String[] selectionArgs) throws RemoteException {
         Parcel data = Parcel.obtain();
         Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(IContentProvider.descriptor);
 
-        data.writeInterfaceToken(IContentProvider.descriptor);
+            url.writeToParcel(data, 0);
+            values.writeToParcel(data, 0);
+            data.writeString(selection);
+            data.writeStringArray(selectionArgs);
 
-        url.writeToParcel(data, 0);
-        values.writeToParcel(data, 0);
-        data.writeString(selection);
-        data.writeStringArray(selectionArgs);
+            mRemote.transact(IContentProvider.UPDATE_TRANSACTION, data, reply, 0);
 
-        mRemote.transact(IContentProvider.UPDATE_TRANSACTION, data, reply, 0);
-
-        DatabaseUtils.readExceptionFromParcel(reply);
-        int count = reply.readInt();
-
-        data.recycle();
-        reply.recycle();
-
-        return count;
+            DatabaseUtils.readExceptionFromParcel(reply);
+            int count = reply.readInt();
+            return count;
+        } finally {
+            data.recycle();
+            reply.recycle();
+        }
     }
 
     public ParcelFileDescriptor openFile(Uri url, String mode)
             throws RemoteException, FileNotFoundException {
         Parcel data = Parcel.obtain();
         Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(IContentProvider.descriptor);
 
-        data.writeInterfaceToken(IContentProvider.descriptor);
+            url.writeToParcel(data, 0);
+            data.writeString(mode);
 
-        url.writeToParcel(data, 0);
-        data.writeString(mode);
+            mRemote.transact(IContentProvider.OPEN_FILE_TRANSACTION, data, reply, 0);
 
-        mRemote.transact(IContentProvider.OPEN_FILE_TRANSACTION, data, reply, 0);
-
-        DatabaseUtils.readExceptionWithFileNotFoundExceptionFromParcel(reply);
-        int has = reply.readInt();
-        ParcelFileDescriptor fd = has != 0 ? reply.readFileDescriptor() : null;
-
-        data.recycle();
-        reply.recycle();
-
-        return fd;
+            DatabaseUtils.readExceptionWithFileNotFoundExceptionFromParcel(reply);
+            int has = reply.readInt();
+            ParcelFileDescriptor fd = has != 0 ? reply.readFileDescriptor() : null;
+            return fd;
+        } finally {
+            data.recycle();
+            reply.recycle();
+        }
     }
 
     public AssetFileDescriptor openAssetFile(Uri url, String mode)
             throws RemoteException, FileNotFoundException {
         Parcel data = Parcel.obtain();
         Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(IContentProvider.descriptor);
 
-        data.writeInterfaceToken(IContentProvider.descriptor);
+            url.writeToParcel(data, 0);
+            data.writeString(mode);
 
-        url.writeToParcel(data, 0);
-        data.writeString(mode);
+            mRemote.transact(IContentProvider.OPEN_ASSET_FILE_TRANSACTION, data, reply, 0);
 
-        mRemote.transact(IContentProvider.OPEN_ASSET_FILE_TRANSACTION, data, reply, 0);
-
-        DatabaseUtils.readExceptionWithFileNotFoundExceptionFromParcel(reply);
-        int has = reply.readInt();
-        AssetFileDescriptor fd = has != 0
-                ? AssetFileDescriptor.CREATOR.createFromParcel(reply) : null;
-
-        data.recycle();
-        reply.recycle();
-
-        return fd;
+            DatabaseUtils.readExceptionWithFileNotFoundExceptionFromParcel(reply);
+            int has = reply.readInt();
+            AssetFileDescriptor fd = has != 0
+                    ? AssetFileDescriptor.CREATOR.createFromParcel(reply) : null;
+            return fd;
+        } finally {
+            data.recycle();
+            reply.recycle();
+        }
     }
 
     public Bundle call(String method, String request, Bundle args)
             throws RemoteException {
         Parcel data = Parcel.obtain();
         Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(IContentProvider.descriptor);
 
-        data.writeInterfaceToken(IContentProvider.descriptor);
+            data.writeString(method);
+            data.writeString(request);
+            data.writeBundle(args);
 
-        data.writeString(method);
-        data.writeString(request);
-        data.writeBundle(args);
+            mRemote.transact(IContentProvider.CALL_TRANSACTION, data, reply, 0);
 
-        mRemote.transact(IContentProvider.CALL_TRANSACTION, data, reply, 0);
+            DatabaseUtils.readExceptionFromParcel(reply);
+            Bundle bundle = reply.readBundle();
+            return bundle;
+        } finally {
+            data.recycle();
+            reply.recycle();
+        }
+    }
 
-        DatabaseUtils.readExceptionFromParcel(reply);
-        Bundle bundle = reply.readBundle();
+    public String[] getStreamTypes(Uri url, String mimeTypeFilter) throws RemoteException
+    {
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(IContentProvider.descriptor);
 
-        data.recycle();
-        reply.recycle();
+            url.writeToParcel(data, 0);
+            data.writeString(mimeTypeFilter);
 
-        return bundle;
+            mRemote.transact(IContentProvider.GET_STREAM_TYPES_TRANSACTION, data, reply, 0);
+
+            DatabaseUtils.readExceptionFromParcel(reply);
+            String[] out = reply.createStringArray();
+            return out;
+        } finally {
+            data.recycle();
+            reply.recycle();
+        }
+    }
+
+    public AssetFileDescriptor openTypedAssetFile(Uri url, String mimeType, Bundle opts)
+            throws RemoteException, FileNotFoundException {
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(IContentProvider.descriptor);
+
+            url.writeToParcel(data, 0);
+            data.writeString(mimeType);
+            data.writeBundle(opts);
+
+            mRemote.transact(IContentProvider.OPEN_TYPED_ASSET_FILE_TRANSACTION, data, reply, 0);
+
+            DatabaseUtils.readExceptionWithFileNotFoundExceptionFromParcel(reply);
+            int has = reply.readInt();
+            AssetFileDescriptor fd = has != 0
+                    ? AssetFileDescriptor.CREATOR.createFromParcel(reply) : null;
+            return fd;
+        } finally {
+            data.recycle();
+            reply.recycle();
+        }
     }
 
     private IBinder mRemote;

@@ -39,15 +39,19 @@
 static char cmdline_buf[16384] = "(unknown)";
 static const char *dump_traces_path = NULL;
 
+static char screenshot_path[PATH_MAX] = "";
+
 /* dumps the current system state to stdout */
 static void dumpstate() {
     time_t now = time(NULL);
     char build[PROPERTY_VALUE_MAX], fingerprint[PROPERTY_VALUE_MAX];
     char radio[PROPERTY_VALUE_MAX], bootloader[PROPERTY_VALUE_MAX];
     char network[PROPERTY_VALUE_MAX], date[80];
+    char build_type[PROPERTY_VALUE_MAX];
 
     property_get("ro.build.display.id", build, "(unknown)");
     property_get("ro.build.fingerprint", fingerprint, "(unknown)");
+    property_get("ro.build.type", build_type, "(unknown)");
     property_get("ro.baseband", radio, "(unknown)");
     property_get("ro.bootloader", bootloader, "(unknown)");
     property_get("gsm.operator.alpha", network, "(unknown)");
@@ -68,6 +72,7 @@ static void dumpstate() {
     printf("Command line: %s\n", strtok(cmdline_buf, "\n"));
     printf("\n");
 
+    run_command("UPTIME", 10, "uptime", NULL);
     dump_file("MEMORY INFO", "/proc/meminfo");
     run_command("CPU INFO", 10, "top", "-n", "1", "-d", "1", "-m", "30", "-t", NULL);
     run_command("PROCRANK", 20, "procrank", NULL);
@@ -75,8 +80,16 @@ static void dumpstate() {
     dump_file("VMALLOC INFO", "/proc/vmallocinfo");
     dump_file("SLAB INFO", "/proc/slabinfo");
     dump_file("ZONEINFO", "/proc/zoneinfo");
+    dump_file("PAGETYPEINFO", "/proc/pagetypeinfo");
+    dump_file("BUDDYINFO", "/proc/buddyinfo");
 
-    run_command("SYSTEM LOG", 20, "logcat", "-v", "time", "-d", "*:v", NULL);
+    if (screenshot_path[0]) {
+        LOGI("taking screenshot\n");
+        run_command(NULL, 5, "su", "root", "screenshot", screenshot_path, NULL);
+        LOGI("wrote screenshot: %s\n", screenshot_path);
+    }
+
+    run_command("SYSTEM LOG", 20, "logcat", "-v", "threadtime", "-d", "*:v", NULL);
 
     /* show the traces we collected in main(), if that was done */
     if (dump_traces_path != NULL) {
@@ -96,16 +109,57 @@ static void dumpstate() {
     }
 
     // dump_file("EVENT LOG TAGS", "/etc/event-log-tags");
-    run_command("EVENT LOG", 20, "logcat", "-b", "events", "-v", "time", "-d", "*:v", NULL);
-    run_command("RADIO LOG", 20, "logcat", "-b", "radio", "-v", "time", "-d", "*:v", NULL);
+    run_command("EVENT LOG", 20, "logcat", "-b", "events", "-v", "threadtime", "-d", "*:v", NULL);
+    run_command("RADIO LOG", 20, "logcat", "-b", "radio", "-v", "threadtime", "-d", "*:v", NULL);
 
-    run_command("NETWORK INTERFACES", 10, "netcfg", NULL);
+    run_command("NETWORK INTERFACES", 10, "su", "root", "netcfg", NULL);
+    dump_file("NETWORK DEV INFO", "/proc/net/dev");
+    dump_file("QTAGUID NETWORK INTERFACES INFO", "/proc/net/xt_qtaguid/iface_stat_all");
+    dump_file("QTAGUID CTRL INFO", "/proc/net/xt_qtaguid/ctrl");
+    run_command("QTAGUID STATS INFO", 10, "su", "root", "cat", "/proc/net/xt_qtaguid/stats", NULL);
+
     dump_file("NETWORK ROUTES", "/proc/net/route");
+    dump_file("NETWORK ROUTES IPV6", "/proc/net/ipv6_route");
     dump_file("ARP CACHE", "/proc/net/arp");
+    run_command("IPTABLES", 10, "su", "root", "iptables", "-L", "-nvx", NULL);
+    run_command("IP6TABLES", 10, "su", "root", "ip6tables", "-L", "-nvx", NULL);
+    run_command("IPTABLE NAT", 10, "su", "root", "iptables", "-t", "nat", "-L", "-n", NULL);
+    run_command("IPT6ABLE NAT", 10, "su", "root", "ip6tables", "-t", "nat", "-L", "-n", NULL);
 
+    run_command("WIFI NETWORKS", 20,
+            "su", "root", "wpa_cli", "list_networks", NULL);
+
+    property_get("dhcp.wlan0.gateway", network, "");
+    if (network[0])
+        run_command("PING GATEWAY", 10, "su", "root", "ping", "-c", "3", "-i", ".5", network, NULL);
+    property_get("dhcp.wlan0.dns1", network, "");
+    if (network[0])
+        run_command("PING DNS1", 10, "su", "root", "ping", "-c", "3", "-i", ".5", network, NULL);
+    property_get("dhcp.wlan0.dns2", network, "");
+    if (network[0])
+        run_command("PING DNS2", 10, "su", "root", "ping", "-c", "3", "-i", ".5", network, NULL);
 #ifdef FWDUMP_bcm4329
-    run_command("DUMP WIFI FIRMWARE LOG", 60,
-            "su", "root", "dhdutil", "-i", "eth0", "upload", "/data/local/tmp/wlan_crash.dump", NULL);
+    run_command("DUMP WIFI STATUS", 20,
+            "su", "root", "dhdutil", "-i", "wlan0", "dump", NULL);
+    run_command("DUMP WIFI INTERNAL COUNTERS", 20,
+            "su", "root", "wlutil", "counters", NULL);
+#endif
+
+#ifdef BROKEN_VRIL_IS_FIXED_B_4442803
+   char ril_dumpstate_timeout[PROPERTY_VALUE_MAX] = {0};
+    property_get("ril.dumpstate.timeout", ril_dumpstate_timeout, "30");
+    if (strnlen(ril_dumpstate_timeout, PROPERTY_VALUE_MAX - 1) > 0) {
+        if (0 == strncmp(build_type, "user", PROPERTY_VALUE_MAX - 1)) {
+            // su does not exist on user builds, so try running without it.
+            // This way any implementations of vril-dump that do not require
+            // root can run on user builds.
+            run_command("DUMP VENDOR RIL LOGS", atoi(ril_dumpstate_timeout),
+                    "vril-dump", NULL);
+        } else {
+            run_command("DUMP VENDOR RIL LOGS", atoi(ril_dumpstate_timeout),
+                    "su", "root", "vril-dump", NULL);
+        }
+    }
 #endif
 
     print_properties();
@@ -128,7 +182,7 @@ static void dumpstate() {
     dump_file("BINDER STATS", "/sys/kernel/debug/binder/stats");
     dump_file("BINDER STATE", "/sys/kernel/debug/binder/state");
 
-    run_command("FILESYSTEMS & FREE SPACE", 10, "df", NULL);
+    run_command("FILESYSTEMS & FREE SPACE", 10, "su", "root", "df", NULL);
 
     dump_file("PACKAGE SETTINGS", "/data/system/packages.xml");
     dump_file("PACKAGE UID ERRORS", "/data/system/uiderrors.txt");
@@ -153,6 +207,19 @@ static void dumpstate() {
     dump_file(NULL, "/sys/class/leds/lcd-backlight/registers");
     printf("\n");
 
+    run_command("LIST OF OPEN FILES", 10, "su", "root", "lsof", NULL);
+
+    for_each_pid(do_showmap, "SMAPS OF ALL PROCESSES");
+
+#ifdef BOARD_HAS_DUMPSTATE
+    printf("========================================================\n");
+    printf("== Board\n");
+    printf("========================================================\n");
+
+    dumpstate_board();
+    printf("\n");
+#endif
+
     printf("========================================================\n");
     printf("== Android Framework Services\n");
     printf("========================================================\n");
@@ -161,21 +228,44 @@ static void dumpstate() {
        to increase its timeout.  we really need to do the timeouts in
        dumpsys itself... */
     run_command("DUMPSYS", 60, "dumpsys", NULL);
+
+    printf("========================================================\n");
+    printf("== Running Application Activities\n");
+    printf("========================================================\n");
+
+    run_command("APP ACTIVITIES", 30, "dumpsys", "activity", "all", NULL);
+
+    printf("========================================================\n");
+    printf("== Running Application Services\n");
+    printf("========================================================\n");
+
+    run_command("APP SERVICES", 30, "dumpsys", "activity", "service", "all", NULL);
+
+    printf("========================================================\n");
+    printf("== dumpstate: done\n");
+    printf("========================================================\n");
 }
 
 static void usage() {
-    fprintf(stderr, "usage: dumpstate [-d] [-o file] [-s] [-z]\n"
-            "  -d: append date to filename (requires -o)\n"
+    fprintf(stderr, "usage: dumpstate [-b soundfile] [-e soundfile] [-o file [-d] [-p] [-z]] [-s]\n"
             "  -o: write to file (instead of stdout)\n"
+            "  -d: append date to filename (requires -o)\n"
+            "  -z: gzip output (requires -o)\n"
+            "  -p: capture screenshot to filename.png (requires -o)\n"
             "  -s: write output to control socket (for init)\n"
-            "  -z: gzip output (requires -o)\n");
+            "  -b: play sound file instead of vibrate, at beginning of job\n"
+            "  -e: play sound file instead of vibrate, at end of job\n"
+		);
 }
 
 int main(int argc, char *argv[]) {
     int do_add_date = 0;
     int do_compress = 0;
     char* use_outfile = 0;
+    char* begin_sound = 0;
+    char* end_sound = 0;
     int use_socket = 0;
+    int do_fb = 0;
 
     LOGI("begin\n");
 
@@ -191,13 +281,16 @@ int main(int argc, char *argv[]) {
     dump_traces_path = dump_vm_traces();
 
     int c;
-    while ((c = getopt(argc, argv, "dho:svz")) != -1) {
+    while ((c = getopt(argc, argv, "b:de:ho:svzp")) != -1) {
         switch (c) {
+            case 'b': begin_sound = optarg;  break;
             case 'd': do_add_date = 1;       break;
+            case 'e': end_sound = optarg;    break;
             case 'o': use_outfile = optarg;  break;
             case 's': use_socket = 1;        break;
             case 'v': break;  // compatibility no-op
             case 'z': do_compress = 6;       break;
+            case 'p': do_fb = 1;             break;
             case '?': printf("\n");
             case 'h':
                 usage();
@@ -218,7 +311,7 @@ int main(int argc, char *argv[]) {
 
     if (getuid() == 0) {
         /* switch to non-root user and group */
-        gid_t groups[] = { AID_LOG, AID_SDCARD_RW, AID_MOUNT };
+        gid_t groups[] = { AID_LOG, AID_SDCARD_RW, AID_MOUNT, AID_INET };
         if (setgroups(sizeof(groups)/sizeof(groups[0]), groups) != 0) {
             LOGE("Unable to setgroups, aborting: %s\n", strerror(errno));
             return -1;
@@ -246,6 +339,10 @@ int main(int argc, char *argv[]) {
             strftime(date, sizeof(date), "-%Y-%m-%d-%H-%M-%S", localtime(&now));
             strlcat(path, date, sizeof(path));
         }
+        if (do_fb) {
+            strlcpy(screenshot_path, path, sizeof(screenshot_path));
+            strlcat(screenshot_path, ".png", sizeof(screenshot_path));
+        }
         strlcat(path, ".txt", sizeof(path));
         if (do_compress) strlcat(path, ".gz", sizeof(path));
         strlcpy(tmp_path, path, sizeof(tmp_path));
@@ -253,16 +350,18 @@ int main(int argc, char *argv[]) {
         gzip_pid = redirect_to_file(stdout, tmp_path, do_compress);
     }
 
-    /* bzzzzzz */
-    if (vibrator) {
+    if (begin_sound) {
+        play_sound(begin_sound);
+    } else if (vibrator) {
         fputs("150", vibrator);
         fflush(vibrator);
     }
 
     dumpstate();
 
-    /* bzzz bzzz bzzz */
-    if (vibrator) {
+    if (end_sound) {
+        play_sound(end_sound);
+    } else if (vibrator) {
         int i;
         for (i = 0; i < 3; i++) {
             fputs("75\n", vibrator);

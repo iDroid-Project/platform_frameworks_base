@@ -20,7 +20,6 @@ import android.os.Parcel;
 import android.util.Log;
 
 import com.android.internal.telephony.GsmAlphabet;
-import com.android.internal.telephony.EncodeException;
 import com.android.internal.telephony.SmsHeader;
 import com.android.internal.telephony.SmsMessageBase;
 import com.android.internal.telephony.SmsMessageBase.SubmitPduBase;
@@ -37,7 +36,6 @@ import static android.telephony.TelephonyManager.PHONE_TYPE_CDMA;
  * A Short Message Service message.
  */
 public class SmsMessage {
-    private static final boolean LOCAL_DEBUG = true;
     private static final String LOG_TAG = "SMS";
 
     /**
@@ -54,6 +52,10 @@ public class SmsMessage {
     public static final int ENCODING_7BIT = 1;
     public static final int ENCODING_8BIT = 2;
     public static final int ENCODING_16BIT = 3;
+    /**
+     * @hide This value is not defined in global standard. Only in Korea, this is used.
+     */
+    public static final int ENCODING_KSC5601 = 4;
 
     /** The maximum number of payload bytes per message */
     public static final int MAX_USER_DATA_BYTES = 140;
@@ -74,6 +76,18 @@ public class SmsMessage {
      * CONCATENATED_8_BIT_REFERENCE element.
      */
     public static final int MAX_USER_DATA_SEPTETS_WITH_HEADER = 153;
+
+    /**
+     * Indicates a 3GPP format SMS message.
+     * @hide pending API council approval
+     */
+    public static final String FORMAT_3GPP = "3gpp";
+
+    /**
+     * Indicates a 3GPP2 format SMS message.
+     * @hide pending API council approval
+     */
+    public static final String FORMAT_3GPP2 = "3gpp2";
 
     /** Contains actual SmsMessage. Only public for debugging and for framework layer.
      *
@@ -103,30 +117,47 @@ public class SmsMessage {
 
     }
 
-    /**
-     * Constructor
-     *
-     * @hide
-     */
-    public SmsMessage() {
-        this(getSmsFacility());
-    }
-
     private SmsMessage(SmsMessageBase smb) {
         mWrappedSmsMessage = smb;
     }
 
     /**
      * Create an SmsMessage from a raw PDU.
+     *
+     * <p><b>This method will soon be deprecated</b> and all applications which handle
+     * incoming SMS messages by processing the {@code SMS_RECEIVED_ACTION} broadcast
+     * intent <b>must</b> now pass the new {@code format} String extra from the intent
+     * into the new method {@code createFromPdu(byte[], String)} which takes an
+     * extra format parameter. This is required in order to correctly decode the PDU on
+     * devices that require support for both 3GPP and 3GPP2 formats at the same time,
+     * such as dual-mode GSM/CDMA and CDMA/LTE phones.
      */
     public static SmsMessage createFromPdu(byte[] pdu) {
-        SmsMessageBase wrappedMessage;
-        int activePhone = TelephonyManager.getDefault().getPhoneType();
+        int activePhone = TelephonyManager.getDefault().getCurrentPhoneType();
+        String format = (PHONE_TYPE_CDMA == activePhone) ? FORMAT_3GPP2 : FORMAT_3GPP;
+        return createFromPdu(pdu, format);
+    }
 
-        if (PHONE_TYPE_CDMA == activePhone) {
+    /**
+     * Create an SmsMessage from a raw PDU with the specified message format. The
+     * message format is passed in the {@code SMS_RECEIVED_ACTION} as the {@code format}
+     * String extra, and will be either "3gpp" for GSM/UMTS/LTE messages in 3GPP format
+     * or "3gpp2" for CDMA/LTE messages in 3GPP2 format.
+     *
+     * @param pdu the message PDU from the SMS_RECEIVED_ACTION intent
+     * @param format the format extra from the SMS_RECEIVED_ACTION intent
+     * @hide pending API council approval
+     */
+    public static SmsMessage createFromPdu(byte[] pdu, String format) {
+        SmsMessageBase wrappedMessage;
+
+        if (FORMAT_3GPP2.equals(format)) {
             wrappedMessage = com.android.internal.telephony.cdma.SmsMessage.createFromPdu(pdu);
-        } else {
+        } else if (FORMAT_3GPP.equals(format)) {
             wrappedMessage = com.android.internal.telephony.gsm.SmsMessage.createFromPdu(pdu);
+        } else {
+            Log.e(LOG_TAG, "createFromPdu(): unsupported message format " + format);
+            return null;
         }
 
         return new SmsMessage(wrappedMessage);
@@ -141,57 +172,19 @@ public class SmsMessage {
      *
      * {@hide}
      */
-    public static SmsMessage newFromCMT(String[] lines){
-        SmsMessageBase wrappedMessage;
-        int activePhone = TelephonyManager.getDefault().getPhoneType();
-
-        if (PHONE_TYPE_CDMA == activePhone) {
-            wrappedMessage = com.android.internal.telephony.cdma.SmsMessage.newFromCMT(lines);
-        } else {
-            wrappedMessage = com.android.internal.telephony.gsm.SmsMessage.newFromCMT(lines);
-        }
-
-        return new SmsMessage(wrappedMessage);
-    }
-
-    /** @hide */
-    protected static SmsMessage newFromCMTI(String line) {
-        SmsMessageBase wrappedMessage;
-        int activePhone = TelephonyManager.getDefault().getPhoneType();
-
-        if (PHONE_TYPE_CDMA == activePhone) {
-            wrappedMessage = com.android.internal.telephony.cdma.SmsMessage.newFromCMTI(line);
-        } else {
-            wrappedMessage = com.android.internal.telephony.gsm.SmsMessage.newFromCMTI(line);
-        }
-
-        return new SmsMessage(wrappedMessage);
-    }
-
-    /** @hide */
-    public static SmsMessage newFromCDS(String line) {
-        SmsMessageBase wrappedMessage;
-        int activePhone = TelephonyManager.getDefault().getPhoneType();
-
-        if (PHONE_TYPE_CDMA == activePhone) {
-            wrappedMessage = com.android.internal.telephony.cdma.SmsMessage.newFromCDS(line);
-        } else {
-            wrappedMessage = com.android.internal.telephony.gsm.SmsMessage.newFromCDS(line);
-        }
+    public static SmsMessage newFromCMT(String[] lines) {
+        // received SMS in 3GPP format
+        SmsMessageBase wrappedMessage =
+                com.android.internal.telephony.gsm.SmsMessage.newFromCMT(lines);
 
         return new SmsMessage(wrappedMessage);
     }
 
     /** @hide */
     public static SmsMessage newFromParcel(Parcel p) {
-        SmsMessageBase wrappedMessage;
-        int activePhone = TelephonyManager.getDefault().getPhoneType();
-
-        if (PHONE_TYPE_CDMA == activePhone) {
-            wrappedMessage = com.android.internal.telephony.cdma.SmsMessage.newFromParcel(p);
-        } else {
-            wrappedMessage = com.android.internal.telephony.gsm.SmsMessage.newFromParcel(p);
-        }
+        // received SMS in 3GPP2 format
+        SmsMessageBase wrappedMessage =
+                com.android.internal.telephony.cdma.SmsMessage.newFromParcel(p);
 
         return new SmsMessage(wrappedMessage);
     }
@@ -208,7 +201,7 @@ public class SmsMessage {
      */
     public static SmsMessage createFromEfRecord(int index, byte[] data) {
         SmsMessageBase wrappedMessage;
-        int activePhone = TelephonyManager.getDefault().getPhoneType();
+        int activePhone = TelephonyManager.getDefault().getCurrentPhoneType();
 
         if (PHONE_TYPE_CDMA == activePhone) {
             wrappedMessage = com.android.internal.telephony.cdma.SmsMessage.createFromEfRecord(
@@ -224,9 +217,12 @@ public class SmsMessage {
     /**
      * Get the TP-Layer-Length for the given SMS-SUBMIT PDU Basically, the
      * length in bytes (not hex chars) less the SMSC header
+     *
+     * FIXME: This method is only used by a CTS test case that isn't run on CDMA devices.
+     * We should probably deprecate it and remove the obsolete test case.
      */
     public static int getTPLayerLengthForPDU(String pdu) {
-        int activePhone = TelephonyManager.getDefault().getPhoneType();
+        int activePhone = TelephonyManager.getDefault().getCurrentPhoneType();
 
         if (PHONE_TYPE_CDMA == activePhone) {
             return com.android.internal.telephony.cdma.SmsMessage.getTPLayerLengthForPDU(pdu);
@@ -262,7 +258,7 @@ public class SmsMessage {
      *         class).
      */
     public static int[] calculateLength(CharSequence msgBody, boolean use7bitOnly) {
-        int activePhone = TelephonyManager.getDefault().getPhoneType();
+        int activePhone = TelephonyManager.getDefault().getCurrentPhoneType();
         TextEncodingDetails ted = (PHONE_TYPE_CDMA == activePhone) ?
             com.android.internal.telephony.cdma.SmsMessage.calculateLength(msgBody, use7bitOnly) :
             com.android.internal.telephony.gsm.SmsMessage.calculateLength(msgBody, use7bitOnly);
@@ -285,7 +281,7 @@ public class SmsMessage {
      * @hide
      */
     public static ArrayList<String> fragmentText(String text) {
-        int activePhone = TelephonyManager.getDefault().getPhoneType();
+        int activePhone = TelephonyManager.getDefault().getCurrentPhoneType();
         TextEncodingDetails ted = (PHONE_TYPE_CDMA == activePhone) ?
             com.android.internal.telephony.cdma.SmsMessage.calculateLength(text, false) :
             com.android.internal.telephony.gsm.SmsMessage.calculateLength(text, false);
@@ -295,12 +291,31 @@ public class SmsMessage {
         // flexibly...
 
         int limit;
-        if (ted.msgCount > 1) {
-            limit = (ted.codeUnitSize == ENCODING_7BIT) ?
-                MAX_USER_DATA_SEPTETS_WITH_HEADER : MAX_USER_DATA_BYTES_WITH_HEADER;
+        if (ted.codeUnitSize == ENCODING_7BIT) {
+            int udhLength;
+            if (ted.languageTable != 0 && ted.languageShiftTable != 0) {
+                udhLength = GsmAlphabet.UDH_SEPTET_COST_TWO_SHIFT_TABLES;
+            } else if (ted.languageTable != 0 || ted.languageShiftTable != 0) {
+                udhLength = GsmAlphabet.UDH_SEPTET_COST_ONE_SHIFT_TABLE;
+            } else {
+                udhLength = 0;
+            }
+
+            if (ted.msgCount > 1) {
+                udhLength += GsmAlphabet.UDH_SEPTET_COST_CONCATENATED_MESSAGE;
+            }
+
+            if (udhLength != 0) {
+                udhLength += GsmAlphabet.UDH_SEPTET_COST_LENGTH;
+            }
+
+            limit = MAX_USER_DATA_SEPTETS - udhLength;
         } else {
-            limit = (ted.codeUnitSize == ENCODING_7BIT) ?
-                MAX_USER_DATA_SEPTETS : MAX_USER_DATA_BYTES;
+            if (ted.msgCount > 1) {
+                limit = MAX_USER_DATA_BYTES_WITH_HEADER;
+            } else {
+                limit = MAX_USER_DATA_BYTES;
+            }
         }
 
         int pos = 0;  // Index in code units.
@@ -378,39 +393,11 @@ public class SmsMessage {
      * @return a <code>SubmitPdu</code> containing the encoded SC
      *         address, if applicable, and the encoded message.
      *         Returns null on encode error.
-     * @hide
-     */
-    public static SubmitPdu getSubmitPdu(String scAddress,
-            String destinationAddress, String message,
-            boolean statusReportRequested, byte[] header) {
-        SubmitPduBase spb;
-        int activePhone = TelephonyManager.getDefault().getPhoneType();
-
-        if (PHONE_TYPE_CDMA == activePhone) {
-            spb = com.android.internal.telephony.cdma.SmsMessage.getSubmitPdu(scAddress,
-                    destinationAddress, message, statusReportRequested,
-                    SmsHeader.fromByteArray(header));
-        } else {
-            spb = com.android.internal.telephony.gsm.SmsMessage.getSubmitPdu(scAddress,
-                    destinationAddress, message, statusReportRequested, header);
-        }
-
-        return new SubmitPdu(spb);
-    }
-
-    /**
-     * Get an SMS-SUBMIT PDU for a destination address and a message.
-     * This method will not attempt to use any GSM national language 7 bit encodings.
-     *
-     * @param scAddress Service Centre address.  Null means use default.
-     * @return a <code>SubmitPdu</code> containing the encoded SC
-     *         address, if applicable, and the encoded message.
-     *         Returns null on encode error.
      */
     public static SubmitPdu getSubmitPdu(String scAddress,
             String destinationAddress, String message, boolean statusReportRequested) {
         SubmitPduBase spb;
-        int activePhone = TelephonyManager.getDefault().getPhoneType();
+        int activePhone = TelephonyManager.getDefault().getCurrentPhoneType();
 
         if (PHONE_TYPE_CDMA == activePhone) {
             spb = com.android.internal.telephony.cdma.SmsMessage.getSubmitPdu(scAddress,
@@ -440,7 +427,7 @@ public class SmsMessage {
             String destinationAddress, short destinationPort, byte[] data,
             boolean statusReportRequested) {
         SubmitPduBase spb;
-        int activePhone = TelephonyManager.getDefault().getPhoneType();
+        int activePhone = TelephonyManager.getDefault().getCurrentPhoneType();
 
         if (PHONE_TYPE_CDMA == activePhone) {
             spb = com.android.internal.telephony.cdma.SmsMessage.getSubmitPdu(scAddress,
@@ -600,15 +587,6 @@ public class SmsMessage {
     }
 
     /**
-     * Return the user data header (UDH).
-     *
-     * @hide
-     */
-    public SmsHeader getUserDataHeader() {
-        return mWrappedSmsMessage.getUserDataHeader();
-    }
-
-    /**
      * Returns the raw PDU for the message.
      *
      * @return the raw PDU for the message.
@@ -643,7 +621,6 @@ public class SmsMessage {
      *         SmsManager.STATUS_ON_ICC_UNSENT
      */
     public int getStatusOnIcc() {
-
         return mWrappedSmsMessage.getStatusOnIcc();
     }
 
@@ -663,7 +640,6 @@ public class SmsMessage {
      *         SmsMessage was not created from a ICC SMS EF record.
      */
     public int getIndexOnIcc() {
-
         return mWrappedSmsMessage.getIndexOnIcc();
     }
 
@@ -700,20 +676,5 @@ public class SmsMessage {
      */
     public boolean isReplyPathPresent() {
         return mWrappedSmsMessage.isReplyPathPresent();
-    }
-
-    /** This method returns the reference to a specific
-     *  SmsMessage object, which is used for accessing its static methods.
-     * @return Specific SmsMessage.
-     *
-     * @hide
-     */
-    private static final SmsMessageBase getSmsFacility(){
-        int activePhone = TelephonyManager.getDefault().getPhoneType();
-        if (PHONE_TYPE_CDMA == activePhone) {
-            return new com.android.internal.telephony.cdma.SmsMessage();
-        } else {
-            return new com.android.internal.telephony.gsm.SmsMessage();
-        }
     }
 }

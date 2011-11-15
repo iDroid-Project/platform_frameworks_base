@@ -16,25 +16,28 @@
 
 package com.android.statusbartest;
 
-import android.app.ListActivity;
+import android.app.Notification;
+import android.app.NotificationManager;
 import android.app.PendingIntent;
-import android.widget.ArrayAdapter;
-import android.view.View;
-import android.widget.ListView;
 import android.content.Context;
 import android.content.ContentResolver;
 import android.content.Intent;
-import android.app.Notification;
-import android.app.NotificationManager;
+import android.graphics.Bitmap;
+import android.graphics.drawable.BitmapDrawable;
+import android.os.Environment;
 import android.os.Vibrator;
-import android.os.Bundle;
 import android.os.Handler;
 import android.util.Log;
 import android.net.Uri;
 import android.os.SystemClock;
 import android.widget.RemoteViews;
 import android.widget.TextView;
+import android.widget.ProgressBar;
 import android.os.PowerManager;
+
+// private NM API
+import android.app.INotificationManager;
+import com.android.internal.statusbar.StatusBarNotification;
 
 public class NotificationTestList extends TestActivity
 {
@@ -46,6 +49,22 @@ public class NotificationTestList extends TestActivity
 
     long mActivityCreateTime = System.currentTimeMillis();
     long mChronometerBase = 0;
+
+    boolean mProgressDone = true;
+
+    final int[] kNumberedIconResIDs = {
+        R.drawable.notification0,
+        R.drawable.notification1,
+        R.drawable.notification2,
+        R.drawable.notification3,
+        R.drawable.notification4,
+        R.drawable.notification5,
+        R.drawable.notification6,
+        R.drawable.notification7,
+        R.drawable.notification8,
+        R.drawable.notification9
+    };
+    final int kUnnumberedIconResID = R.drawable.notificationx;
 
     @Override
     protected String tag() {
@@ -70,7 +89,8 @@ public class NotificationTestList extends TestActivity
                 pm.goToSleep(SystemClock.uptimeMillis());
 
                 Notification n = new Notification();
-                n.sound = Uri.parse("file:///sdcard/virtual-void.mp3");
+                n.sound = Uri.parse("file://" + Environment.getExternalStorageDirectory() +
+                        "/virtual-void.mp3");
                 Log.d(TAG, "n.sound=" + n.sound);
 
                 mNM.notify(1, n);
@@ -78,6 +98,48 @@ public class NotificationTestList extends TestActivity
                 Log.d(TAG, "releasing wake lock");
                 wl.release();
                 Log.d(TAG, "released wake lock");
+            }
+        },
+
+        new Test("Cancel #1") {
+            public void run()
+            {
+                mNM.cancel(1);
+            }
+        },
+
+        new Test("Button") {
+            public void run() {
+                Notification n = new Notification(R.drawable.icon1, null,
+                        mActivityCreateTime);
+                n.contentView = new RemoteViews(getPackageName(), R.layout.button_notification);
+                n.flags |= Notification.FLAG_ONGOING_EVENT;
+                n.contentIntent = makeIntent();
+                n.contentView.setOnClickPendingIntent(R.id.button, makeIntent2());
+
+                mNM.notify(1, n);
+            }
+        },
+
+        new Test("custom intent on text view") {
+            public void run() {
+                Notification n = new Notification(R.drawable.icon1, null,
+                        mActivityCreateTime);
+                n.setLatestEventInfo(NotificationTestList.this, "Persistent #1",
+                            "This is a notification!!!", null);
+                n.contentView.setOnClickPendingIntent(com.android.internal.R.id.text,
+                        makeIntent2());
+                mNM.notify(1, n);
+            }
+        },
+
+        new Test("Ticker 1 line") {
+            public void run() {
+                Notification n = new Notification(R.drawable.icon1, "tick tick tick",
+                        mActivityCreateTime);
+                n.setLatestEventInfo(NotificationTestList.this, "Persistent #1",
+                            "This is a notification!!!", makeIntent());
+                mNM.notify(1, n);
             }
         },
 
@@ -102,12 +164,16 @@ public class NotificationTestList extends TestActivity
         new Test("Layout") {
             public void run()
             {
+                Notification n;
 
-                mNM.notify(1, new Notification(NotificationTestList.this,
+                n = new Notification(NotificationTestList.this,
                             R.drawable.ic_statusbar_missedcall,
                             null, System.currentTimeMillis()-(1000*60*60*24),
                             "(453) 123-2328",
-                            "", null));
+                            "", null);
+                n.flags |= Notification.FLAG_ONGOING_EVENT;
+
+                mNM.notify(1, n);
 
                 mNM.notify(2, new Notification(NotificationTestList.this,
                             R.drawable.ic_statusbar_email,
@@ -137,6 +203,15 @@ public class NotificationTestList extends TestActivity
             public void run() {
                 Notification n = new Notification(R.layout.chrono_notification /* not an icon */,
                         null, System.currentTimeMillis());
+                n.setLatestEventInfo(NotificationTestList.this, "Persistent #1",
+                            "This is the same notification!!!", makeIntent());
+                mNM.notify(1, n);
+            }
+        },
+
+        new Test("Null Icon #1 (when=now)") {
+            public void run() {
+                Notification n = new Notification(0, null, System.currentTimeMillis());
                 n.setLatestEventInfo(NotificationTestList.this, "Persistent #1",
                             "This is the same notification!!!", makeIntent());
                 mNM.notify(1, n);
@@ -228,6 +303,50 @@ public class NotificationTestList extends TestActivity
                         300, 400, 300, 400, 300, 400, 300, 400, 300, 400, 300, 400, 
                         300, 400, 300, 400, 300, 400, 300, 400, 300, 400, 300, 400 };
                 mNM.notify(1, n);
+            }
+        },
+
+        new Test("Progress #1") {
+            public void run() {
+                final boolean PROGRESS_UPDATES_WHEN = true;
+                if (!mProgressDone) return;
+                mProgressDone = false;
+                Thread t = new Thread() {
+                    public void run() {
+                        int x = 0;
+                        while (!mProgressDone) {
+                            Notification n = new Notification(R.drawable.icon1, null,
+                                    PROGRESS_UPDATES_WHEN
+                                    ? System.currentTimeMillis()
+                                    : mActivityCreateTime);
+                            RemoteViews v = new RemoteViews(getPackageName(),
+                                    R.layout.progress_notification);
+                            
+                            v.setProgressBar(R.id.progress_bar, 100, x, false);
+                            v.setTextViewText(R.id.status_text, "Progress: " + x + "%");
+                    
+                            n.contentView = v;
+                            n.flags |= Notification.FLAG_ONGOING_EVENT;
+
+                            mNM.notify(500, n);
+                            x = (x + 7) % 100;
+
+                            try {
+                                Thread.sleep(1000);
+                            } catch (InterruptedException e) {
+                                break;
+                            }
+                        }
+                    }
+                };
+                t.start();
+            }
+        },
+
+        new Test("Stop Progress") {
+            public void run() {
+                mProgressDone = true;
+                mNM.cancel(500);
             }
         },
 
@@ -483,7 +602,7 @@ public class NotificationTestList extends TestActivity
 
         new Test("Persistent #3") {
             public void run() {
-                Notification n = new Notification(R.drawable.icon2, "tock tock tock",
+                Notification n = new Notification(R.drawable.icon2, "tock tock tock\nmooooo",
                         System.currentTimeMillis());
                 n.setLatestEventInfo(NotificationTestList.this, "Persistent #3",
                             "Notify me!!!", makeIntent());
@@ -588,7 +707,8 @@ public class NotificationTestList extends TestActivity
         new Test("Ten Notifications") {
             public void run() {
                 for (int i = 0; i < 2; i++) {
-                    Notification n = new Notification(NotificationTestList.this, R.drawable.icon2,
+                    Notification n = new Notification(NotificationTestList.this,
+                            kNumberedIconResIDs[i],
                             null, System.currentTimeMillis(), "Persistent #" + i,
                             "Notify me!!!" + i, null);
                     n.flags |= Notification.FLAG_ONGOING_EVENT;
@@ -596,7 +716,8 @@ public class NotificationTestList extends TestActivity
                     mNM.notify((i+1)*10, n);
                 }
                 for (int i = 2; i < 10; i++) {
-                    Notification n = new Notification(NotificationTestList.this, R.drawable.icon2,
+                    Notification n = new Notification(NotificationTestList.this,
+                            kNumberedIconResIDs[i],
                             null, System.currentTimeMillis(), "Persistent #" + i,
                             "Notify me!!!" + i, null);
                     n.number = i;
@@ -610,6 +731,13 @@ public class NotificationTestList extends TestActivity
                 for (int i = 1; i < 9; i++) {
                     mNM.cancel((i+1)*10);
                 }
+            }
+        },
+        
+        new Test("Cancel the other two notifications") {
+            public void run() {
+                mNM.cancel(10);
+                mNM.cancel(100);
             }
         },
         
@@ -637,17 +765,27 @@ public class NotificationTestList extends TestActivity
             }
         },
 
-        new Test("Ticker") {
+        new Test("System priority notification") {
             public void run() {
-                Notification not = new Notification(
-                    R.drawable.app_gmail, 
-                    "New mail from joeo@example.com, on the topic of very long ticker texts",
-                    System.currentTimeMillis());
-                not.setLatestEventInfo(NotificationTestList.this,
-                    "A new message awaits",
-                    "The contents are very interesting and important",
-                    makeIntent());
-                mNM.notify(1, not);
+                Notification n = new Notification.Builder(NotificationTestList.this)
+                    .setSmallIcon(R.drawable.notification1)
+                    .setContentTitle("System priority")
+                    .setContentText("This should appear before all others")
+                    .getNotification();
+
+                int[] idOut = new int[1];
+                try {
+                    INotificationManager directLine = mNM.getService();
+                    directLine.enqueueNotificationWithTagPriority(
+                            getPackageName(),
+                            null, 
+                            1, 
+                            StatusBarNotification.PRIORITY_SYSTEM,
+                            n,
+                            idOut);
+                } catch (android.os.RemoteException ex) {
+                    // oh well
+                }
             }
         },
 
@@ -670,8 +808,14 @@ public class NotificationTestList extends TestActivity
     };
 
     private Notification notificationWithNumbers(int num) {
-        Notification n = new Notification(this, R.drawable.icon2, null, System.currentTimeMillis(),
-                "Persistent #2", "Notify me!!!", null);
+        Notification n = new Notification(this,
+                (num >= 0 && num < kNumberedIconResIDs.length)
+                    ? kNumberedIconResIDs[num]
+                    : kUnnumberedIconResID,
+                null,
+                System.currentTimeMillis(),
+                "Notification", "Number=" + num,
+                null);
         n.number = num;
         return n;
     }
@@ -681,6 +825,12 @@ public class NotificationTestList extends TestActivity
         intent.addCategory(Intent.CATEGORY_HOME);
         return PendingIntent.getActivity(this, 0, intent, 0);
     }
+
+    private PendingIntent makeIntent2() {
+        Intent intent = new Intent(this, StatusBarTest.class);
+        return PendingIntent.getActivity(this, 0, intent, 0);
+    }
+
 
     class StateStress extends Test {
         StateStress(String name, int pause, int iterations, Runnable[] tasks) {
@@ -718,6 +868,11 @@ public class NotificationTestList extends TestActivity
                     R.drawable.ic_statusbar_missedcall, null,
                     time, label, "" + new java.util.Date(time), null));
 
+    }
+
+    Bitmap loadBitmap(int resId) {
+        BitmapDrawable bd = (BitmapDrawable)getResources().getDrawable(resId);
+        return Bitmap.createBitmap(bd.getBitmap());
     }
 }
 

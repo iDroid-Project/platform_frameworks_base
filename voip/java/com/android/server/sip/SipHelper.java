@@ -19,6 +19,9 @@ package com.android.server.sip;
 import gov.nist.javax.sip.SipStackExt;
 import gov.nist.javax.sip.clientauthutils.AccountManager;
 import gov.nist.javax.sip.clientauthutils.AuthenticationHelper;
+import gov.nist.javax.sip.header.extensions.ReferencesHeader;
+import gov.nist.javax.sip.header.extensions.ReferredByHeader;
+import gov.nist.javax.sip.header.extensions.ReplacesHeader;
 
 import android.net.sip.SipProfile;
 import android.util.Log;
@@ -27,6 +30,8 @@ import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.EventObject;
 import java.util.List;
+import java.util.regex.Pattern;
+
 import javax.sip.ClientTransaction;
 import javax.sip.Dialog;
 import javax.sip.DialogTerminatedEvent;
@@ -69,6 +74,7 @@ import javax.sip.message.Response;
 class SipHelper {
     private static final String TAG = SipHelper.class.getSimpleName();
     private static final boolean DEBUG = true;
+    private static final boolean DEBUG_PING = false;
 
     private SipStack mSipStack;
     private SipProvider mSipProvider;
@@ -147,9 +153,17 @@ class SipHelper {
 
     private ContactHeader createContactHeader(SipProfile profile)
             throws ParseException, SipException {
-        ListeningPoint lp = getListeningPoint();
-        SipURI contactURI =
-                createSipUri(profile.getUserName(), profile.getProtocol(), lp);
+        return createContactHeader(profile, null, 0);
+    }
+
+    private ContactHeader createContactHeader(SipProfile profile,
+            String ip, int port) throws ParseException,
+            SipException {
+        SipURI contactURI = (ip == null)
+                ? createSipUri(profile.getUserName(), profile.getProtocol(),
+                        getListeningPoint())
+                : createSipUri(profile.getUserName(), profile.getProtocol(),
+                        ip, port);
 
         Address contactAddress = mAddressFactory.createAddress(contactURI);
         contactAddress.setDisplayName(profile.getDisplayName());
@@ -165,9 +179,14 @@ class SipHelper {
 
     private SipURI createSipUri(String username, String transport,
             ListeningPoint lp) throws ParseException {
-        SipURI uri = mAddressFactory.createSipURI(username, lp.getIPAddress());
+        return createSipUri(username, transport, lp.getIPAddress(), lp.getPort());
+    }
+
+    private SipURI createSipUri(String username, String transport,
+            String ip, int port) throws ParseException {
+        SipURI uri = mAddressFactory.createSipURI(username, ip);
         try {
-            uri.setPort(lp.getPort());
+            uri.setPort(port);
             uri.setTransportParam(transport);
         } catch (InvalidArgumentException e) {
             throw new RuntimeException(e);
@@ -175,17 +194,19 @@ class SipHelper {
         return uri;
     }
 
-    public ClientTransaction sendKeepAlive(SipProfile userProfile, String tag)
-            throws SipException {
+    public ClientTransaction sendOptions(SipProfile caller, SipProfile callee,
+            String tag) throws SipException {
         try {
-            Request request = createRequest(Request.OPTIONS, userProfile, tag);
+            Request request = (caller == callee)
+                    ? createRequest(Request.OPTIONS, caller, tag)
+                    : createRequest(Request.OPTIONS, caller, callee, tag);
 
             ClientTransaction clientTransaction =
                     mSipProvider.getNewClientTransaction(request);
             clientTransaction.sendRequest();
             return clientTransaction;
         } catch (Exception e) {
-            throw new SipException("sendKeepAlive()", e);
+            throw new SipException("sendOptions()", e);
         }
     }
 
@@ -215,9 +236,11 @@ class SipHelper {
             String tag) throws ParseException, SipException {
         FromHeader fromHeader = createFromHeader(userProfile, tag);
         ToHeader toHeader = createToHeader(userProfile);
+
+        String replaceStr = Pattern.quote(userProfile.getUserName() + "@");
         SipURI requestURI = mAddressFactory.createSipURI(
-                userProfile.getUriString().replaceFirst(
-                userProfile.getUserName() + "@", ""));
+                userProfile.getUriString().replaceFirst(replaceStr, ""));
+
         List<ViaHeader> viaHeaders = createViaHeaders();
         CallIdHeader callIdHeader = createCallIdHeader();
         CSeqHeader cSeqHeader = createCSeqHeader(requestType);
@@ -245,27 +268,37 @@ class SipHelper {
         return ct;
     }
 
+    private Request createRequest(String requestType, SipProfile caller,
+            SipProfile callee, String tag) throws ParseException, SipException {
+        FromHeader fromHeader = createFromHeader(caller, tag);
+        ToHeader toHeader = createToHeader(callee);
+        SipURI requestURI = callee.getUri();
+        List<ViaHeader> viaHeaders = createViaHeaders();
+        CallIdHeader callIdHeader = createCallIdHeader();
+        CSeqHeader cSeqHeader = createCSeqHeader(requestType);
+        MaxForwardsHeader maxForwards = createMaxForwardsHeader();
+
+        Request request = mMessageFactory.createRequest(requestURI,
+                requestType, callIdHeader, cSeqHeader, fromHeader,
+                toHeader, viaHeaders, maxForwards);
+
+        request.addHeader(createContactHeader(caller));
+        return request;
+    }
+
     public ClientTransaction sendInvite(SipProfile caller, SipProfile callee,
-            String sessionDescription, String tag)
-            throws SipException {
+            String sessionDescription, String tag, ReferredByHeader referredBy,
+            String replaces) throws SipException {
         try {
-            FromHeader fromHeader = createFromHeader(caller, tag);
-            ToHeader toHeader = createToHeader(callee);
-            SipURI requestURI = callee.getUri();
-            List<ViaHeader> viaHeaders = createViaHeaders();
-            CallIdHeader callIdHeader = createCallIdHeader();
-            CSeqHeader cSeqHeader = createCSeqHeader(Request.INVITE);
-            MaxForwardsHeader maxForwards = createMaxForwardsHeader();
-
-            Request request = mMessageFactory.createRequest(requestURI,
-                    Request.INVITE, callIdHeader, cSeqHeader, fromHeader,
-                    toHeader, viaHeaders, maxForwards);
-
-            request.addHeader(createContactHeader(caller));
+            Request request = createRequest(Request.INVITE, caller, callee, tag);
+            if (referredBy != null) request.addHeader(referredBy);
+            if (replaces != null) {
+                request.addHeader(mHeaderFactory.createHeader(
+                        ReplacesHeader.NAME, replaces));
+            }
             request.setContent(sessionDescription,
                     mHeaderFactory.createContentTypeHeader(
                             "application", "sdp"));
-
             ClientTransaction clientTransaction =
                     mSipProvider.getNewClientTransaction(request);
             if (DEBUG) Log.d(TAG, "send INVITE: " + request);
@@ -284,6 +317,13 @@ class SipHelper {
                     mHeaderFactory.createContentTypeHeader(
                             "application", "sdp"));
 
+            // Adding rport argument in the request could fix some SIP servers
+            // in resolving the initiator's NAT port mapping for relaying the
+            // response message from the other end.
+
+            ViaHeader viaHeader = (ViaHeader) request.getHeader(ViaHeader.NAME);
+            if (viaHeader != null) viaHeader.setRPort();
+
             ClientTransaction clientTransaction =
                     mSipProvider.getNewClientTransaction(request);
             if (DEBUG) Log.d(TAG, "send RE-INVITE: " + request);
@@ -294,7 +334,7 @@ class SipHelper {
         }
     }
 
-    private ServerTransaction getServerTransaction(RequestEvent event)
+    public ServerTransaction getServerTransaction(RequestEvent event)
             throws SipException {
         ServerTransaction transaction = event.getServerTransaction();
         if (transaction == null) {
@@ -333,13 +373,14 @@ class SipHelper {
      */
     public ServerTransaction sendInviteOk(RequestEvent event,
             SipProfile localProfile, String sessionDescription,
-            ServerTransaction inviteTransaction)
-            throws SipException {
+            ServerTransaction inviteTransaction, String externalIp,
+            int externalPort) throws SipException {
         try {
             Request request = event.getRequest();
             Response response = mMessageFactory.createResponse(Response.OK,
                     request);
-            response.addHeader(createContactHeader(localProfile));
+            response.addHeader(createContactHeader(localProfile, externalIp,
+                    externalPort));
             response.setContent(sessionDescription,
                     mHeaderFactory.createContentTypeHeader(
                             "application", "sdp"));
@@ -408,12 +449,35 @@ class SipHelper {
     public void sendResponse(RequestEvent event, int responseCode)
             throws SipException {
         try {
+            Request request = event.getRequest();
             Response response = mMessageFactory.createResponse(
-                    responseCode, event.getRequest());
-            if (DEBUG) Log.d(TAG, "send response: " + response);
+                    responseCode, request);
+            if (DEBUG && (!Request.OPTIONS.equals(request.getMethod())
+                    || DEBUG_PING)) {
+                Log.d(TAG, "send response: " + response);
+            }
             getServerTransaction(event).sendResponse(response);
         } catch (ParseException e) {
             throw new SipException("sendResponse()", e);
+        }
+    }
+
+    public void sendReferNotify(Dialog dialog, String content)
+            throws SipException {
+        try {
+            Request request = dialog.createRequest(Request.NOTIFY);
+            request.addHeader(mHeaderFactory.createSubscriptionStateHeader(
+                    "active;expires=60"));
+            // set content here
+            request.setContent(content,
+                    mHeaderFactory.createContentTypeHeader(
+                            "message", "sipfrag"));
+            request.addHeader(mHeaderFactory.createEventHeader(
+                    ReferencesHeader.REFER));
+            if (DEBUG) Log.d(TAG, "send NOTIFY: " + request);
+            dialog.sendRequest(mSipProvider.getNewClientTransaction(request));
+        } catch (ParseException e) {
+            throw new SipException("sendReferNotify()", e);
         }
     }
 

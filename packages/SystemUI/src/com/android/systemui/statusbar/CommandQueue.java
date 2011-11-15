@@ -32,25 +32,35 @@ import com.android.internal.statusbar.StatusBarNotification;
  * coalescing these calls so they don't stack up.  For the calls
  * are coalesced, note that they are all idempotent.
  */
-class CommandQueue extends IStatusBar.Stub {
+public class CommandQueue extends IStatusBar.Stub {
     private static final String TAG = "StatusBar.CommandQueue";
 
-    private static final int MSG_MASK = 0xffff0000;
-    private static final int INDEX_MASK = 0x0000ffff;
+    private static final int INDEX_MASK = 0xffff;
+    private static final int MSG_SHIFT  = 16;
+    private static final int MSG_MASK   = 0xffff << MSG_SHIFT;
 
-    private static final int MSG_ICON = 0x00010000;
-    private static final int OP_SET_ICON = 1;
+
+    private static final int MSG_ICON                   = 1 << MSG_SHIFT;
+    private static final int OP_SET_ICON    = 1;
     private static final int OP_REMOVE_ICON = 2;
 
-    private static final int MSG_ADD_NOTIFICATION = 0x00020000;
-    private static final int MSG_UPDATE_NOTIFICATION = 0x00030000;
-    private static final int MSG_REMOVE_NOTIFICATION = 0x00040000;
+    private static final int MSG_ADD_NOTIFICATION       = 2 << MSG_SHIFT;
+    private static final int MSG_UPDATE_NOTIFICATION    = 3 << MSG_SHIFT;
+    private static final int MSG_REMOVE_NOTIFICATION    = 4 << MSG_SHIFT;
 
-    private static final int MSG_DISABLE = 0x00050000;
+    private static final int MSG_DISABLE                = 5 << MSG_SHIFT;
 
-    private static final int MSG_SET_VISIBILITY = 0x00060000;
-    private static final int OP_EXPAND = 1;
-    private static final int OP_COLLAPSE = 2;
+    private static final int MSG_SET_VISIBILITY         = 6 << MSG_SHIFT;
+    private static final int OP_EXPAND      = 1;
+    private static final int OP_COLLAPSE    = 2;
+
+    private static final int MSG_SET_SYSTEMUI_VISIBILITY          = 7 << MSG_SHIFT;
+
+    private static final int MSG_TOP_APP_WINDOW_CHANGED = 8 << MSG_SHIFT;
+    private static final int MSG_SHOW_IME_BUTTON        = 9 << MSG_SHIFT;
+    private static final int MSG_SET_HARD_KEYBOARD_STATUS = 10 << MSG_SHIFT;
+    
+    private static final int MSG_TOGGLE_RECENT_APPS       = 11 << MSG_SHIFT;
 
     private StatusBarIconList mList;
     private Callbacks mCallbacks;
@@ -75,6 +85,11 @@ class CommandQueue extends IStatusBar.Stub {
         public void disable(int state);
         public void animateExpand();
         public void animateCollapse();
+        public void setSystemUiVisibility(int vis);
+        public void topAppWindowChanged(boolean visible);
+        public void setImeWindowStatus(IBinder token, int vis, int backDisposition);
+        public void setHardKeyboardStatus(boolean available, boolean enabled);
+        public void toggleRecentApps();
     }
 
     public CommandQueue(Callbacks callbacks, StatusBarIconList list) {
@@ -143,6 +158,44 @@ class CommandQueue extends IStatusBar.Stub {
         }
     }
 
+    public void setSystemUiVisibility(int vis) {
+        synchronized (mList) {
+            mHandler.removeMessages(MSG_SET_SYSTEMUI_VISIBILITY);
+            mHandler.obtainMessage(MSG_SET_SYSTEMUI_VISIBILITY, vis, 0, null).sendToTarget();
+        }
+    }
+
+    public void topAppWindowChanged(boolean menuVisible) {
+        synchronized (mList) {
+            mHandler.removeMessages(MSG_TOP_APP_WINDOW_CHANGED);
+            mHandler.obtainMessage(MSG_TOP_APP_WINDOW_CHANGED, menuVisible ? 1 : 0, 0,
+                    null).sendToTarget();
+        }
+    }
+
+    public void setImeWindowStatus(IBinder token, int vis, int backDisposition) {
+        synchronized (mList) {
+            mHandler.removeMessages(MSG_SHOW_IME_BUTTON);
+            mHandler.obtainMessage(MSG_SHOW_IME_BUTTON, vis, backDisposition, token)
+                    .sendToTarget();
+        }
+    }
+
+    public void setHardKeyboardStatus(boolean available, boolean enabled) {
+        synchronized (mList) {
+            mHandler.removeMessages(MSG_SET_HARD_KEYBOARD_STATUS);
+            mHandler.obtainMessage(MSG_SET_HARD_KEYBOARD_STATUS,
+                    available ? 1 : 0, enabled ? 1 : 0).sendToTarget();
+        }
+    }
+
+    public void toggleRecentApps() {
+        synchronized (mList) {
+            mHandler.removeMessages(MSG_TOGGLE_RECENT_APPS);
+            mHandler.obtainMessage(MSG_TOGGLE_RECENT_APPS, 0, 0, null).sendToTarget();
+        }
+    }
+
     private final class H extends Handler {
         public void handleMessage(Message msg) {
             final int what = msg.what & MSG_MASK;
@@ -196,6 +249,22 @@ class CommandQueue extends IStatusBar.Stub {
                     } else {
                         mCallbacks.animateCollapse();
                     }
+                    break;
+                case MSG_SET_SYSTEMUI_VISIBILITY:
+                    mCallbacks.setSystemUiVisibility(msg.arg1);
+                    break;
+                case MSG_TOP_APP_WINDOW_CHANGED:
+                    mCallbacks.topAppWindowChanged(msg.arg1 != 0);
+                    break;
+                case MSG_SHOW_IME_BUTTON:
+                    mCallbacks.setImeWindowStatus((IBinder)msg.obj, msg.arg1, msg.arg2);
+                    break;
+                case MSG_SET_HARD_KEYBOARD_STATUS:
+                    mCallbacks.setHardKeyboardStatus(msg.arg1 != 0, msg.arg2 != 0);
+                    break;
+                case MSG_TOGGLE_RECENT_APPS:
+                    mCallbacks.toggleRecentApps();
+                    break;
             }
         }
     }

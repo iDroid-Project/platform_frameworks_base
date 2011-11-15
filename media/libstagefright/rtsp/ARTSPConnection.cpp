@@ -20,6 +20,8 @@
 
 #include "ARTSPConnection.h"
 
+#include <cutils/properties.h>
+
 #include <media/stagefright/foundation/ABuffer.h>
 #include <media/stagefright/foundation/ADebug.h>
 #include <media/stagefright/foundation/AMessage.h>
@@ -32,23 +34,31 @@
 #include <openssl/md5.h>
 #include <sys/socket.h>
 
+#include "HTTPBase.h"
+
 namespace android {
 
 // static
 const int64_t ARTSPConnection::kSelectTimeoutUs = 1000ll;
 
-ARTSPConnection::ARTSPConnection()
-    : mState(DISCONNECTED),
+ARTSPConnection::ARTSPConnection(bool uidValid, uid_t uid)
+    : mUIDValid(uidValid),
+      mUID(uid),
+      mState(DISCONNECTED),
       mAuthType(NONE),
       mSocket(-1),
       mConnectionID(0),
       mNextCSeq(0),
       mReceiveResponseEventPending(false) {
+    MakeUserAgent(&mUserAgent);
 }
 
 ARTSPConnection::~ARTSPConnection() {
     if (mSocket >= 0) {
         LOGE("Connection is still open, closing the socket.");
+        if (mUIDValid) {
+            HTTPBase::UnRegisterSocketUserTag(mSocket);
+        }
         close(mSocket);
         mSocket = -1;
     }
@@ -195,6 +205,9 @@ void ARTSPConnection::onConnect(const sp<AMessage> &msg) {
     ++mConnectionID;
 
     if (mState != DISCONNECTED) {
+        if (mUIDValid) {
+            HTTPBase::UnRegisterSocketUserTag(mSocket);
+        }
         close(mSocket);
         mSocket = -1;
 
@@ -243,6 +256,11 @@ void ARTSPConnection::onConnect(const sp<AMessage> &msg) {
 
     mSocket = socket(AF_INET, SOCK_STREAM, 0);
 
+    if (mUIDValid) {
+        HTTPBase::RegisterSocketUserTag(mSocket, mUID,
+                                        (uint32_t)*(uint32_t*) "RTSP");
+    }
+
     MakeSocketBlocking(mSocket, false);
 
     struct sockaddr_in remote;
@@ -268,6 +286,9 @@ void ARTSPConnection::onConnect(const sp<AMessage> &msg) {
         reply->setInt32("result", -errno);
         mState = DISCONNECTED;
 
+        if (mUIDValid) {
+            HTTPBase::UnRegisterSocketUserTag(mSocket);
+        }
         close(mSocket);
         mSocket = -1;
     } else {
@@ -283,6 +304,9 @@ void ARTSPConnection::onConnect(const sp<AMessage> &msg) {
 
 void ARTSPConnection::onDisconnect(const sp<AMessage> &msg) {
     if (mState == CONNECTED || mState == CONNECTING) {
+        if (mUIDValid) {
+            HTTPBase::UnRegisterSocketUserTag(mSocket);
+        }
         close(mSocket);
         mSocket = -1;
 
@@ -347,6 +371,9 @@ void ARTSPConnection::onCompleteConnection(const sp<AMessage> &msg) {
         reply->setInt32("result", -err);
 
         mState = DISCONNECTED;
+        if (mUIDValid) {
+            HTTPBase::UnRegisterSocketUserTag(mSocket);
+        }
         close(mSocket);
         mSocket = -1;
     } else {
@@ -378,6 +405,7 @@ void ARTSPConnection::onSendRequest(const sp<AMessage> &msg) {
     reply->setString("original-request", request.c_str(), request.size());
 
     addAuthentication(&request);
+    addUserAgent(&request);
 
     // Find the boundary between headers and the body.
     ssize_t i = request.find("\r\n\r\n");
@@ -977,6 +1005,29 @@ void ARTSPConnection::addAuthentication(AString *request) {
 
     request->insert(fragment, i + 2);
 #endif
+}
+
+// static
+void ARTSPConnection::MakeUserAgent(AString *userAgent) {
+    userAgent->clear();
+    userAgent->setTo("User-Agent: stagefright/1.1 (Linux;Android ");
+
+#if (PROPERTY_VALUE_MAX < 8)
+#error "PROPERTY_VALUE_MAX must be at least 8"
+#endif
+
+    char value[PROPERTY_VALUE_MAX];
+    property_get("ro.build.version.release", value, "Unknown");
+    userAgent->append(value);
+    userAgent->append(")\r\n");
+}
+
+void ARTSPConnection::addUserAgent(AString *request) const {
+    // Find the boundary between headers and the body.
+    ssize_t i = request->find("\r\n\r\n");
+    CHECK_GE(i, 0);
+
+    request->insert(mUserAgent, i + 2);
 }
 
 }  // namespace android

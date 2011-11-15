@@ -26,10 +26,8 @@ import org.xmlpull.v1.XmlPullParserException;
 import java.io.IOException;
 
 /**
- * A specialized Drawable that fills the Canvas with a specified color,
- * with respect to the clip region. Note that a ColorDrawable ignores the ColorFilter.
- * It also ignores the Bounds, meaning it will draw everywhere in the current clip,
- * even if setBounds(...) was called with a smaller area.
+ * A specialized Drawable that fills the Canvas with a specified color.
+ * Note that a ColorDrawable ignores the ColorFilter.
  *
  * <p>It can be defined in an XML file with the <code>&lt;color></code> element.</p>
  *
@@ -37,6 +35,7 @@ import java.io.IOException;
  */
 public class ColorDrawable extends Drawable {
     private ColorState mState;
+    private final Paint mPaint = new Paint();
 
     /**
      * Creates a new black ColorDrawable.
@@ -52,7 +51,7 @@ public class ColorDrawable extends Drawable {
      */
     public ColorDrawable(int color) {
         this(null);
-        mState.mBaseColor = mState.mUseColor = color;
+        setColor(color);
     }
 
     private ColorDrawable(ColorState state) {
@@ -66,7 +65,32 @@ public class ColorDrawable extends Drawable {
 
     @Override
     public void draw(Canvas canvas) {
-        canvas.drawColor(mState.mUseColor);
+        if ((mState.mUseColor >>> 24) != 0) {
+            mPaint.setColor(mState.mUseColor);
+            canvas.drawRect(getBounds(), mPaint);
+        }
+    }
+
+    /**
+     * Gets the drawable's color value.
+     *
+     * @return int The color to draw.
+     */
+    public int getColor() {
+        return mState.mUseColor;
+    }
+
+    /**
+     * Sets the drawable's color value. This action will clobber the results of prior calls to
+     * {@link #setAlpha(int)} on this object, which side-affected the underlying color.
+     *
+     * @param color The color to draw.
+     */
+    public void setColor(int color) {
+        if (mState.mBaseColor != color || mState.mUseColor != color) {
+            invalidateSelf();
+            mState.mBaseColor = mState.mUseColor = color;
+        }
     }
 
     /**
@@ -87,7 +111,11 @@ public class ColorDrawable extends Drawable {
         alpha += alpha >> 7;   // make it 0..256
         int baseAlpha = mState.mBaseColor >>> 24;
         int useAlpha = baseAlpha * alpha >> 8;
+        int oldUseColor = mState.mUseColor;
         mState.mUseColor = (mState.mBaseColor << 8 >>> 8) | (useAlpha << 24);
+        if (oldUseColor != mState.mUseColor) {
+            invalidateSelf();
+        }
     }
 
     /**
@@ -124,12 +152,12 @@ public class ColorDrawable extends Drawable {
 
     @Override
     public ConstantState getConstantState() {
-        mState.mChangingConfigurations = super.getChangingConfigurations();
+        mState.mChangingConfigurations = getChangingConfigurations();
         return mState;
     }
 
     final static class ColorState extends ConstantState {
-        int mBaseColor; // initial color. never changes
+        int mBaseColor; // base color, independent of setAlpha()
         int mUseColor;  // basecolor modulated by setAlpha()
         int mChangingConfigurations;
 

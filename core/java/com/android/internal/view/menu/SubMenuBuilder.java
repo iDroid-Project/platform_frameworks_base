@@ -67,11 +67,6 @@ public class SubMenuBuilder extends MenuBuilder implements SubMenu {
     }
 
     @Override
-    public Callback getCallback() {
-        return mParentMenu.getCallback();
-    }
-
-    @Override
     public void setCallback(Callback callback) {
         mParentMenu.setCallback(callback);
     }
@@ -79,6 +74,12 @@ public class SubMenuBuilder extends MenuBuilder implements SubMenu {
     @Override
     public MenuBuilder getRootMenu() {
         return mParentMenu;
+    }
+
+    @Override
+    boolean dispatchMenuItemSelected(MenuBuilder menu, MenuItem item) {
+        return super.dispatchMenuItemSelected(menu, item) ||
+                mParentMenu.dispatchMenuItemSelected(menu, item);
     }
 
     public SubMenu setIcon(Drawable icon) {
@@ -110,5 +111,23 @@ public class SubMenuBuilder extends MenuBuilder implements SubMenu {
     public SubMenu setHeaderView(View view) {
         return (SubMenu) super.setHeaderViewInt(view);
     }
-    
+
+    @Override
+    public boolean expandItemActionView(MenuItemImpl item) {
+        return mParentMenu.expandItemActionView(item);
+    }
+
+    @Override
+    public boolean collapseItemActionView(MenuItemImpl item) {
+        return mParentMenu.collapseItemActionView(item);
+    }
+
+    @Override
+    public String getActionViewStatesKey() {
+        final int itemId = mItem != null ? mItem.getItemId() : 0;
+        if (itemId == 0) {
+            return null;
+        }
+        return super.getActionViewStatesKey() + ":" + itemId;
+    }
 }

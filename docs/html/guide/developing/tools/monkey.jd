@@ -1,4 +1,6 @@
 page.title=UI/Application Exerciser Monkey
+parent.title=Tools
+parent.link=index.html
 @jd:body
 
 <p>The Monkey is a program that runs on your 
@@ -185,7 +187,7 @@ transitions invoked by your application.</td>
 <td>If set, this option will generate profiling reports immediately before and after
 the Monkey event sequence.
 This will generate large (~5Mb) files in data/misc, so use with care.  See 
-<a href="{@docRoot}guide/developing/tools/traceview.html" title="traceview">Traceview</a> for more information
+<a href="{@docRoot}guide/developing/debugging/debugging-tracing.html" title="traceview">Traceview</a> for more information
 on trace files.</td>
 </tr>
 

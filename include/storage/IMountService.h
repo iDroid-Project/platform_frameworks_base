@@ -37,8 +37,8 @@ public:
     virtual void setUsbMassStorageEnabled(const bool enable) = 0;
     virtual bool isUsbMassStorageEnabled() = 0;
     virtual int32_t mountVolume(const String16& mountPoint) = 0;
-    virtual int32_t
-            unmountVolume(const String16& mountPoint, const bool force) = 0;
+    virtual int32_t unmountVolume(
+            const String16& mountPoint, const bool force, const bool removeEncryption) = 0;
     virtual int32_t formatVolume(const String16& mountPoint) = 0;
     virtual int32_t
             getStorageUsers(const String16& mountPoint, int32_t** users) = 0;
@@ -66,6 +66,8 @@ public:
             const sp<IObbActionListener>& token, const int32_t nonce) = 0;
     virtual bool isObbMounted(const String16& filename) = 0;
     virtual bool getMountedObbPath(const String16& filename, String16& path) = 0;
+    virtual int32_t decryptStorage(const String16& password) = 0;
+    virtual int32_t encryptStorage(const String16& password) = 0;
 };
 
 // ----------------------------------------------------------------------------

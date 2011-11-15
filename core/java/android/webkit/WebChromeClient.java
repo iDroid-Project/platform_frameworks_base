@@ -16,6 +16,7 @@
 
 package android.webkit;
 
+import android.content.pm.ActivityInfo;
 import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Message;
@@ -75,6 +76,18 @@ public class WebChromeClient {
      */
     public void onShowCustomView(View view, CustomViewCallback callback) {};
 
+    /**
+     * Notify the host application that the current page would
+     * like to show a custom View in a particular orientation.
+     * @param view is the View object to be shown.
+     * @param requestedOrientation An orientation constant as used in
+     * {@link ActivityInfo#screenOrientation ActivityInfo.screenOrientation}.
+     * @param callback is the callback to be invoked if and when the view
+     * is dismissed.
+     */
+    public void onShowCustomView(View view, int requestedOrientation,
+            CustomViewCallback callback) {};
+    
     /**
      * Notify the host application that the current page would
      * like to hide its custom view.
@@ -314,28 +327,30 @@ public class WebChromeClient {
     /**
      * Tell the client to open a file chooser.
      * @param uploadFile A ValueCallback to set the URI of the file to upload.
-     *      onReceiveValue must be called to wake up the thread.
+     *      onReceiveValue must be called to wake up the thread.a
+     * @param acceptType The value of the 'accept' attribute of the input tag
+     *         associated with this file picker.
      * @hide
      */
-    public void openFileChooser(ValueCallback<Uri> uploadFile) {
+    public void openFileChooser(ValueCallback<Uri> uploadFile, String acceptType) {
         uploadFile.onReceiveValue(null);
     }
 
     /**
-     * Tell the client that the selection has been initiated.
+     * Tell the client that the page being viewed is web app capable,
+     * i.e. has specified the fullscreen-web-app-capable meta tag.
      * @hide
      */
-    public void onSelectionStart(WebView view) {
-        // By default we cancel the selection again, thus disabling
-        // text selection unless the chrome client supports it.
-        view.notifySelectDialogDismissed();
-    }
+    public void setInstallableWebApp() { }
 
     /**
-     * Tell the client that the selection has been copied or canceled.
+     * Tell the client that the page being viewed has an autofillable
+     * form and the user would like to set a profile up.
+     * @param msg A Message to send once the user has successfully
+     *      set up a profile and to inform the WebTextView it should
+     *      now autofill using that new profile.
      * @hide
      */
-    public void onSelectionDone(WebView view) {
-    }
+    public void setupAutoFill(Message msg) { }
 
 }

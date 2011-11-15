@@ -32,6 +32,7 @@ namespace android {
 #define CHECK(condition)                                \
     LOG_ALWAYS_FATAL_IF(                                \
             !(condition),                               \
+            "%s",                                       \
             __FILE__ ":" LITERAL_TO_STRING(__LINE__)    \
             " CHECK(" #condition ") failed.")
 
@@ -58,10 +59,12 @@ MAKE_COMPARATOR(GT,>)
     do {                                                                \
         AString ___res = Compare_##suffix(x, y);                        \
         if (!___res.empty()) {                                          \
-            LOG_ALWAYS_FATAL(                                           \
-                    __FILE__ ":" LITERAL_TO_STRING(__LINE__)            \
-                    " CHECK_" #suffix "( " #x "," #y ") failed: %s",    \
-                    ___res.c_str());                                    \
+            AString ___full =                                           \
+                __FILE__ ":" LITERAL_TO_STRING(__LINE__)                \
+                    " CHECK_" #suffix "( " #x "," #y ") failed: ";      \
+            ___full.append(___res);                                     \
+                                                                        \
+            LOG_ALWAYS_FATAL("%s", ___full.c_str());                    \
         }                                                               \
     } while (false)
 
@@ -72,7 +75,10 @@ MAKE_COMPARATOR(GT,>)
 #define CHECK_GE(x,y)   CHECK_OP(x,y,GE,>=)
 #define CHECK_GT(x,y)   CHECK_OP(x,y,GT,>)
 
-#define TRESPASS()      LOG_ALWAYS_FATAL("Should not be here.")
+#define TRESPASS() \
+        LOG_ALWAYS_FATAL(                                       \
+            __FILE__ ":" LITERAL_TO_STRING(__LINE__)            \
+                " Should not be here.");
 
 }  // namespace android
 

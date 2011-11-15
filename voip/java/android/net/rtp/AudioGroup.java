@@ -16,50 +16,60 @@
 
 package android.net.rtp;
 
+import android.media.AudioManager;
+
 import java.util.HashMap;
 import java.util.Map;
 
 /**
- * An AudioGroup acts as a router connected to the speaker, the microphone, and
- * {@link AudioStream}s. Its pipeline has four steps. First, for each
+ * An AudioGroup is an audio hub for the speaker, the microphone, and
+ * {@link AudioStream}s. Each of these components can be logically turned on
+ * or off by calling {@link #setMode(int)} or {@link RtpStream#setMode(int)}.
+ * The AudioGroup will go through these components and process them one by one
+ * within its execution loop. The loop consists of four steps. First, for each
  * AudioStream not in {@link RtpStream#MODE_SEND_ONLY}, decodes its incoming
  * packets and stores in its buffer. Then, if the microphone is enabled,
  * processes the recorded audio and stores in its buffer. Third, if the speaker
- * is enabled, mixes and playbacks buffers of all AudioStreams. Finally, for
- * each AudioStream not in {@link RtpStream#MODE_RECEIVE_ONLY}, mixes all other
+ * is enabled, mixes all AudioStream buffers and plays back. Finally, for each
+ * AudioStream not in {@link RtpStream#MODE_RECEIVE_ONLY}, mixes all other
  * buffers and sends back the encoded packets. An AudioGroup does nothing if
  * there is no AudioStream in it.
  *
  * <p>Few things must be noticed before using these classes. The performance is
  * highly related to the system load and the network bandwidth. Usually a
  * simpler {@link AudioCodec} costs fewer CPU cycles but requires more network
- * bandwidth, and vise versa. Using two AudioStreams at the same time not only
- * doubles the load but also the bandwidth. The condition varies from one device
- * to another, and developers must choose the right combination in order to get
- * the best result.
+ * bandwidth, and vise versa. Using two AudioStreams at the same time doubles
+ * not only the load but also the bandwidth. The condition varies from one
+ * device to another, and developers should choose the right combination in
+ * order to get the best result.</p>
  *
  * <p>It is sometimes useful to keep multiple AudioGroups at the same time. For
  * example, a Voice over IP (VoIP) application might want to put a conference
  * call on hold in order to make a new call but still allow people in the
- * previous call to talk to each other. This can be done easily using two
+ * conference call talking to each other. This can be done easily using two
  * AudioGroups, but there are some limitations. Since the speaker and the
- * microphone are shared globally, only one AudioGroup is allowed to run in
- * modes other than {@link #MODE_ON_HOLD}. In addition, before adding an
- * AudioStream into an AudioGroup, one should always put all other AudioGroups
- * into {@link #MODE_ON_HOLD}. That will make sure the audio driver correctly
- * initialized.
- * @hide
+ * microphone are globally shared resources, only one AudioGroup at a time is
+ * allowed to run in a mode other than {@link #MODE_ON_HOLD}. The others will
+ * be unable to acquire these resources and fail silently.</p>
+ *
+ * <p class="note">Using this class requires
+ * {@link android.Manifest.permission#RECORD_AUDIO} permission. Developers
+ * should set the audio mode to {@link AudioManager#MODE_IN_COMMUNICATION}
+ * using {@link AudioManager#setMode(int)} and change it back when none of
+ * the AudioGroups is in use.</p>
+ *
+ * @see AudioStream
  */
 public class AudioGroup {
     /**
      * This mode is similar to {@link #MODE_NORMAL} except the speaker and
-     * the microphone are disabled.
+     * the microphone are both disabled.
      */
     public static final int MODE_ON_HOLD = 0;
 
     /**
      * This mode is similar to {@link #MODE_NORMAL} except the microphone is
-     * muted.
+     * disabled.
      */
     public static final int MODE_MUTED = 1;
 
@@ -78,6 +88,8 @@ public class AudioGroup {
      */
     public static final int MODE_ECHO_SUPPRESSION = 3;
 
+    private static final int MODE_LAST = 3;
+
     private final Map<AudioStream, Integer> mStreams;
     private int mMode = MODE_ON_HOLD;
 
@@ -91,6 +103,15 @@ public class AudioGroup {
      */
     public AudioGroup() {
         mStreams = new HashMap<AudioStream, Integer>();
+    }
+
+    /**
+     * Returns the {@link AudioStream}s in this group.
+     */
+    public AudioStream[] getStreams() {
+        synchronized (this) {
+            return mStreams.keySet().toArray(new AudioStream[mStreams.size()]);
+        }
     }
 
     /**
@@ -108,18 +129,26 @@ public class AudioGroup {
      * @param mode The mode to change to.
      * @throws IllegalArgumentException if the mode is invalid.
      */
-    public synchronized native void setMode(int mode);
+    public void setMode(int mode) {
+        if (mode < 0 || mode > MODE_LAST) {
+            throw new IllegalArgumentException("Invalid mode");
+        }
+        synchronized (this) {
+            nativeSetMode(mode);
+            mMode = mode;
+        }
+    }
 
-    private native void add(int mode, int socket, String remoteAddress,
-            int remotePort, String codecSpec, int dtmfType);
+    private native void nativeSetMode(int mode);
 
+    // Package-private method used by AudioStream.join().
     synchronized void add(AudioStream stream, AudioCodec codec, int dtmfType) {
         if (!mStreams.containsKey(stream)) {
             try {
                 int socket = stream.dup();
                 String codecSpec = String.format("%d %s %s", codec.type,
                         codec.rtpmap, codec.fmtp);
-                add(stream.getMode(), socket,
+                nativeAdd(stream.getMode(), socket,
                         stream.getRemoteAddress().getHostAddress(),
                         stream.getRemotePort(), codecSpec, dtmfType);
                 mStreams.put(stream, socket);
@@ -129,14 +158,18 @@ public class AudioGroup {
         }
     }
 
-    private native void remove(int socket);
+    private native void nativeAdd(int mode, int socket, String remoteAddress,
+            int remotePort, String codecSpec, int dtmfType);
 
+    // Package-private method used by AudioStream.join().
     synchronized void remove(AudioStream stream) {
         Integer socket = mStreams.remove(stream);
         if (socket != null) {
-            remove(socket);
+            nativeRemove(socket);
         }
     }
+
+    private native void nativeRemove(int socket);
 
     /**
      * Sends a DTMF digit to every {@link AudioStream} in this group. Currently
@@ -144,13 +177,25 @@ public class AudioGroup {
      *
      * @throws IllegalArgumentException if the event is invalid.
      */
-    public native synchronized void sendDtmf(int event);
+    public void sendDtmf(int event) {
+        if (event < 0 || event > 15) {
+            throw new IllegalArgumentException("Invalid event");
+        }
+        synchronized (this) {
+            nativeSendDtmf(event);
+        }
+    }
+
+    private native void nativeSendDtmf(int event);
 
     /**
      * Removes every {@link AudioStream} in this group.
      */
-    public synchronized void clear() {
-        remove(-1);
+    public void clear() {
+        synchronized (this) {
+            mStreams.clear();
+            nativeRemove(-1);
+        }
     }
 
     @Override

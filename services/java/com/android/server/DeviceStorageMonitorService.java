@@ -16,7 +16,6 @@
 
 package com.android.server;
 
-import com.android.server.am.ActivityManagerService;
 import android.app.Notification;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
@@ -35,10 +34,8 @@ import android.os.StatFs;
 import android.os.SystemClock;
 import android.os.SystemProperties;
 import android.provider.Settings;
-import android.util.Config;
 import android.util.EventLog;
 import android.util.Slog;
-import android.provider.Settings;
 
 /**
  * This class implements a service to monitor the amount of disk
@@ -58,14 +55,15 @@ import android.provider.Settings;
  * settings parameter with a default value of 2MB), the free memory is
  * logged to the event log.
  */
-class DeviceStorageMonitorService extends Binder {
+public class DeviceStorageMonitorService extends Binder {
     private static final String TAG = "DeviceStorageMonitorService";
     private static final boolean DEBUG = false;
-    private static final boolean localLOGV = DEBUG ? Config.LOGD : Config.LOGV;
+    private static final boolean localLOGV = false;
     private static final int DEVICE_MEMORY_WHAT = 1;
     private static final int MONITOR_INTERVAL = 1; //in minutes
     private static final int LOW_MEMORY_NOTIFICATION_ID = 1;
     private static final int DEFAULT_THRESHOLD_PERCENTAGE = 10;
+    private static final int DEFAULT_THRESHOLD_MAX_BYTES = 500*1024*1024; // 500MB
     private static final int DEFAULT_FREE_STORAGE_LOG_INTERVAL_IN_MINUTES = 12*60; //in minutes
     private static final long DEFAULT_DISK_FREE_CHANGE_REPORTING_THRESHOLD = 2 * 1024 * 1024; // 2MB
     private static final long DEFAULT_CHECK_INTERVAL = MONITOR_INTERVAL*60*1000;
@@ -100,7 +98,7 @@ class DeviceStorageMonitorService extends Binder {
     /**
      * This string is used for ServiceManager access to this class.
      */
-    static final String SERVICE = "devicestoragemonitor";
+    public static final String SERVICE = "devicestoragemonitor";
 
     /**
     * Handler that checks the amount of disk space on the device and sends a
@@ -271,13 +269,18 @@ class DeviceStorageMonitorService extends Binder {
      * any way
      */
     private long getMemThreshold() {
-        int value = Settings.Secure.getInt(
+        long value = Settings.Secure.getInt(
                               mContentResolver,
                               Settings.Secure.SYS_STORAGE_THRESHOLD_PERCENTAGE,
                               DEFAULT_THRESHOLD_PERCENTAGE);
         if(localLOGV) Slog.v(TAG, "Threshold Percentage="+value);
+        value *= mTotalMemory;
+        long maxValue = Settings.Secure.getInt(
+                mContentResolver,
+                Settings.Secure.SYS_STORAGE_THRESHOLD_MAX_BYTES,
+                DEFAULT_THRESHOLD_MAX_BYTES);
         //evaluate threshold value
-        return mTotalMemory*value;
+        return value < maxValue ? value : maxValue;
     }
 
     /*
@@ -393,5 +396,25 @@ class DeviceStorageMonitorService extends Binder {
         }
         // force an early check
         postCheckMemoryMsg(true, 0);
+    }
+
+    /**
+     * Callable from other things in the system service to obtain the low memory
+     * threshold.
+     * 
+     * @return low memory threshold in bytes
+     */
+    public long getMemoryLowThreshold() {
+        return mMemLowThreshold;
+    }
+
+    /**
+     * Callable from other things in the system process to check whether memory
+     * is low.
+     * 
+     * @return true is memory is low
+     */
+    public boolean isMemoryLow() {
+        return mLowMemFlag;
     }
 }

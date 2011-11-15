@@ -16,9 +16,12 @@
 
 package android.nfc.tech;
 
+import android.nfc.ErrorCodes;
 import android.nfc.Tag;
 import android.nfc.TagLostException;
+import android.os.Bundle;
 import android.os.RemoteException;
+import android.util.Log;
 
 import java.io.IOException;
 
@@ -56,6 +59,8 @@ import java.io.IOException;
  * require the {@link android.Manifest.permission#NFC} permission.
  */
 public final class MifareUltralight extends BasicTagTechnology {
+    private static final String TAG = "NFC";
+
     /** A MIFARE Ultralight compatible tag of unknown type */
     public static final int TYPE_UNKNOWN = -1;
     /** A MIFARE Ultralight tag */
@@ -68,6 +73,9 @@ public final class MifareUltralight extends BasicTagTechnology {
 
     private static final int NXP_MANUFACTURER_ID = 0x04;
     private static final int MAX_PAGE_COUNT = 256;
+
+    /** @hide */
+    public static final String EXTRA_IS_UL_C = "isulc";
 
     private int mType;
 
@@ -95,16 +103,18 @@ public final class MifareUltralight extends BasicTagTechnology {
     public MifareUltralight(Tag tag) throws RemoteException {
         super(tag, TagTechnology.MIFARE_ULTRALIGHT);
 
-        // Check if this could actually be a Mifare
+        // Check if this could actually be a MIFARE
         NfcA a = NfcA.get(tag);
 
         mType = TYPE_UNKNOWN;
 
         if (a.getSak() == 0x00 && tag.getId()[0] == NXP_MANUFACTURER_ID) {
-            // could be UL or UL-C
-            //TODO: stack should use NXP AN1303 procedure to make a best guess
-            // attempt at classifying Ultralight vs Ultralight C.
-            mType = TYPE_ULTRALIGHT;
+            Bundle extras = tag.getTechExtras(TagTechnology.MIFARE_ULTRALIGHT);
+            if (extras.getBoolean(EXTRA_IS_UL_C)) {
+                mType = TYPE_ULTRALIGHT_C;
+            } else {
+                mType = TYPE_ULTRALIGHT;
+            }
         }
     }
 
@@ -190,6 +200,9 @@ public final class MifareUltralight extends BasicTagTechnology {
      * and calling {@link NfcA#transceive}. Note that all MIFARE Classic
      * tags are based on {@link NfcA} technology.
      *
+     * <p>Use {@link #getMaxTransceiveLength} to retrieve the maximum number of bytes
+     * that can be sent with {@link #transceive}.
+     *
      * <p>This is an I/O operation and will block until complete. It must
      * not be called from the main application thread. A blocked call will be canceled with
      * {@link IOException} if {@link #close} is called from another thread.
@@ -200,6 +213,56 @@ public final class MifareUltralight extends BasicTagTechnology {
      */
     public byte[] transceive(byte[] data) throws IOException {
         return transceive(data, true);
+    }
+
+    /**
+     * Return the maximum number of bytes that can be sent with {@link #transceive}.
+     * @return the maximum number of bytes that can be sent with {@link #transceive}.
+     */
+    public int getMaxTransceiveLength() {
+        return getMaxTransceiveLengthInternal();
+    }
+
+    /**
+     * Set the {@link #transceive} timeout in milliseconds.
+     *
+     * <p>The timeout only applies to {@link #transceive} on this object,
+     * and is reset to a default value when {@link #close} is called.
+     *
+     * <p>Setting a longer timeout may be useful when performing
+     * transactions that require a long processing time on the tag
+     * such as key generation.
+     *
+     * <p class="note">Requires the {@link android.Manifest.permission#NFC} permission.
+     *
+     * @param timeout timeout value in milliseconds
+     */
+    public void setTimeout(int timeout) {
+        try {
+            int err = mTag.getTagService().setTimeout(
+                    TagTechnology.MIFARE_ULTRALIGHT, timeout);
+            if (err != ErrorCodes.SUCCESS) {
+                throw new IllegalArgumentException("The supplied timeout is not valid");
+            }
+        } catch (RemoteException e) {
+            Log.e(TAG, "NFC service dead", e);
+        }
+    }
+
+    /**
+     * Get the current {@link #transceive} timeout in milliseconds.
+     *
+     * <p class="note">Requires the {@link android.Manifest.permission#NFC} permission.
+     *
+     * @return timeout value in milliseconds
+     */
+    public int getTimeout() {
+        try {
+            return mTag.getTagService().getTimeout(TagTechnology.MIFARE_ULTRALIGHT);
+        } catch (RemoteException e) {
+            Log.e(TAG, "NFC service dead", e);
+            return 0;
+        }
     }
 
     private static void validatePageIndex(int pageIndex) {

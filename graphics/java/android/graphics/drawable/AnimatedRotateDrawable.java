@@ -55,7 +55,7 @@ public class AnimatedRotateDrawable extends Drawable implements Drawable.Callbac
 
     private void init() {
         final AnimatedRotateState state = mState;
-        mIncrement = 360.0f / (float) state.mFramesCount;
+        mIncrement = 360.0f / state.mFramesCount;
         final Drawable drawable = state.mDrawable;
         if (drawable != null) {
             drawable.setFilterBitmap(true);
@@ -65,6 +65,7 @@ public class AnimatedRotateDrawable extends Drawable implements Drawable.Callbac
         }
     }
 
+    @Override
     public void draw(Canvas canvas) {
         int saveCount = canvas.save();
 
@@ -78,7 +79,7 @@ public class AnimatedRotateDrawable extends Drawable implements Drawable.Callbac
         float px = st.mPivotXRel ? (w * st.mPivotX) : st.mPivotX;
         float py = st.mPivotYRel ? (h * st.mPivotY) : st.mPivotY;
 
-        canvas.rotate(mCurrentDegrees, px, py);
+        canvas.rotate(mCurrentDegrees, px + bounds.left, py + bounds.top);
 
         drawable.draw(canvas);
 
@@ -146,33 +147,39 @@ public class AnimatedRotateDrawable extends Drawable implements Drawable.Callbac
                 | mState.mDrawable.getChangingConfigurations();
     }
     
+    @Override
     public void setAlpha(int alpha) {
         mState.mDrawable.setAlpha(alpha);
     }
 
+    @Override
     public void setColorFilter(ColorFilter cf) {
         mState.mDrawable.setColorFilter(cf);
     }
 
+    @Override
     public int getOpacity() {
         return mState.mDrawable.getOpacity();
     }
 
     public void invalidateDrawable(Drawable who) {
-        if (mCallback != null) {
-            mCallback.invalidateDrawable(this);
+        final Callback callback = getCallback();
+        if (callback != null) {
+            callback.invalidateDrawable(this);
         }
     }
 
     public void scheduleDrawable(Drawable who, Runnable what, long when) {
-        if (mCallback != null) {
-            mCallback.scheduleDrawable(this, what, when);
+        final Callback callback = getCallback();
+        if (callback != null) {
+            callback.scheduleDrawable(this, what, when);
         }
     }
 
     public void unscheduleDrawable(Drawable who, Runnable what) {
-        if (mCallback != null) {
-            mCallback.unscheduleDrawable(this, what);
+        final Callback callback = getCallback();
+        if (callback != null) {
+            callback.unscheduleDrawable(this, what);
         }
     }
 
@@ -204,7 +211,7 @@ public class AnimatedRotateDrawable extends Drawable implements Drawable.Callbac
     @Override
     public ConstantState getConstantState() {
         if (mState.canConstantState()) {
-            mState.mChangingConfigurations = super.getChangingConfigurations();
+            mState.mChangingConfigurations = getChangingConfigurations();
             return mState;
         }
         return null;
@@ -225,10 +232,10 @@ public class AnimatedRotateDrawable extends Drawable implements Drawable.Callbac
         tv = a.peekValue(R.styleable.AnimatedRotateDrawable_pivotY);
         final boolean pivotYRel = tv.type == TypedValue.TYPE_FRACTION;
         final float pivotY = pivotYRel ? tv.getFraction(1.0f, 1.0f) : tv.getFloat();
-        
-        final int framesCount = a.getInt(R.styleable.AnimatedRotateDrawable_framesCount, 12);
-        final int frameDuration = a.getInt(R.styleable.AnimatedRotateDrawable_frameDuration, 150);
-        
+
+        setFramesCount(a.getInt(R.styleable.AnimatedRotateDrawable_framesCount, 12));
+        setFramesDuration(a.getInt(R.styleable.AnimatedRotateDrawable_frameDuration, 150));
+
         final int res = a.getResourceId(R.styleable.AnimatedRotateDrawable_drawable, 0);
         Drawable drawable = null;
         if (res > 0) {
@@ -262,14 +269,21 @@ public class AnimatedRotateDrawable extends Drawable implements Drawable.Callbac
         rotateState.mPivotX = pivotX;
         rotateState.mPivotYRel = pivotYRel;
         rotateState.mPivotY = pivotY;
-        rotateState.mFramesCount = framesCount;
-        rotateState.mFrameDuration = frameDuration;
 
         init();
 
         if (drawable != null) {
             drawable.setCallback(this);
         }
+    }
+
+    public void setFramesCount(int framesCount) {
+        mState.mFramesCount = framesCount;
+        mIncrement = 360.0f / mState.mFramesCount;
+    }
+
+    public void setFramesDuration(int framesDuration) {
+        mState.mFrameDuration = framesDuration;
     }
 
     @Override

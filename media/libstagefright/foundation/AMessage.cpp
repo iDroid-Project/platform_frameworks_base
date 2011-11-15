@@ -23,7 +23,11 @@
 #include "ALooperRoster.h"
 #include "AString.h"
 
+#include <binder/Parcel.h>
+
 namespace android {
+
+extern ALooperRoster gLooperRoster;
 
 AMessage::AMessage(uint32_t what, ALooper::handler_id target)
     : mWhat(what),
@@ -169,6 +173,18 @@ void AMessage::setMessage(const char *name, const sp<AMessage> &obj) {
     item->u.refValue = obj.get();
 }
 
+void AMessage::setRect(
+        const char *name,
+        int32_t left, int32_t top, int32_t right, int32_t bottom) {
+    Item *item = allocateItem(name);
+    item->mType = kTypeRect;
+
+    item->u.rectValue.mLeft = left;
+    item->u.rectValue.mTop = top;
+    item->u.rectValue.mRight = right;
+    item->u.rectValue.mBottom = bottom;
+}
+
 bool AMessage::findString(const char *name, AString *value) const {
     const Item *item = findItem(name, kTypeString);
     if (item) {
@@ -196,10 +212,45 @@ bool AMessage::findMessage(const char *name, sp<AMessage> *obj) const {
     return false;
 }
 
-void AMessage::post(int64_t delayUs) {
-    extern ALooperRoster gLooperRoster;
+bool AMessage::findRect(
+        const char *name,
+        int32_t *left, int32_t *top, int32_t *right, int32_t *bottom) const {
+    const Item *item = findItem(name, kTypeRect);
+    if (item == NULL) {
+        return false;
+    }
 
+    *left = item->u.rectValue.mLeft;
+    *top = item->u.rectValue.mTop;
+    *right = item->u.rectValue.mRight;
+    *bottom = item->u.rectValue.mBottom;
+
+    return true;
+}
+
+void AMessage::post(int64_t delayUs) {
     gLooperRoster.postMessage(this, delayUs);
+}
+
+status_t AMessage::postAndAwaitResponse(sp<AMessage> *response) {
+    return gLooperRoster.postAndAwaitResponse(this, response);
+}
+
+void AMessage::postReply(uint32_t replyID) {
+    gLooperRoster.postReply(replyID, this);
+}
+
+bool AMessage::senderAwaitsResponse(uint32_t *replyID) const {
+    int32_t tmp;
+    bool found = findInt32("replyID", &tmp);
+
+    if (!found) {
+        return false;
+    }
+
+    *replyID = static_cast<uint32_t>(tmp);
+
+    return true;
 }
 
 sp<AMessage> AMessage::dup() const {
@@ -222,9 +273,18 @@ sp<AMessage> AMessage::dup() const {
             }
 
             case kTypeObject:
-            case kTypeMessage:
             {
                 to->u.refValue = from->u.refValue;
+                to->u.refValue->incStrong(msg.get());
+                break;
+            }
+
+            case kTypeMessage:
+            {
+                sp<AMessage> copy =
+                    static_cast<AMessage *>(from->u.refValue)->dup();
+
+                to->u.refValue = copy.get();
                 to->u.refValue->incStrong(msg.get());
                 break;
             }
@@ -325,6 +385,15 @@ AString AMessage::debugString(int32_t indent) const {
                             item.u.refValue)->debugString(
                                 indent + strlen(item.mName) + 14).c_str());
                 break;
+            case kTypeRect:
+                tmp = StringPrintf(
+                        "Rect %s(%d, %d, %d, %d)",
+                        item.mName,
+                        item.u.rectValue.mLeft,
+                        item.u.rectValue.mTop,
+                        item.u.rectValue.mRight,
+                        item.u.rectValue.mBottom);
+                break;
             default:
                 TRESPASS();
         }
@@ -339,6 +408,138 @@ AString AMessage::debugString(int32_t indent) const {
     s.append("}");
 
     return s;
+}
+
+// static
+sp<AMessage> AMessage::FromParcel(const Parcel &parcel) {
+    int32_t what = parcel.readInt32();
+    sp<AMessage> msg = new AMessage(what);
+
+    msg->mNumItems = static_cast<size_t>(parcel.readInt32());
+
+    for (size_t i = 0; i < msg->mNumItems; ++i) {
+        Item *item = &msg->mItems[i];
+
+        item->mName = AAtomizer::Atomize(parcel.readCString());
+        item->mType = static_cast<Type>(parcel.readInt32());
+
+        switch (item->mType) {
+            case kTypeInt32:
+            {
+                item->u.int32Value = parcel.readInt32();
+                break;
+            }
+
+            case kTypeInt64:
+            {
+                item->u.int64Value = parcel.readInt64();
+                break;
+            }
+
+            case kTypeSize:
+            {
+                item->u.sizeValue = static_cast<size_t>(parcel.readInt32());
+                break;
+            }
+
+            case kTypeFloat:
+            {
+                item->u.floatValue = parcel.readFloat();
+                break;
+            }
+
+            case kTypeDouble:
+            {
+                item->u.doubleValue = parcel.readDouble();
+                break;
+            }
+
+            case kTypeString:
+            {
+                item->u.stringValue = new AString(parcel.readCString());
+                break;
+            }
+
+            case kTypeMessage:
+            {
+                sp<AMessage> subMsg = AMessage::FromParcel(parcel);
+                subMsg->incStrong(msg.get());
+
+                item->u.refValue = subMsg.get();
+                break;
+            }
+
+            default:
+            {
+                LOGE("This type of object cannot cross process boundaries.");
+                TRESPASS();
+            }
+        }
+    }
+
+    return msg;
+}
+
+void AMessage::writeToParcel(Parcel *parcel) const {
+    parcel->writeInt32(static_cast<int32_t>(mWhat));
+    parcel->writeInt32(static_cast<int32_t>(mNumItems));
+
+    for (size_t i = 0; i < mNumItems; ++i) {
+        const Item &item = mItems[i];
+
+        parcel->writeCString(item.mName);
+        parcel->writeInt32(static_cast<int32_t>(item.mType));
+
+        switch (item.mType) {
+            case kTypeInt32:
+            {
+                parcel->writeInt32(item.u.int32Value);
+                break;
+            }
+
+            case kTypeInt64:
+            {
+                parcel->writeInt64(item.u.int64Value);
+                break;
+            }
+
+            case kTypeSize:
+            {
+                parcel->writeInt32(static_cast<int32_t>(item.u.sizeValue));
+                break;
+            }
+
+            case kTypeFloat:
+            {
+                parcel->writeFloat(item.u.floatValue);
+                break;
+            }
+
+            case kTypeDouble:
+            {
+                parcel->writeDouble(item.u.doubleValue);
+                break;
+            }
+
+            case kTypeString:
+            {
+                parcel->writeCString(item.u.stringValue->c_str());
+                break;
+            }
+
+            case kTypeMessage:
+            {
+                static_cast<AMessage *>(item.u.refValue)->writeToParcel(parcel);
+                break;
+            }
+
+            default:
+            {
+                LOGE("This type of object cannot cross process boundaries.");
+                TRESPASS();
+            }
+        }
+    }
 }
 
 }  // namespace android

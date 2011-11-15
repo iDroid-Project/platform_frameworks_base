@@ -20,8 +20,8 @@
 
 #include <binder/IPCThreadState.h>
 #include <media/AudioTrack.h>
+#include <media/stagefright/foundation/ADebug.h>
 #include <media/stagefright/AudioPlayer.h>
-#include <media/stagefright/MediaDebug.h>
 #include <media/stagefright/MediaDefs.h>
 #include <media/stagefright/MediaErrors.h>
 #include <media/stagefright/MediaSource.h>
@@ -60,7 +60,7 @@ AudioPlayer::~AudioPlayer() {
 }
 
 void AudioPlayer::setSource(const sp<MediaSource> &source) {
-    CHECK_EQ(mSource, NULL);
+    CHECK(mSource == NULL);
     mSource = source;
 }
 
@@ -84,7 +84,13 @@ status_t AudioPlayer::start(bool sourceAlreadyStarted) {
 
     CHECK(mFirstBuffer == NULL);
 
-    mFirstBufferResult = mSource->read(&mFirstBuffer);
+    MediaSource::ReadOptions options;
+    if (mSeeking) {
+        options.setSeekTo(mSeekTimeUs);
+        mSeeking = false;
+    }
+
+    mFirstBufferResult = mSource->read(&mFirstBuffer, &options);
     if (mFirstBufferResult == INFO_FORMAT_CHANGED) {
         LOGV("INFO_FORMAT_CHANGED!!!");
 
@@ -110,7 +116,7 @@ status_t AudioPlayer::start(bool sourceAlreadyStarted) {
 
     if (mAudioSink.get() != NULL) {
         status_t err = mAudioSink->open(
-                mSampleRate, numChannels, AudioSystem::PCM_16_BIT,
+                mSampleRate, numChannels, AUDIO_FORMAT_PCM_16_BIT,
                 DEFAULT_AUDIOSINK_BUFFERCOUNT,
                 &AudioPlayer::AudioSinkCallback, this);
         if (err != OK) {
@@ -132,10 +138,10 @@ status_t AudioPlayer::start(bool sourceAlreadyStarted) {
         mAudioSink->start();
     } else {
         mAudioTrack = new AudioTrack(
-                AudioSystem::MUSIC, mSampleRate, AudioSystem::PCM_16_BIT,
+                AUDIO_STREAM_MUSIC, mSampleRate, AUDIO_FORMAT_PCM_16_BIT,
                 (numChannels == 2)
-                    ? AudioSystem::CHANNEL_OUT_STEREO
-                    : AudioSystem::CHANNEL_OUT_MONO,
+                    ? AUDIO_CHANNEL_OUT_STEREO
+                    : AUDIO_CHANNEL_OUT_MONO,
                 0, 0, &AudioCallback, this, 0);
 
         if ((err = mAudioTrack->initCheck()) != OK) {
@@ -174,6 +180,8 @@ void AudioPlayer::pause(bool playPendingSamples) {
         } else {
             mAudioTrack->stop();
         }
+
+        mNumFramesPlayed = 0;
     } else {
         if (mAudioSink.get() != NULL) {
             mAudioSink->pause();
@@ -280,6 +288,26 @@ void AudioPlayer::AudioCallback(int event, void *info) {
     buffer->size = numBytesWritten;
 }
 
+uint32_t AudioPlayer::getNumFramesPendingPlayout() const {
+    uint32_t numFramesPlayedOut;
+    status_t err;
+
+    if (mAudioSink != NULL) {
+        err = mAudioSink->getPosition(&numFramesPlayedOut);
+    } else {
+        err = mAudioTrack->getPosition(&numFramesPlayedOut);
+    }
+
+    if (err != OK || mNumFramesPlayed < numFramesPlayedOut) {
+        return 0;
+    }
+
+    // mNumFramesPlayed is the number of frames submitted
+    // to the audio sink for playback, but not all of them
+    // may have played out by now.
+    return mNumFramesPlayed - numFramesPlayedOut;
+}
+
 size_t AudioPlayer::fillBuffer(void *data, size_t size) {
     if (mNumFramesPlayed == 0) {
         LOGV("AudioCallback");
@@ -288,6 +316,10 @@ size_t AudioPlayer::fillBuffer(void *data, size_t size) {
     if (mReachedEOS) {
         return 0;
     }
+
+    bool postSeekComplete = false;
+    bool postEOS = false;
+    int64_t postEOSDelayUs = 0;
 
     size_t size_done = 0;
     size_t size_remaining = size;
@@ -315,7 +347,7 @@ size_t AudioPlayer::fillBuffer(void *data, size_t size) {
 
                 mSeeking = false;
                 if (mObserver) {
-                    mObserver->postAudioSeekComplete();
+                    postSeekComplete = true;
                 }
             }
         }
@@ -340,7 +372,35 @@ size_t AudioPlayer::fillBuffer(void *data, size_t size) {
 
             if (err != OK) {
                 if (mObserver && !mReachedEOS) {
-                    mObserver->postAudioEOS();
+                    // We don't want to post EOS right away but only
+                    // after all frames have actually been played out.
+
+                    // These are the number of frames submitted to the
+                    // AudioTrack that you haven't heard yet.
+                    uint32_t numFramesPendingPlayout =
+                        getNumFramesPendingPlayout();
+
+                    // These are the number of frames we're going to
+                    // submit to the AudioTrack by returning from this
+                    // callback.
+                    uint32_t numAdditionalFrames = size_done / mFrameSize;
+
+                    numFramesPendingPlayout += numAdditionalFrames;
+
+                    int64_t timeToCompletionUs =
+                        (1000000ll * numFramesPendingPlayout) / mSampleRate;
+
+                    LOGV("total number of frames played: %lld (%lld us)",
+                            (mNumFramesPlayed + numAdditionalFrames),
+                            1000000ll * (mNumFramesPlayed + numAdditionalFrames)
+                                / mSampleRate);
+
+                    LOGV("%d frames left to play, %lld us (%.2f secs)",
+                         numFramesPendingPlayout,
+                         timeToCompletionUs, timeToCompletionUs / 1E6);
+
+                    postEOS = true;
+                    postEOSDelayUs = timeToCompletionUs + mLatencyUs;
                 }
 
                 mReachedEOS = true;
@@ -384,8 +444,18 @@ size_t AudioPlayer::fillBuffer(void *data, size_t size) {
         size_remaining -= copy;
     }
 
-    Mutex::Autolock autoLock(mLock);
-    mNumFramesPlayed += size_done / mFrameSize;
+    {
+        Mutex::Autolock autoLock(mLock);
+        mNumFramesPlayed += size_done / mFrameSize;
+    }
+
+    if (postEOS) {
+        mObserver->postAudioEOS(postEOSDelayUs);
+    }
+
+    if (postSeekComplete) {
+        mObserver->postAudioSeekComplete();
+    }
 
     return size_done;
 }
@@ -396,6 +466,8 @@ int64_t AudioPlayer::getRealTimeUs() {
 }
 
 int64_t AudioPlayer::getRealTimeUsLocked() const {
+    CHECK(mStarted);
+    CHECK_NE(mSampleRate, 0);
     return -mLatencyUs + (mNumFramesPlayed * 1000000) / mSampleRate;
 }
 
@@ -403,6 +475,10 @@ int64_t AudioPlayer::getMediaTimeUs() {
     Mutex::Autolock autoLock(mLock);
 
     if (mPositionTimeMediaUs < 0 || mPositionTimeRealUs < 0) {
+        if (mSeeking) {
+            return mSeekTimeUs;
+        }
+
         return 0;
     }
 
@@ -428,8 +504,12 @@ status_t AudioPlayer::seekTo(int64_t time_us) {
     Mutex::Autolock autoLock(mLock);
 
     mSeeking = true;
+    mPositionTimeRealUs = mPositionTimeMediaUs = -1;
     mReachedEOS = false;
     mSeekTimeUs = time_us;
+
+    // Flush resets the number of played frames
+    mNumFramesPlayed = 0;
 
     if (mAudioSink != NULL) {
         mAudioSink->flush();

@@ -25,9 +25,9 @@ import android.content.Intent;
 import android.database.Cursor;
 import android.database.sqlite.SqliteWrapper;
 import android.net.Uri;
+import android.os.Environment;
 import android.telephony.SmsMessage;
 import android.text.TextUtils;
-import android.util.Config;
 import android.util.Log;
 import android.util.Patterns;
 
@@ -45,7 +45,7 @@ import java.util.regex.Pattern;
 public final class Telephony {
     private static final String TAG = "Telephony";
     private static final boolean DEBUG = true;
-    private static final boolean LOCAL_LOGV = DEBUG ? Config.LOGD : Config.LOGV;
+    private static final boolean LOCAL_LOGV = false;
 
     // Constructor
     public Telephony() {
@@ -89,10 +89,16 @@ public final class Telephony {
         public static final String PERSON_ID = "person";
 
         /**
-         * The date the message was sent
+         * The date the message was received
          * <P>Type: INTEGER (long)</P>
          */
         public static final String DATE = "date";
+
+        /**
+         * The date the message was sent
+         * <P>Type: INTEGER (long)</P>
+         */
+        public static final String DATE_SENT = "date_sent";
 
         /**
          * Has the message been read
@@ -561,15 +567,24 @@ public final class Telephony {
              * values:</p>
              *
              * <ul>
-             *   <li><em>transactionId (Integer)</em> - The WAP transaction
-             *    ID</li>
+             *   <li><em>transactionId (Integer)</em> - The WAP transaction ID</li>
              *   <li><em>pduType (Integer)</em> - The WAP PDU type</li>
              *   <li><em>header (byte[])</em> - The header of the message</li>
              *   <li><em>data (byte[])</em> - The data payload of the message</li>
+             *   <li><em>contentTypeParameters (HashMap&lt;String,String&gt;)</em>
+             *   - Any parameters associated with the content type
+             *   (decoded from the WSP Content-Type header)</li>
              * </ul>
              *
              * <p>If a BroadcastReceiver encounters an error while processing
              * this intent it should set the result code appropriately.</p>
+             *
+             * <p>The contentTypeParameters extra value is map of content parameters keyed by
+             * their names.</p>
+             *
+             * <p>If any unassigned well-known parameters are encountered, the key of the map will
+             * be 'unassigned/0x...', where '...' is the hex value of the unassigned parameter.  If
+             * a parameter has No-Value the value in the map will be null.</p>
              */
             @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
             public static final String WAP_PUSH_RECEIVED_ACTION =
@@ -622,7 +637,7 @@ public final class Telephony {
              */
             @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
             public static final String SIM_FULL_ACTION =
-                "android.provider.Telephony.SIM_FULL";
+                    "android.provider.Telephony.SIM_FULL";
 
             /**
              * Broadcast Action: An incoming SMS has been rejected by the
@@ -651,6 +666,7 @@ public final class Telephony {
             public static SmsMessage[] getMessagesFromIntent(
                     Intent intent) {
                 Object[] messages = (Object[]) intent.getSerializableExtra("pdus");
+                String format = intent.getStringExtra("format");
                 byte[][] pduObjs = new byte[messages.length][];
 
                 for (int i = 0; i < messages.length; i++) {
@@ -661,7 +677,7 @@ public final class Telephony {
                 SmsMessage[] msgs = new SmsMessage[pduCount];
                 for (int i = 0; i < pduCount; i++) {
                     pdus[i] = pduObjs[i];
-                    msgs[i] = SmsMessage.createFromPdu(pdus[i]);
+                    msgs[i] = SmsMessage.createFromPdu(pdus[i], format);
                 }
                 return msgs;
             }
@@ -680,10 +696,16 @@ public final class Telephony {
         public static final int MESSAGE_BOX_OUTBOX = 4;
 
         /**
-         * The date the message was sent.
+         * The date the message was received.
          * <P>Type: INTEGER (long)</P>
          */
         public static final String DATE = "date";
+
+        /**
+         * The date the message was sent.
+         * <P>Type: INTEGER (long)</P>
+         */
+        public static final String DATE_SENT = "date_sent";
 
         /**
          * The box which the message belong to, for example, MESSAGE_BOX_INBOX.
@@ -1553,21 +1575,6 @@ public final class Telephony {
             public static final String SENT_TIME = "sent_time";
         }
 
-        public static final class ScrapSpace {
-            /**
-             * The content:// style URL for this table
-             */
-            public static final Uri CONTENT_URI = Uri.parse("content://mms/scrapSpace");
-
-            /**
-             * This is the scrap file we use to store the media attachment when the user
-             * chooses to capture a photo to be attached . We pass {#link@Uri} to the Camera app,
-             * which streams the captured image to the uri. Internally we write the media content
-             * to this file. It's named '.temp.jpg' so Gallery won't pick it up.
-             */
-            public static final String SCRAP_FILE_PATH = "/sdcard/mms/scrapSpace/.temp.jpg";
-        }
-
         public static final class Intents {
             private Intents() {
                 // Non-instantiatable.
@@ -1752,6 +1759,14 @@ public final class Telephony {
 
         public static final String TYPE = "type";
 
+        public static final String INACTIVE_TIMER = "inactivetimer";
+
+        // Only if enabled try Data Connection.
+        public static final String ENABLED = "enabled";
+
+        // Rules apply based on class.
+        public static final String CLASS = "class";
+
         /**
          * The protocol to be used to connect to this APN.
          *
@@ -1768,6 +1783,20 @@ public final class Telephony {
         public static final String ROAMING_PROTOCOL = "roaming_protocol";
 
         public static final String CURRENT = "current";
+
+        /**
+          * Current status of APN
+          * true : enabled APN, false : disabled APN.
+          */
+        public static final String CARRIER_ENABLED = "carrier_enabled";
+
+        /**
+          * Radio Access Technology info
+          * To check what values can hold, refer to ServiceState.java.
+          * This should be spread to other technologies,
+          * but currently only used for LTE(14) and EHRPD(13).
+          */
+        public static final String BEARER = "bearer";
     }
 
     public static final class Intents {

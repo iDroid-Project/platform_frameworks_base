@@ -20,10 +20,11 @@
 #include <utils/RefBase.h>
 #include <binder/IInterface.h>
 #include <binder/Parcel.h>
-#include <surfaceflinger/ISurface.h>
+#include <surfaceflinger/Surface.h>
 #include <binder/IMemory.h>
 #include <utils/String8.h>
 #include <camera/Camera.h>
+#include <gui/ISurfaceTexture.h>
 
 namespace android {
 
@@ -45,8 +46,12 @@ public:
     // allow other processes to use this ICamera interface
     virtual status_t        unlock() = 0;
 
-    // pass the buffered ISurface to the camera service
-    virtual status_t        setPreviewDisplay(const sp<ISurface>& surface) = 0;
+    // pass the buffered Surface to the camera service
+    virtual status_t        setPreviewDisplay(const sp<Surface>& surface) = 0;
+
+    // pass the buffered ISurfaceTexture to the camera service
+    virtual status_t        setPreviewTexture(
+            const sp<ISurfaceTexture>& surfaceTexture) = 0;
 
     // set the preview callback flag to affect how the received frames from
     // preview are handled.
@@ -65,7 +70,7 @@ public:
     virtual status_t        startRecording() = 0;
 
     // stop recording mode
-    virtual void            stopRecording() = 0;    
+    virtual void            stopRecording() = 0;
 
     // get recording state
     virtual bool            recordingEnabled() = 0;
@@ -79,8 +84,14 @@ public:
     // cancel auto focus
     virtual status_t        cancelAutoFocus() = 0;
 
-    // take a picture
-    virtual status_t        takePicture() = 0;
+    /*
+     * take a picture.
+     * @param msgType the message type an application selectively turn on/off
+     * on a photo-by-photo basis. The supported message types are:
+     * CAMERA_MSG_SHUTTER, CAMERA_MSG_RAW_IMAGE, CAMERA_MSG_COMPRESSED_IMAGE,
+     * and CAMERA_MSG_POSTVIEW_FRAME. Any other message types will be ignored.
+     */
+    virtual status_t        takePicture(int msgType) = 0;
 
     // set preview/capture parameters - key/value pairs
     virtual status_t        setParameters(const String8& params) = 0;
@@ -90,6 +101,9 @@ public:
 
     // send command to camera driver
     virtual status_t        sendCommand(int32_t cmd, int32_t arg1, int32_t arg2) = 0;
+
+    // tell the camera hal to store meta data or real YUV data in video buffers.
+    virtual status_t        storeMetaDataInBuffers(bool enabled) = 0;
 };
 
 // ----------------------------------------------------------------------------

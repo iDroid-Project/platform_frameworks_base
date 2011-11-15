@@ -27,7 +27,6 @@
 #include <utils/RefBase.h>
 
 #include <binder/BinderService.h>
-#include <binder/Permission.h>
 
 #include <gui/Sensor.h>
 #include <gui/SensorChannel.h>
@@ -37,6 +36,8 @@
 #include "SensorInterface.h"
 
 // ---------------------------------------------------------------------------
+
+#define DEBUG_CONNECTIONS   false
 
 struct sensors_poll_device_t;
 struct sensors_module_t;
@@ -112,9 +113,9 @@ class SensorService :
 
     // constants
     Vector<Sensor> mSensorList;
+    Vector<Sensor> mUserSensorList;
     DefaultKeyedVector<int, SensorInterface*> mSensorMap;
     Vector<SensorInterface *> mVirtualSensorList;
-    Permission mDump;
     status_t mInitCheck;
 
     // protected by mLock

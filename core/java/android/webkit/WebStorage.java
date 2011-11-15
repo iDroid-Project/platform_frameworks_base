@@ -75,34 +75,53 @@ public final class WebStorage {
     private Handler mHandler = null;
     private Handler mUIHandler = null;
 
-    static class Origin {
-        String mOrigin = null;
-        long mQuota = 0;
-        long mUsage = 0;
+    /**
+     * Class containing the HTML5 database quota and usage for an origin.
+     */
+    public static class Origin {
+        private String mOrigin = null;
+        private long mQuota = 0;
+        private long mUsage = 0;
 
-        public Origin(String origin, long quota, long usage) {
+        private Origin(String origin, long quota, long usage) {
             mOrigin = origin;
             mQuota = quota;
             mUsage = usage;
         }
 
-        public Origin(String origin, long quota) {
+        private Origin(String origin, long quota) {
             mOrigin = origin;
             mQuota = quota;
         }
 
-        public Origin(String origin) {
+        private Origin(String origin) {
             mOrigin = origin;
         }
 
+        /**
+         * An origin string is created using WebCore::SecurityOrigin::toString().
+         * Note that WebCore::SecurityOrigin uses 0 (which is not printed) for
+         * the port if the port is the default for the protocol. Eg
+         * http://www.google.com and http://www.google.com:80 both record a port
+         * of 0 and hence toString() == 'http://www.google.com' for both.
+         * @return The origin string.
+         */
         public String getOrigin() {
             return mOrigin;
         }
 
+        /**
+         * Returns the quota for this origin's HTML5 database.
+         * @return The quota in bytes.
+         */
         public long getQuota() {
             return mQuota;
         }
 
+        /**
+         * Returns the usage for this origin's HTML5 database.
+         * @return The usage in bytes.
+         */
         public long getUsage() {
             return mUsage;
         }
@@ -229,7 +248,8 @@ public final class WebStorage {
      */
 
     /**
-     * Returns a list of origins having a database
+     * Returns a list of origins having a database. The Map is of type
+     * Map<String, Origin>.
      */
     public void getOrigins(ValueCallback<Map> callback) {
         if (callback != null) {

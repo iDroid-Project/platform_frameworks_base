@@ -22,19 +22,18 @@ import android.content.pm.ProviderInfo;
 import android.content.res.AssetFileDescriptor;
 import android.content.res.Configuration;
 import android.database.Cursor;
-import android.database.CursorToBulkCursorAdaptor;
-import android.database.CursorWindow;
-import android.database.IBulkCursor;
-import android.database.IContentObserver;
 import android.database.SQLException;
 import android.net.Uri;
+import android.os.AsyncTask;
 import android.os.Binder;
 import android.os.Bundle;
 import android.os.ParcelFileDescriptor;
 import android.os.Process;
+import android.util.Log;
 
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.util.ArrayList;
 
 /**
@@ -45,9 +44,6 @@ import java.util.ArrayList;
  * applications and must be stored in a content provider. If you don't need to share data amongst
  * multiple applications you can use a database directly via
  * {@link android.database.sqlite.SQLiteDatabase}.
- *
- * <p>For more information, read <a href="{@docRoot}guide/topics/providers/content-providers.html">Content
- * Providers</a>.</p>
  *
  * <p>When a request is made via
  * a {@link ContentResolver} the system inspects the authority of the given URI and passes the
@@ -74,8 +70,16 @@ import java.util.ArrayList;
  * <p>Requests to {@link ContentResolver} are automatically forwarded to the appropriate
  * ContentProvider instance, so subclasses don't have to worry about the details of
  * cross-process calls.</p>
+ *
+ * <div class="special reference">
+ * <h3>Developer Guides</h3>
+ * <p>For more information about using content providers, read the
+ * <a href="{@docRoot}guide/topics/providers/content-providers.html">Content Providers</a>
+ * developer guide.</p>
  */
-public abstract class ContentProvider implements ComponentCallbacks {
+public abstract class ContentProvider implements ComponentCallbacks2 {
+    private static final String TAG = "ContentProvider";
+
     /*
      * Note: if you add methods to ContentProvider, you must add similar methods to
      *       MockContentProvider.
@@ -163,22 +167,9 @@ public abstract class ContentProvider implements ComponentCallbacks {
             return ContentProvider.this;
         }
 
-        /**
-         * Remote version of a query, which returns an IBulkCursor. The bulk
-         * cursor should be wrapped with BulkCursorToCursorAdaptor before use.
-         */
-        public IBulkCursor bulkQuery(Uri uri, String[] projection,
-                String selection, String[] selectionArgs, String sortOrder,
-                IContentObserver observer, CursorWindow window) {
-            enforceReadPermission(uri);
-            Cursor cursor = ContentProvider.this.query(uri, projection,
-                    selection, selectionArgs, sortOrder);
-            if (cursor == null) {
-                return null;
-            }
-            return new CursorToBulkCursorAdaptor(cursor, observer,
-                    ContentProvider.this.getClass().getName(),
-                    hasWritePermission(uri), window);
+        @Override
+        public String getProviderName() {
+            return getContentProvider().getClass().getName();
         }
 
         public Cursor query(Uri uri, String[] projection,
@@ -242,11 +233,20 @@ public abstract class ContentProvider implements ComponentCallbacks {
             return ContentProvider.this.openAssetFile(uri, mode);
         }
 
-        /**
-         * @hide
-         */
-        public Bundle call(String method, String request, Bundle args) {
-            return ContentProvider.this.call(method, request, args);
+        public Bundle call(String method, String arg, Bundle extras) {
+            return ContentProvider.this.call(method, arg, extras);
+        }
+
+        @Override
+        public String[] getStreamTypes(Uri uri, String mimeTypeFilter) {
+            return ContentProvider.this.getStreamTypes(uri, mimeTypeFilter);
+        }
+
+        @Override
+        public AssetFileDescriptor openTypedAssetFile(Uri uri, String mimeType, Bundle opts)
+                throws FileNotFoundException {
+            enforceReadPermission(uri);
+            return ContentProvider.this.openTypedAssetFile(uri, mimeType, opts);
         }
 
         private void enforceReadPermission(Uri uri) {
@@ -375,8 +375,8 @@ public abstract class ContentProvider implements ComponentCallbacks {
      * Return the name of the permission required for read-only access to
      * this content provider.  This method can be called from multiple
      * threads, as described in
-     * <a href="{@docRoot}guide/topics/fundamentals.html#procthread">Application Fundamentals:
-     * Processes and Threads</a>.
+     * <a href="{@docRoot}guide/topics/fundamentals/processes-and-threads.html#Threads">Processes
+     * and Threads</a>.
      */
     public final String getReadPermission() {
         return mReadPermission;
@@ -397,8 +397,8 @@ public abstract class ContentProvider implements ComponentCallbacks {
      * Return the name of the permission required for read/write access to
      * this content provider.  This method can be called from multiple
      * threads, as described in
-     * <a href="{@docRoot}guide/topics/fundamentals.html#procthread">Application Fundamentals:
-     * Processes and Threads</a>.
+     * <a href="{@docRoot}guide/topics/fundamentals/processes-and-threads.html#Threads">Processes
+     * and Threads</a>.
      */
     public final String getWritePermission() {
         return mWritePermission;
@@ -419,8 +419,8 @@ public abstract class ContentProvider implements ComponentCallbacks {
      * Return the path-based permissions required for read and/or write access to
      * this content provider.  This method can be called from multiple
      * threads, as described in
-     * <a href="{@docRoot}guide/topics/fundamentals.html#procthread">Application Fundamentals:
-     * Processes and Threads</a>.
+     * <a href="{@docRoot}guide/topics/fundamentals/processes-and-threads.html#Threads">Processes
+     * and Threads</a>.
      */
     public final PathPermission[] getPathPermissions() {
         return mPathPermissions;
@@ -477,11 +477,14 @@ public abstract class ContentProvider implements ComponentCallbacks {
     public void onLowMemory() {
     }
 
+    public void onTrimMemory(int level) {
+    }
+
     /**
      * Implement this to handle query requests from clients.
      * This method can be called from multiple threads, as described in
-     * <a href="{@docRoot}guide/topics/fundamentals.html#procthread">Application Fundamentals:
-     * Processes and Threads</a>.
+     * <a href="{@docRoot}guide/topics/fundamentals/processes-and-threads.html#Threads">Processes
+     * and Threads</a>.
      * <p>
      * Example client call:<p>
      * <pre>// Request a specific record.
@@ -541,8 +544,8 @@ public abstract class ContentProvider implements ComponentCallbacks {
      * <code>vnd.android.cursor.item</code> for a single record,
      * or <code>vnd.android.cursor.dir/</code> for multiple items.
      * This method can be called from multiple threads, as described in
-     * <a href="{@docRoot}guide/topics/fundamentals.html#procthread">Application Fundamentals:
-     * Processes and Threads</a>.
+     * <a href="{@docRoot}guide/topics/fundamentals/processes-and-threads.html#Threads">Processes
+     * and Threads</a>.
      *
      * <p>Note that there are no permissions needed for an application to
      * access this information; if your content provider requires read and/or
@@ -560,8 +563,8 @@ public abstract class ContentProvider implements ComponentCallbacks {
      * As a courtesy, call {@link ContentResolver#notifyChange(android.net.Uri ,android.database.ContentObserver) notifyChange()}
      * after inserting.
      * This method can be called from multiple threads, as described in
-     * <a href="{@docRoot}guide/topics/fundamentals.html#procthread">Application Fundamentals:
-     * Processes and Threads</a>.
+     * <a href="{@docRoot}guide/topics/fundamentals/processes-and-threads.html#Threads">Processes
+     * and Threads</a>.
      * @param uri The content:// URI of the insertion request.
      * @param values A set of column_name/value pairs to add to the database.
      * @return The URI for the newly inserted item.
@@ -575,8 +578,8 @@ public abstract class ContentProvider implements ComponentCallbacks {
      * As a courtesy, call {@link ContentResolver#notifyChange(android.net.Uri ,android.database.ContentObserver) notifyChange()}
      * after inserting.
      * This method can be called from multiple threads, as described in
-     * <a href="{@docRoot}guide/topics/fundamentals.html#procthread">Application Fundamentals:
-     * Processes and Threads</a>.
+     * <a href="{@docRoot}guide/topics/fundamentals/processes-and-threads.html#Threads">Processes
+     * and Threads</a>.
      *
      * @param uri The content:// URI of the insertion request.
      * @param values An array of sets of column_name/value pairs to add to the database.
@@ -597,8 +600,8 @@ public abstract class ContentProvider implements ComponentCallbacks {
      * As a courtesy, call {@link ContentResolver#notifyChange(android.net.Uri ,android.database.ContentObserver) notifyDelete()}
      * after deleting.
      * This method can be called from multiple threads, as described in
-     * <a href="{@docRoot}guide/topics/fundamentals.html#procthread">Application Fundamentals:
-     * Processes and Threads</a>.
+     * <a href="{@docRoot}guide/topics/fundamentals/processes-and-threads.html#Threads">Processes
+     * and Threads</a>.
      *
      * <p>The implementation is responsible for parsing out a row ID at the end
      * of the URI, if a specific row is being deleted. That is, the client would
@@ -619,8 +622,8 @@ public abstract class ContentProvider implements ComponentCallbacks {
      * As a courtesy, call {@link ContentResolver#notifyChange(android.net.Uri ,android.database.ContentObserver) notifyChange()}
      * after updating.
      * This method can be called from multiple threads, as described in
-     * <a href="{@docRoot}guide/topics/fundamentals.html#procthread">Application Fundamentals:
-     * Processes and Threads</a>.
+     * <a href="{@docRoot}guide/topics/fundamentals/processes-and-threads.html#Threads">Processes
+     * and Threads</a>.
      *
      * @param uri The URI to query. This can potentially have a record ID if this
      * is an update request for a specific record.
@@ -636,8 +639,8 @@ public abstract class ContentProvider implements ComponentCallbacks {
      * Override this to handle requests to open a file blob.
      * The default implementation always throws {@link FileNotFoundException}.
      * This method can be called from multiple threads, as described in
-     * <a href="{@docRoot}guide/topics/fundamentals.html#procthread">Application Fundamentals:
-     * Processes and Threads</a>.
+     * <a href="{@docRoot}guide/topics/fundamentals/processes-and-threads.html#Threads">Processes
+     * and Threads</a>.
      *
      * <p>This method returns a ParcelFileDescriptor, which is returned directly
      * to the caller.  This way large data (such as images and documents) can be
@@ -674,8 +677,8 @@ public abstract class ContentProvider implements ComponentCallbacks {
      * that need to be able to return sub-sections of files, often assets
      * inside of their .apk.
      * This method can be called from multiple threads, as described in
-     * <a href="{@docRoot}guide/topics/fundamentals.html#procthread">Application Fundamentals:
-     * Processes and Threads</a>.
+     * <a href="{@docRoot}guide/topics/fundamentals/processes-and-threads.html#Threads">Processes
+     * and Threads</a>.
      *
      * <p>If you implement this, your clients must be able to deal with such
      * file slices, either directly with
@@ -756,6 +759,144 @@ public abstract class ContentProvider implements ComponentCallbacks {
     }
 
     /**
+     * Called by a client to determine the types of data streams that this
+     * content provider supports for the given URI.  The default implementation
+     * returns null, meaning no types.  If your content provider stores data
+     * of a particular type, return that MIME type if it matches the given
+     * mimeTypeFilter.  If it can perform type conversions, return an array
+     * of all supported MIME types that match mimeTypeFilter.
+     *
+     * @param uri The data in the content provider being queried.
+     * @param mimeTypeFilter The type of data the client desires.  May be
+     * a pattern, such as *\/* to retrieve all possible data types.
+     * @return Returns null if there are no possible data streams for the
+     * given mimeTypeFilter.  Otherwise returns an array of all available
+     * concrete MIME types.
+     *
+     * @see #getType(Uri)
+     * @see #openTypedAssetFile(Uri, String, Bundle)
+     * @see ClipDescription#compareMimeTypes(String, String)
+     */
+    public String[] getStreamTypes(Uri uri, String mimeTypeFilter) {
+        return null;
+    }
+
+    /**
+     * Called by a client to open a read-only stream containing data of a
+     * particular MIME type.  This is like {@link #openAssetFile(Uri, String)},
+     * except the file can only be read-only and the content provider may
+     * perform data conversions to generate data of the desired type.
+     *
+     * <p>The default implementation compares the given mimeType against the
+     * result of {@link #getType(Uri)} and, if the match, simple calls
+     * {@link #openAssetFile(Uri, String)}.
+     *
+     * <p>See {@link ClipData} for examples of the use and implementation
+     * of this method.
+     *
+     * @param uri The data in the content provider being queried.
+     * @param mimeTypeFilter The type of data the client desires.  May be
+     * a pattern, such as *\/*, if the caller does not have specific type
+     * requirements; in this case the content provider will pick its best
+     * type matching the pattern.
+     * @param opts Additional options from the client.  The definitions of
+     * these are specific to the content provider being called.
+     *
+     * @return Returns a new AssetFileDescriptor from which the client can
+     * read data of the desired type.
+     *
+     * @throws FileNotFoundException Throws FileNotFoundException if there is
+     * no file associated with the given URI or the mode is invalid.
+     * @throws SecurityException Throws SecurityException if the caller does
+     * not have permission to access the data.
+     * @throws IllegalArgumentException Throws IllegalArgumentException if the
+     * content provider does not support the requested MIME type.
+     *
+     * @see #getStreamTypes(Uri, String)
+     * @see #openAssetFile(Uri, String)
+     * @see ClipDescription#compareMimeTypes(String, String)
+     */
+    public AssetFileDescriptor openTypedAssetFile(Uri uri, String mimeTypeFilter, Bundle opts)
+            throws FileNotFoundException {
+        if ("*/*".equals(mimeTypeFilter)) {
+            // If they can take anything, the untyped open call is good enough.
+            return openAssetFile(uri, "r");
+        }
+        String baseType = getType(uri);
+        if (baseType != null && ClipDescription.compareMimeTypes(baseType, mimeTypeFilter)) {
+            // Use old untyped open call if this provider has a type for this
+            // URI and it matches the request.
+            return openAssetFile(uri, "r");
+        }
+        throw new FileNotFoundException("Can't open " + uri + " as type " + mimeTypeFilter);
+    }
+
+    /**
+     * Interface to write a stream of data to a pipe.  Use with
+     * {@link ContentProvider#openPipeHelper}.
+     */
+    public interface PipeDataWriter<T> {
+        /**
+         * Called from a background thread to stream data out to a pipe.
+         * Note that the pipe is blocking, so this thread can block on
+         * writes for an arbitrary amount of time if the client is slow
+         * at reading.
+         *
+         * @param output The pipe where data should be written.  This will be
+         * closed for you upon returning from this function.
+         * @param uri The URI whose data is to be written.
+         * @param mimeType The desired type of data to be written.
+         * @param opts Options supplied by caller.
+         * @param args Your own custom arguments.
+         */
+        public void writeDataToPipe(ParcelFileDescriptor output, Uri uri, String mimeType,
+                Bundle opts, T args);
+    }
+
+    /**
+     * A helper function for implementing {@link #openTypedAssetFile}, for
+     * creating a data pipe and background thread allowing you to stream
+     * generated data back to the client.  This function returns a new
+     * ParcelFileDescriptor that should be returned to the caller (the caller
+     * is responsible for closing it).
+     *
+     * @param uri The URI whose data is to be written.
+     * @param mimeType The desired type of data to be written.
+     * @param opts Options supplied by caller.
+     * @param args Your own custom arguments.
+     * @param func Interface implementing the function that will actually
+     * stream the data.
+     * @return Returns a new ParcelFileDescriptor holding the read side of
+     * the pipe.  This should be returned to the caller for reading; the caller
+     * is responsible for closing it when done.
+     */
+    public <T> ParcelFileDescriptor openPipeHelper(final Uri uri, final String mimeType,
+            final Bundle opts, final T args, final PipeDataWriter<T> func)
+            throws FileNotFoundException {
+        try {
+            final ParcelFileDescriptor[] fds = ParcelFileDescriptor.createPipe();
+
+            AsyncTask<Object, Object, Object> task = new AsyncTask<Object, Object, Object>() {
+                @Override
+                protected Object doInBackground(Object... params) {
+                    func.writeDataToPipe(fds[1], uri, mimeType, opts, args);
+                    try {
+                        fds[1].close();
+                    } catch (IOException e) {
+                        Log.w(TAG, "Failure closing pipe", e);
+                    }
+                    return null;
+                }
+            };
+            task.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, (Object[])null);
+
+            return fds[0];
+        } catch (IOException e) {
+            throw new FileNotFoundException("failure making pipe");
+        }
+    }
+
+    /**
      * Returns true if this instance is a temporary content provider.
      * @return true if this instance is a temporary content provider
      */
@@ -781,6 +922,11 @@ public abstract class ContentProvider implements ComponentCallbacks {
      * @param info Registered information about this content provider
      */
     public void attachInfo(Context context, ProviderInfo info) {
+        /*
+         * We may be using AsyncTask from binder threads.  Make it init here
+         * so its static handler is on the main thread.
+         */
+        AsyncTask.init();
 
         /*
          * Only allow it to be set once, so after the content service gives
@@ -808,8 +954,8 @@ public abstract class ContentProvider implements ComponentCallbacks {
      * elements as there were operations will be returned.  If any of the calls
      * fail, it is up to the implementation how many of the others take effect.
      * This method can be called from multiple threads, as described in
-     * <a href="{@docRoot}guide/topics/fundamentals.html#procthread">Application Fundamentals:
-     * Processes and Threads</a>.
+     * <a href="{@docRoot}guide/topics/fundamentals/processes-and-threads.html#Threads">Processes
+     * and Threads</a>.
      *
      * @param operations the operations to apply
      * @return the results of the applications
@@ -827,16 +973,44 @@ public abstract class ContentProvider implements ComponentCallbacks {
     }
 
     /**
-     * @hide -- until interface has proven itself
+     * Call a provider-defined method.  This can be used to implement
+     * interfaces that are cheaper and/or unnatural for a table-like
+     * model.
      *
-     * Call an provider-defined method.  This can be used to implement
-     * interfaces that are cheaper than using a Cursor.
-     *
-     * @param method Method name to call.  Opaque to framework.
-     * @param request Nullable String argument passed to method.
-     * @param args Nullable Bundle argument passed to method.
+     * @param method method name to call.  Opaque to framework, but should not be null.
+     * @param arg provider-defined String argument.  May be null.
+     * @param extras provider-defined Bundle argument.  May be null.
+     * @return provider-defined return value.  May be null.  Null is also
+     *   the default for providers which don't implement any call methods.
      */
-    public Bundle call(String method, String request, Bundle args) {
+    public Bundle call(String method, String arg, Bundle extras) {
         return null;
+    }
+
+    /**
+     * Implement this to shut down the ContentProvider instance. You can then
+     * invoke this method in unit tests.
+     * 
+     * <p>
+     * Android normally handles ContentProvider startup and shutdown
+     * automatically. You do not need to start up or shut down a
+     * ContentProvider. When you invoke a test method on a ContentProvider,
+     * however, a ContentProvider instance is started and keeps running after
+     * the test finishes, even if a succeeding test instantiates another
+     * ContentProvider. A conflict develops because the two instances are
+     * usually running against the same underlying data source (for example, an
+     * sqlite database).
+     * </p>
+     * <p>
+     * Implementing shutDown() avoids this conflict by providing a way to
+     * terminate the ContentProvider. This method can also prevent memory leaks
+     * from multiple instantiations of the ContentProvider, and it can ensure
+     * unit test isolation by allowing you to completely clean up the test
+     * fixture before moving on to the next test.
+     * </p>
+     */
+    public void shutdown() {
+        Log.w(TAG, "implement ContentProvider shutdown() to make sure all database " +
+                "connections are gracefully shutdown");
     }
 }

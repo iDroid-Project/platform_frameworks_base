@@ -61,10 +61,11 @@ import android.content.ContentResolver;
 import android.net.SSLCertificateSocketFactory;
 import android.net.SSLSessionCache;
 import android.os.Looper;
+import android.util.Base64;
 import android.util.Log;
 
 /**
- * Subclass of the Apache {@link DefaultHttpClient} that is configured with
+ * Implementation of the Apache {@link DefaultHttpClient} that is configured with
  * reasonable default settings and registered schemes for Android, and
  * also lets the user add {@link HttpRequestInterceptor} classes.
  * Don't create this directly, use the {@link #newInstance} factory method.
@@ -79,8 +80,16 @@ public final class AndroidHttpClient implements HttpClient {
     // Gzip of data shorter than this probably won't be worthwhile
     public static long DEFAULT_SYNC_MIN_GZIP_BYTES = 256;
 
+    // Default connection and socket timeout of 60 seconds.  Tweak to taste.
+    private static final int SOCKET_OPERATION_TIMEOUT = 60 * 1000;
+
     private static final String TAG = "AndroidHttpClient";
 
+    private static String[] textContentTypes = new String[] {
+            "text/",
+            "application/xml",
+            "application/json"
+    };
 
     /** Interceptor throws an exception if the executing thread is blocked */
     private static final HttpRequestInterceptor sThreadCheckInterceptor =
@@ -107,9 +116,8 @@ public final class AndroidHttpClient implements HttpClient {
         // and it's not worth it to pay the penalty of checking every time.
         HttpConnectionParams.setStaleCheckingEnabled(params, false);
 
-        // Default connection and socket timeout of 20 seconds.  Tweak to taste.
-        HttpConnectionParams.setConnectionTimeout(params, 60 * 1000);
-        HttpConnectionParams.setSoTimeout(params, 60 * 1000);
+        HttpConnectionParams.setConnectionTimeout(params, SOCKET_OPERATION_TIMEOUT);
+        HttpConnectionParams.setSoTimeout(params, SOCKET_OPERATION_TIMEOUT);
         HttpConnectionParams.setSocketBufferSize(params, 8192);
 
         // Don't handle redirects -- return them to the caller.  Our code
@@ -125,7 +133,8 @@ public final class AndroidHttpClient implements HttpClient {
         schemeRegistry.register(new Scheme("http",
                 PlainSocketFactory.getSocketFactory(), 80));
         schemeRegistry.register(new Scheme("https",
-                SSLCertificateSocketFactory.getHttpSocketFactory(30 * 1000, sessionCache), 443));
+                SSLCertificateSocketFactory.getHttpSocketFactory(
+                SOCKET_OPERATION_TIMEOUT, sessionCache), 443));
 
         ClientConnectionManager manager =
                 new ThreadSafeClientConnManager(params, schemeRegistry);
@@ -358,7 +367,7 @@ public final class AndroidHttpClient implements HttpClient {
         }
         if (level < Log.VERBOSE || level > Log.ASSERT) {
             throw new IllegalArgumentException("Level is out of range ["
-                + Log.VERBOSE + ".." + Log.ASSERT + "]");    
+                + Log.VERBOSE + ".." + Log.ASSERT + "]");
         }
 
         curlConfiguration = new LoggingConfiguration(name, level);
@@ -431,12 +440,17 @@ public final class AndroidHttpClient implements HttpClient {
                 if (entity.getContentLength() < 1024) {
                     ByteArrayOutputStream stream = new ByteArrayOutputStream();
                     entity.writeTo(stream);
-                    String entityString = stream.toString();
 
-                    // TODO: Check the content type, too.
-                    builder.append(" --data-ascii \"")
-                            .append(entityString)
-                            .append("\"");
+                    if (isBinaryContent(request)) {
+                        String base64 = Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP);
+                        builder.insert(0, "echo '" + base64 + "' | base64 -d > /tmp/$$.bin; ");
+                        builder.append(" --data-binary @/tmp/$$.bin");
+                    } else {
+                        String entityString = stream.toString();
+                        builder.append(" --data-ascii \"")
+                                .append(entityString)
+                                .append("\"");
+                    }
                 } else {
                     builder.append(" [TOO MUCH DATA TO INCLUDE]");
                 }
@@ -444,6 +458,30 @@ public final class AndroidHttpClient implements HttpClient {
         }
 
         return builder.toString();
+    }
+
+    private static boolean isBinaryContent(HttpUriRequest request) {
+        Header[] headers;
+        headers = request.getHeaders(Headers.CONTENT_ENCODING);
+        if (headers != null) {
+            for (Header header : headers) {
+                if ("gzip".equalsIgnoreCase(header.getValue())) {
+                    return true;
+                }
+            }
+        }
+
+        headers = request.getHeaders(Headers.CONTENT_TYPE);
+        if (headers != null) {
+            for (Header header : headers) {
+                for (String contentType : textContentTypes) {
+                    if (header.getValue().startsWith(contentType)) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
     }
 
     /**

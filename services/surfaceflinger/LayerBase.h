@@ -27,13 +27,13 @@
 #include <utils/RefBase.h>
 
 #include <ui/Region.h>
-#include <ui/Overlay.h>
 
 #include <surfaceflinger/ISurfaceComposerClient.h>
-#include <private/surfaceflinger/SharedBufferStack.h>
 #include <private/surfaceflinger/LayerState.h>
 
 #include <pixelflinger/pixelflinger.h>
+
+#include <hardware/hwcomposer.h>
 
 #include "DisplayHardware/DisplayHardware.h"
 #include "Transform.h"
@@ -42,13 +42,13 @@ namespace android {
 
 // ---------------------------------------------------------------------------
 
-class DisplayHardware;
 class Client;
+class DisplayHardware;
 class GraphicBuffer;
 class GraphicPlane;
+class Layer;
 class LayerBaseClient;
 class SurfaceFlinger;
-class Texture;
 
 // ---------------------------------------------------------------------------
 
@@ -81,11 +81,11 @@ public:
                 Region          transparentRegion;
             };
 
-            void setName(const String8& name);
+    virtual void setName(const String8& name);
             String8 getName() const;
 
             // modify current state
-            bool setPosition(int32_t x, int32_t y);
+            bool setPosition(float x, float y);
             bool setLayer(uint32_t z);
             bool setSize(uint32_t w, uint32_t h);
             bool setAlpha(uint8_t alpha);
@@ -106,8 +106,15 @@ public:
             void invalidate();
 
     virtual sp<LayerBaseClient> getLayerBaseClient() const { return 0; }
+    virtual sp<Layer> getLayer() const { return 0; }
 
     virtual const char* getTypeId() const { return "LayerBase"; }
+
+    virtual void setGeometry(hwc_layer_t* hwcl);
+    virtual void setPerFrameData(hwc_layer_t* hwcl);
+            void setOverlay(bool inOverlay);
+            bool isOverlay() const;
+
 
     /**
      * draw - performs some global clipping optimizations
@@ -116,13 +123,8 @@ public:
      * to perform the actual drawing.  
      */
     virtual void draw(const Region& clip) const;
-    virtual void drawForSreenShot() const;
+    virtual void drawForSreenShot();
     
-    /**
-     * bypass mode
-     */
-    virtual bool setBypass(bool enable) { return false; }
-
     /**
      * onDraw - draws the surface.
      */
@@ -174,9 +176,9 @@ public:
     virtual void unlockPageFlip(const Transform& planeTransform, Region& outDirtyRegion);
     
     /**
-     * needsBlending - true if this surface needs blending
+     * isOpaque - true if this surface is opaque
      */
-    virtual bool needsBlending() const  { return false; }
+    virtual bool isOpaque() const  { return true; }
 
     /**
      * needsDithering - true if this surface needs dithering
@@ -184,11 +186,9 @@ public:
     virtual bool needsDithering() const { return false; }
 
     /**
-     * needsLinearFiltering - true if this surface needs filtering
+     * needsLinearFiltering - true if this surface's state requires filtering
      */
-    virtual bool needsFiltering() const {
-        return (!(mFlags & DisplayHardware::SLOW_CONFIG)) && mNeedsFiltering;
-    }
+    virtual bool needsFiltering() const { return mNeedsFiltering; }
 
     /**
      * isSecure - true if this surface is secure, that is if it prevents
@@ -196,12 +196,19 @@ public:
      */
     virtual bool isSecure() const       { return false; }
 
+    /**
+     * isProtected - true if the layer may contain protected content in the
+     * GRALLOC_USAGE_PROTECTED sense.
+     */
+    virtual bool isProtected() const   { return false; }
+
     /** called with the state lock when the surface is removed from the
      *  current list */
     virtual void onRemoved() { };
     
     /** always call base class first */
     virtual void dump(String8& result, char* scratch, size_t size) const;
+    virtual void shortDump(String8& result, char* scratch, size_t size) const;
 
 
     enum { // flags for doTransaction()
@@ -214,8 +221,7 @@ public:
     inline  State&          currentState()          { return mCurrentState; }
 
     int32_t  getOrientation() const { return mOrientation; }
-    int  tx() const             { return mLeft; }
-    int  ty() const             { return mTop; }
+    int32_t  getPlaneOrientation() const { return mPlaneOrientation; }
     
 protected:
     const GraphicPlane& graphicPlane(int dpy) const;
@@ -224,26 +230,35 @@ protected:
           void clearWithOpenGL(const Region& clip, GLclampf r, GLclampf g,
                                GLclampf b, GLclampf alpha) const;
           void clearWithOpenGL(const Region& clip) const;
-          void drawWithOpenGL(const Region& clip, const Texture& texture) const;
-          
-          // these must be called from the post/drawing thread
-          void setBufferCrop(const Rect& crop);
-          void setBufferTransform(uint32_t transform);
+          void drawWithOpenGL(const Region& clip) const;
+
+          void setFiltering(bool filtering);
+          bool getFiltering() const;
 
                 sp<SurfaceFlinger> mFlinger;
                 uint32_t        mFlags;
 
-                // post/drawing thread
-                Rect mBufferCrop;
-                uint32_t mBufferTransform;
+private:
+                // accessed only in the main thread
+                // Whether filtering is forced on or not
+                bool            mFiltering;
 
                 // cached during validateVisibility()
+                // Whether filtering is needed b/c of the drawingstate
                 bool            mNeedsFiltering;
+
+                // this layer is currently handled by the hwc. this is
+                // updated at composition time, always frmo the composition
+                // thread.
+                bool            mInOverlay;
+
+protected:
+                // cached during validateVisibility()
                 int32_t         mOrientation;
+                int32_t         mPlaneOrientation;
+                Transform       mTransform;
                 GLfloat         mVertices[4][2];
                 Rect            mTransformedBounds;
-                int             mLeft;
-                int             mTop;
             
                 // these are protected by an external lock
                 State           mCurrentState;
@@ -274,58 +289,42 @@ private:
 class LayerBaseClient : public LayerBase
 {
 public:
-    class Surface;
-
             LayerBaseClient(SurfaceFlinger* flinger, DisplayID display,
                         const sp<Client>& client);
-    virtual ~LayerBaseClient();
 
-            sp<Surface> getSurface();
-    virtual sp<Surface> createSurface() const;
+            virtual ~LayerBaseClient();
+
+            sp<ISurface> getSurface();
+            wp<IBinder> getSurfaceBinder() const;
+            virtual wp<IBinder> getSurfaceTextureBinder() const;
+
     virtual sp<LayerBaseClient> getLayerBaseClient() const {
         return const_cast<LayerBaseClient*>(this); }
+
     virtual const char* getTypeId() const { return "LayerBaseClient"; }
 
     uint32_t getIdentity() const { return mIdentity; }
 
-    class Surface : public BnSurface  {
-    public:
-        int32_t getIdentity() const { return mIdentity; }
-        
-    protected:
-        Surface(const sp<SurfaceFlinger>& flinger, int identity,
-                const sp<LayerBaseClient>& owner);
-        virtual ~Surface();
-        virtual status_t onTransact(uint32_t code, const Parcel& data,
-                Parcel* reply, uint32_t flags);
-        sp<LayerBaseClient> getOwner() const;
-
-    private:
-        virtual sp<GraphicBuffer> requestBuffer(int bufferIdx,
-                uint32_t w, uint32_t h, uint32_t format, uint32_t usage);
-        virtual status_t setBufferCount(int bufferCount);
-
-        virtual status_t registerBuffers(const ISurface::BufferHeap& buffers); 
-        virtual void postBuffer(ssize_t offset);
-        virtual void unregisterBuffers();
-        virtual sp<OverlayRef> createOverlay(uint32_t w, uint32_t h,
-                int32_t format, int32_t orientation);
-
-    protected:
-        friend class LayerBaseClient;
-        sp<SurfaceFlinger>  mFlinger;
-        int32_t             mIdentity;
-        wp<LayerBaseClient> mOwner;
-    };
-
-    friend class Surface;
-
 protected:
     virtual void dump(String8& result, char* scratch, size_t size) const;
+    virtual void shortDump(String8& result, char* scratch, size_t size) const;
+
+    class LayerCleaner {
+        sp<SurfaceFlinger> mFlinger;
+        wp<LayerBaseClient> mLayer;
+    protected:
+        ~LayerCleaner();
+    public:
+        LayerCleaner(const sp<SurfaceFlinger>& flinger,
+                const sp<LayerBaseClient>& layer);
+    };
 
 private:
+    virtual sp<ISurface> createSurface();
+
     mutable Mutex mLock;
-    mutable wp<Surface> mClientSurface;
+    mutable bool mHasSurface;
+    wp<IBinder> mClientSurfaceBinder;
     const wp<Client> mClientRef;
     // only read
     const uint32_t mIdentity;

@@ -16,7 +16,7 @@
 
 package android.app;
 
-import android.content.ComponentCallbacks;
+import android.content.ComponentCallbacks2;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.ContextWrapper;
@@ -46,13 +46,10 @@ import java.io.PrintWriter;
  * to do any CPU intensive (such as MP3 playback) or blocking (such as
  * networking) operations, it should spawn its own thread in which to do that
  * work.  More information on this can be found in
- * <a href="{@docRoot}guide/topics/fundamentals.html#procthread">Application Fundamentals:
- * Processes and Threads</a>.  The {@link IntentService} class is available
+ * <a href="{@docRoot}guide/topics/fundamentals/processes-and-threads.html">Processes and
+ * Threads</a>.  The {@link IntentService} class is available
  * as a standard implementation of Service that has its own thread where it
  * schedules its work to be done.</p>
- * 
- * <p>The Service class is an important part of an
- * <a href="{@docRoot}guide/topics/fundamentals.html#lcycles">application's overall lifecycle</a>.</p>
  * 
  * <p>Topics covered here:
  * <ol>
@@ -63,7 +60,13 @@ import java.io.PrintWriter;
  * <li><a href="#LocalServiceSample">Local Service Sample</a>
  * <li><a href="#RemoteMessengerServiceSample">Remote Messenger Service Sample</a>
  * </ol>
- * 
+ *
+ * <div class="special reference">
+ * <h3>Developer Guides</h3>
+ * <p>For a detailed discussion about how to create services, read the
+ * <a href="{@docRoot}guide/topics/fundamentals/services.html">Services</a> developer guide.</p>
+ * </div>
+ *
  * <a name="WhatIsAService"></a>
  * <h3>What is a Service?</h3>
  * 
@@ -273,7 +276,7 @@ import java.io.PrintWriter;
  * {@sample development/samples/ApiDemos/src/com/example/android/apis/app/MessengerServiceActivities.java
  *      bind}
  */
-public abstract class Service extends ContextWrapper implements ComponentCallbacks {
+public abstract class Service extends ContextWrapper implements ComponentCallbacks2 {
     private static final String TAG = "Service";
 
     public Service() {
@@ -370,6 +373,13 @@ public abstract class Service extends ContextWrapper implements ComponentCallbac
     public static final int START_REDELIVER_INTENT = 3;
     
     /**
+     * Special constant for reporting that we are done processing
+     * {@link #onTaskRemoved(Intent)}.
+     * @hide
+     */
+    public static final int START_TASK_REMOVED_COMPLETE = 1000;
+
+    /**
      * This flag is set in {@link #onStartCommand} if the Intent is a
      * re-delivery of a previously delivered intent, because the service
      * had previously returned {@link #START_REDELIVER_INTENT} but had been
@@ -443,7 +453,10 @@ public abstract class Service extends ContextWrapper implements ComponentCallbac
     
     public void onLowMemory() {
     }
-    
+
+    public void onTrimMemory(int level) {
+    }
+
     /**
      * Return the communication channel to the service.  May return null if 
      * clients can not bind to the service.  The returned
@@ -453,9 +466,9 @@ public abstract class Service extends ContextWrapper implements ComponentCallbac
      * 
      * <p><em>Note that unlike other application components, calls on to the
      * IBinder interface returned here may not happen on the main thread
-     * of the process</em>.  More information about this can be found
-     * in <a href="{@docRoot}guide/topics/fundamentals.html#procthread">Application Fundamentals:
-     * Processes and Threads</a>.</p>
+     * of the process</em>.  More information about the main thread can be found in
+     * <a href="{@docRoot}guide/topics/fundamentals/processes-and-threads.html">Processes and
+     * Threads</a>.</p>
      * 
      * @param intent The Intent that was used to bind to this service,
      * as given to {@link android.content.Context#bindService
@@ -498,6 +511,19 @@ public abstract class Service extends ContextWrapper implements ComponentCallbac
     public void onRebind(Intent intent) {
     }
     
+    /**
+     * This is called if the service is currently running and the user has
+     * removed a task that comes from the service's application.  If you have
+     * set {@link android.content.pm.ServiceInfo#FLAG_STOP_WITH_TASK ServiceInfo.FLAG_STOP_WITH_TASK}
+     * then you will not receive this callback; instead, the service will simply
+     * be stopped.
+     *
+     * @param rootIntent The original root Intent that was used to launch
+     * the task that is being removed.
+     */
+    public void onTaskRemoved(Intent rootIntent) {
+    }
+
     /**
      * Stop the service, if it was previously started.  This is the same as
      * calling {@link android.content.Context#stopService} for this particular service.
@@ -568,6 +594,8 @@ public abstract class Service extends ContextWrapper implements ComponentCallbac
      * be killed when they would like to avoid it), vs allowing the performance
      * of the entire system to be decreased, this method was deemed less
      * important.
+     * 
+     * @hide
      */
     @Deprecated
     public final void setForeground(boolean isForeground) {
@@ -585,7 +613,7 @@ public abstract class Service extends ContextWrapper implements ComponentCallbac
      * would notice if their music stopped playing.
      * 
      * <p>If you need your application to run on platform versions prior to API
-     * level 5, you can use the following model to call the the older {@link #setForeground}
+     * level 5, you can use the following model to call the the older setForeground()
      * or this modern method as appropriate:
      * 
      * {@sample development/samples/ApiDemos/src/com/example/android/apis/app/ForegroundService.java
@@ -638,12 +666,6 @@ public abstract class Service extends ContextWrapper implements ComponentCallbac
      */
     protected void dump(FileDescriptor fd, PrintWriter writer, String[] args) {
         writer.println("nothing to dump");
-    }
-    
-    @Override
-    protected void finalize() throws Throwable {
-        super.finalize();
-        //Log.i("Service", "Finalizing Service: " + this);
     }
 
     // ------------------ Internal API ------------------

@@ -32,6 +32,7 @@ import android.util.Log;
 import android.text.TextUtils;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
@@ -41,6 +42,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.HashMap;
 import java.util.Map;
 
+import com.google.android.collect.Lists;
 import com.google.android.collect.Maps;
 
 /**
@@ -179,6 +181,7 @@ public class AccountManager {
     public static final String KEY_PASSWORD = "password";
 
     public static final String KEY_ACCOUNTS = "accounts";
+
     public static final String KEY_ACCOUNT_AUTHENTICATOR_RESPONSE = "accountAuthenticatorResponse";
     public static final String KEY_ACCOUNT_MANAGER_RESPONSE = "accountManagerResponse";
     public static final String KEY_AUTHENTICATOR_TYPES = "authenticator_types";
@@ -188,17 +191,23 @@ public class AccountManager {
     public static final String KEY_ERROR_CODE = "errorCode";
     public static final String KEY_ERROR_MESSAGE = "errorMessage";
     public static final String KEY_USERDATA = "userdata";
+
     /**
      * Authenticators using 'customTokens' option will also get the UID of the
      * caller
-     * @hide
      */
     public static final String KEY_CALLER_UID = "callerUid";
+    public static final String KEY_CALLER_PID = "callerPid";
 
     /**
-     * @hide 
+     * The Android package of the caller will be set in the options bundle by the
+     * {@link AccountManager} and will be passed to the AccountManagerService and
+     * to the AccountAuthenticators. The uid of the caller will be known by the
+     * AccountManagerService as well as the AccountAuthenticators so they will be able to
+     * verify that the package is consistent with the uid (a uid might be shared by many
+     * packages).
      */
-    public static final String KEY_CALLER_PID = "callerPid";
+    public static final String KEY_ANDROID_PACKAGE_NAME = "androidPackageName";
 
     /**
      * Boolean, if set and 'customTokens' the authenticator is responsible for
@@ -808,11 +817,16 @@ public class AccountManager {
             final Activity activity, AccountManagerCallback<Bundle> callback, Handler handler) {
         if (account == null) throw new IllegalArgumentException("account is null");
         if (authTokenType == null) throw new IllegalArgumentException("authTokenType is null");
+        final Bundle optionsIn = new Bundle();
+        if (options != null) {
+            optionsIn.putAll(options);
+        }
+        optionsIn.putString(KEY_ANDROID_PACKAGE_NAME, mContext.getPackageName());
         return new AmsTask(activity, handler, callback) {
             public void doWork() throws RemoteException {
                 mService.getAuthToken(mResponse, account, authTokenType,
                         false /* notifyOnAuthFailure */, true /* expectActivityLaunch */,
-                        options);
+                        optionsIn);
             }
         }.start();
     }
@@ -884,16 +898,104 @@ public class AccountManager {
      * If the account is no longer present on the device, the return value is
      * authenticator-dependent.  The caller should verify the validity of the
      * account before requesting an auth token.
+     * @deprecated use {@link #getAuthToken(Account, String, android.os.Bundle,
+     * boolean, AccountManagerCallback, android.os.Handler)} instead
+     */
+    @Deprecated
+    public AccountManagerFuture<Bundle> getAuthToken(
+            final Account account, final String authTokenType, 
+            final boolean notifyAuthFailure,
+            AccountManagerCallback<Bundle> callback, Handler handler) {
+        return getAuthToken(account, authTokenType, null, notifyAuthFailure, callback, 
+                handler);
+    }
+
+    /**
+     * Gets an auth token of the specified type for a particular account,
+     * optionally raising a notification if the user must enter credentials.
+     * This method is intended for background tasks and services where the
+     * user should not be immediately interrupted with a password prompt.
+     *
+     * <p>If a previously generated auth token is cached for this account and
+     * type, then it is returned.  Otherwise, if a saved password is
+     * available, it is sent to the server to generate a new auth token.
+     * Otherwise, an {@link Intent} is returned which, when started, will
+     * prompt the user for a password.  If the notifyAuthFailure parameter is
+     * set, a status bar notification is also created with the same Intent,
+     * alerting the user that they need to enter a password at some point.
+     *
+     * <p>In that case, you may need to wait until the user responds, which
+     * could take hours or days or forever.  When the user does respond and
+     * supply a new password, the account manager will broadcast the
+     * {@link #LOGIN_ACCOUNTS_CHANGED_ACTION} Intent, which applications can
+     * use to try again.
+     *
+     * <p>If notifyAuthFailure is not set, it is the application's
+     * responsibility to launch the returned Intent at some point.
+     * Either way, the result from this call will not wait for user action.
+     *
+     * <p>Some authenticators have auth token <em>types</em>, whose value
+     * is authenticator-dependent.  Some services use different token types to
+     * access different functionality -- for example, Google uses different auth
+     * tokens to access Gmail and Google Calendar for the same account.
+     *
+     * <p>This method may be called from any thread, but the returned
+     * {@link AccountManagerFuture} must not be used on the main thread.
+     *
+     * <p>This method requires the caller to hold the permission
+     * {@link android.Manifest.permission#USE_CREDENTIALS}.
+     *
+     * @param account The account to fetch an auth token for
+     * @param authTokenType The auth token type, an authenticator-dependent
+     *     string token, must not be null
+     * @param options Authenticator-specific options for the request,
+     *     may be null or empty
+     * @param notifyAuthFailure True to add a notification to prompt the
+     *     user for a password if necessary, false to leave that to the caller
+     * @param callback Callback to invoke when the request completes,
+     *     null for no callback
+     * @param handler {@link Handler} identifying the callback thread,
+     *     null for the main thread
+     * @return An {@link AccountManagerFuture} which resolves to a Bundle with
+     *     at least the following fields on success:
+     * <ul>
+     * <li> {@link #KEY_ACCOUNT_NAME} - the name of the account you supplied
+     * <li> {@link #KEY_ACCOUNT_TYPE} - the type of the account
+     * <li> {@link #KEY_AUTHTOKEN} - the auth token you wanted
+     * </ul>
+     *
+     * (Other authenticator-specific values may be returned.)  If the user
+     * must enter credentials, the returned Bundle contains only
+     * {@link #KEY_INTENT} with the {@link Intent} needed to launch a prompt.
+     *
+     * If an error occurred, {@link AccountManagerFuture#getResult()} throws:
+     * <ul>
+     * <li> {@link AuthenticatorException} if the authenticator failed to respond
+     * <li> {@link OperationCanceledException} if the operation is canceled for
+     *      any reason, incluidng the user canceling a credential request
+     * <li> {@link IOException} if the authenticator experienced an I/O problem
+     *      creating a new auth token, usually because of network trouble
+     * </ul>
+     * If the account is no longer present on the device, the return value is
+     * authenticator-dependent.  The caller should verify the validity of the
+     * account before requesting an auth token.
      */
     public AccountManagerFuture<Bundle> getAuthToken(
-            final Account account, final String authTokenType, final boolean notifyAuthFailure,
+            final Account account, final String authTokenType, final Bundle options,
+            final boolean notifyAuthFailure,
             AccountManagerCallback<Bundle> callback, Handler handler) {
+
         if (account == null) throw new IllegalArgumentException("account is null");
         if (authTokenType == null) throw new IllegalArgumentException("authTokenType is null");
+        final Bundle optionsIn = new Bundle();
+        if (options != null) {
+            optionsIn.putAll(options);
+        }
+        optionsIn.putString(KEY_ANDROID_PACKAGE_NAME, mContext.getPackageName());
         return new AmsTask(null, handler, callback) {
             public void doWork() throws RemoteException {
                 mService.getAuthToken(mResponse, account, authTokenType,
-                        notifyAuthFailure, false /* expectActivityLaunch */, null /* options */);
+                        notifyAuthFailure, false /* expectActivityLaunch */, optionsIn);
             }
         }.start();
     }
@@ -951,10 +1053,16 @@ public class AccountManager {
             final Bundle addAccountOptions,
             final Activity activity, AccountManagerCallback<Bundle> callback, Handler handler) {
         if (accountType == null) throw new IllegalArgumentException("accountType is null");
+        final Bundle optionsIn = new Bundle();
+        if (addAccountOptions != null) {
+            optionsIn.putAll(addAccountOptions);
+        }
+        optionsIn.putString(KEY_ANDROID_PACKAGE_NAME, mContext.getPackageName());
+
         return new AmsTask(activity, handler, callback) {
             public void doWork() throws RemoteException {
                 mService.addAcount(mResponse, accountType, authTokenType,
-                        requiredFeatures, activity != null, addAccountOptions);
+                        requiredFeatures, activity != null, optionsIn);
             }
         }.start();
     }
@@ -1274,7 +1382,7 @@ public class AccountManager {
         /** Handles the responses from the AccountManager */
         private class Response extends IAccountManagerResponse.Stub {
             public void onResult(Bundle bundle) {
-                Intent intent = bundle.getParcelable("intent");
+                Intent intent = bundle.getParcelable(KEY_INTENT);
                 if (intent != null && mActivity != null) {
                     // since the user provided an Activity we will silently start intents
                     // that we see
@@ -1661,6 +1769,67 @@ public class AccountManager {
                 activity, addAccountOptions, getAuthTokenOptions, callback, handler);
         task.start();
         return task;
+    }
+
+    /**
+     * Returns an intent to an {@link Activity} that prompts the user to choose from a list of
+     * accounts.
+     * The caller will then typically start the activity by calling
+     * <code>startActivityWithResult(intent, ...);</code>.
+     * <p>
+     * On success the activity returns a Bundle with the account name and type specified using
+     * keys {@link #KEY_ACCOUNT_NAME} and {@link #KEY_ACCOUNT_TYPE}.
+     * <p>
+     * The most common case is to call this with one account type, e.g.:
+     * <p>
+     * <pre>  newChooseAccountsIntent(null, null, new String[]{"com.google"}, false, null,
+     * null, null, null);</pre>
+     * @param selectedAccount if specified, indicates that the {@link Account} is the currently
+     * selected one, according to the caller's definition of selected.
+     * @param allowableAccounts an optional {@link ArrayList} of accounts that are allowed to be
+     * shown. If not specified then this field will not limit the displayed accounts.
+     * @param allowableAccountTypes an optional string array of account types. These are used
+     * both to filter the shown accounts and to filter the list of account types that are shown
+     * when adding an account.
+     * @param alwaysPromptForAccount if set the account chooser screen is always shown, otherwise
+     * it is only shown when there is more than one account from which to choose
+     * @param descriptionOverrideText if non-null this string is used as the description in the
+     * accounts chooser screen rather than the default
+     * @param addAccountAuthTokenType this string is passed as the {@link #addAccount}
+     * authTokenType parameter
+     * @param addAccountRequiredFeatures this string array is passed as the {@link #addAccount}
+     * requiredFeatures parameter
+     * @param addAccountOptions This {@link Bundle} is passed as the {@link #addAccount} options
+     * parameter
+     * @return an {@link Intent} that can be used to launch the ChooseAccount activity flow.
+     */
+    static public Intent newChooseAccountIntent(Account selectedAccount,
+            ArrayList<Account> allowableAccounts,
+            String[] allowableAccountTypes,
+            boolean alwaysPromptForAccount,
+            String descriptionOverrideText,
+            String addAccountAuthTokenType,
+            String[] addAccountRequiredFeatures,
+            Bundle addAccountOptions) {
+        Intent intent = new Intent();
+        intent.setClassName("android", "android.accounts.ChooseTypeAndAccountActivity");
+        intent.putExtra(ChooseTypeAndAccountActivity.EXTRA_ALLOWABLE_ACCOUNTS_ARRAYLIST,
+                allowableAccounts);
+        intent.putExtra(ChooseTypeAndAccountActivity.EXTRA_ALLOWABLE_ACCOUNT_TYPES_STRING_ARRAY,
+                allowableAccountTypes);
+        intent.putExtra(ChooseTypeAndAccountActivity.EXTRA_ADD_ACCOUNT_OPTIONS_BUNDLE,
+                addAccountOptions);
+        intent.putExtra(ChooseTypeAndAccountActivity.EXTRA_SELECTED_ACCOUNT, selectedAccount);
+        intent.putExtra(ChooseTypeAndAccountActivity.EXTRA_ALWAYS_PROMPT_FOR_ACCOUNT,
+                alwaysPromptForAccount);
+        intent.putExtra(ChooseTypeAndAccountActivity.EXTRA_DESCRIPTION_TEXT_OVERRIDE,
+                descriptionOverrideText);
+        intent.putExtra(ChooseTypeAndAccountActivity.EXTRA_ADD_ACCOUNT_AUTH_TOKEN_TYPE_STRING,
+                addAccountAuthTokenType);
+        intent.putExtra(
+                ChooseTypeAndAccountActivity.EXTRA_ADD_ACCOUNT_REQUIRED_FEATURES_STRING_ARRAY,
+                addAccountRequiredFeatures);
+        return intent;
     }
 
     private final HashMap<OnAccountsUpdateListener, Handler> mAccountsUpdatedListeners =

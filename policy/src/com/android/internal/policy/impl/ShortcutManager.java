@@ -25,6 +25,7 @@ import android.provider.Settings;
 import android.util.Log;
 import android.util.SparseArray;
 import android.view.KeyCharacterMap;
+import android.view.KeyEvent;
 
 import java.net.URISyntaxException;
 
@@ -100,21 +101,30 @@ class ShortcutManager extends ContentObserver {
      * This will first try an exact match (with modifiers), and then try a
      * match without modifiers (primary character on a key).
      * 
-     * @param keyCode The keycode of the key pushed.
-     * @param modifiers The modifiers without any that are used for chording
-     *            to invoke a shortcut.
+     * @param kcm The key character map of the device on which the key was pressed.
+     * @param keyCode The key code.
+     * @param metaState The meta state, omitting any modifiers that were used
+     * to invoke the shortcut.
      * @return The intent that matches the shortcut, or null if not found.
      */
-    public Intent getIntent(int keyCode, int modifiers) {
-        KeyCharacterMap kcm = KeyCharacterMap.load(KeyCharacterMap.BUILT_IN_KEYBOARD);
-        // First try the exact keycode (with modifiers)
-        int shortcut = kcm.get(keyCode, modifiers);
-        Intent intent = shortcut != 0 ? mShortcutIntents.get(shortcut) : null; 
-        if (intent != null) return intent;
-        
-        // Next try the keycode without modifiers (the primary character on that key)
-        shortcut = Character.toLowerCase(kcm.get(keyCode, 0));
-        return shortcut != 0 ? mShortcutIntents.get(shortcut) : null;
+    public Intent getIntent(KeyCharacterMap kcm, int keyCode, int metaState) {
+        Intent intent = null;
+
+        // First try the exact keycode (with modifiers).
+        int shortcut = kcm.get(keyCode, metaState);
+        if (shortcut != 0) {
+            intent = mShortcutIntents.get(shortcut);
+        }
+
+        // Next try the primary character on that key.
+        if (intent == null) {
+            shortcut = Character.toLowerCase(kcm.getDisplayLabel(keyCode));
+            if (shortcut != 0) {
+                intent = mShortcutIntents.get(shortcut);
+            }
+        }
+
+        return intent;
     }
 
 }

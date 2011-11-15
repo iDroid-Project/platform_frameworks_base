@@ -145,6 +145,15 @@ interface ITelephony {
     boolean supplyPin(String pin);
 
     /**
+     * Supply puk to unlock the SIM and set SIM pin to new pin.
+     *  Blocks until a result is determined.
+     * @param puk The puk to check.
+     *        pin The new pin to be set in SIM
+     * @return whether the operation was a success.
+     */
+    boolean supplyPuk(String puk, String pin);
+
+    /**
      * Handles PIN MMI commands (PIN/PIN2/PUK/PUK2), which are initiated
      * without SEND (so <code>dial</code> is not appropriate).
      *
@@ -239,9 +248,11 @@ interface ITelephony {
     String getCdmaEriText();
 
     /**
-     * Returns true if CDMA provisioning needs to run.
+     * Returns true if OTA service provisioning needs to run.
+     * Only relevant on some technologies, others will always
+     * return false.
      */
-    boolean getCdmaNeedsProvisioning();
+    boolean needsOtaServiceProvisioning();
 
     /**
       * Returns the unread count of voicemails
@@ -252,10 +263,20 @@ interface ITelephony {
       * Returns the network type
       */
     int getNetworkType();
-    
+
     /**
      * Return true if an ICC card is present
      */
     boolean hasIccCard();
+
+    /**
+     * Return if the current radio is LTE on CDMA. This
+     * is a tri-state return value as for a period of time
+     * the mode may be unknown.
+     *
+     * @return {@link Phone#LTE_ON_CDMA_UNKNOWN}, {@link Phone#LTE_ON_CDMA_FALSE}
+     * or {@link PHone#LTE_ON_CDMA_TRUE}
+     */
+    int getLteOnCdmaMode();
 }
 

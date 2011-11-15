@@ -22,8 +22,8 @@ import android.content.IntentFilter;
 import android.os.Message;
 import android.util.Log;
 
-import com.android.internal.util.HierarchicalState;
-import com.android.internal.util.HierarchicalStateMachine;
+import com.android.internal.util.State;
+import com.android.internal.util.StateMachine;
 
 /**
  * This state machine is used to serialize the connections
@@ -39,12 +39,13 @@ import com.android.internal.util.HierarchicalStateMachine;
  * @hide
  */
 
-public class BluetoothProfileState extends HierarchicalStateMachine {
+public class BluetoothProfileState extends StateMachine {
     private static final boolean DBG = true;
     private static final String TAG = "BluetoothProfileState";
 
     public static final int HFP = 0;
     public static final int A2DP = 1;
+    public static final int HID = 2;
 
     static final int TRANSITION_TO_STABLE = 100;
 
@@ -58,16 +59,25 @@ public class BluetoothProfileState extends HierarchicalStateMachine {
         public void onReceive(Context context, Intent intent) {
             String action = intent.getAction();
             BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
-            if (action.equals(BluetoothHeadset.ACTION_STATE_CHANGED)) {
-                int newState = intent.getIntExtra(BluetoothHeadset.EXTRA_STATE, 0);
-                if (mProfile == HFP && (newState == BluetoothHeadset.STATE_CONNECTED ||
-                    newState == BluetoothHeadset.STATE_DISCONNECTED)) {
+            if (device == null) {
+                return;
+            }
+            if (action.equals(BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED)) {
+                int newState = intent.getIntExtra(BluetoothProfile.EXTRA_STATE, 0);
+                if (mProfile == HFP && (newState == BluetoothProfile.STATE_CONNECTED ||
+                    newState == BluetoothProfile.STATE_DISCONNECTED)) {
                     sendMessage(TRANSITION_TO_STABLE);
                 }
-            } else if (action.equals(BluetoothA2dp.ACTION_SINK_STATE_CHANGED)) {
-                int newState = intent.getIntExtra(BluetoothA2dp.EXTRA_SINK_STATE, 0);
-                if (mProfile == A2DP && (newState == BluetoothA2dp.STATE_CONNECTED ||
-                    newState == BluetoothA2dp.STATE_DISCONNECTED)) {
+            } else if (action.equals(BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED)) {
+                int newState = intent.getIntExtra(BluetoothProfile.EXTRA_STATE, 0);
+                if (mProfile == A2DP && (newState == BluetoothProfile.STATE_CONNECTED ||
+                    newState == BluetoothProfile.STATE_DISCONNECTED)) {
+                    sendMessage(TRANSITION_TO_STABLE);
+                }
+            } else if (action.equals(BluetoothInputDevice.ACTION_CONNECTION_STATE_CHANGED)) {
+                int newState = intent.getIntExtra(BluetoothProfile.EXTRA_STATE, 0);
+                if (mProfile == HID && (newState == BluetoothProfile.STATE_CONNECTED ||
+                    newState == BluetoothProfile.STATE_DISCONNECTED)) {
                     sendMessage(TRANSITION_TO_STABLE);
                 }
             } else if (action.equals(BluetoothDevice.ACTION_ACL_DISCONNECTED)) {
@@ -86,21 +96,22 @@ public class BluetoothProfileState extends HierarchicalStateMachine {
         setInitialState(mStableState);
 
         IntentFilter filter = new IntentFilter();
-        filter.addAction(BluetoothA2dp.ACTION_SINK_STATE_CHANGED);
-        filter.addAction(BluetoothHeadset.ACTION_STATE_CHANGED);
+        filter.addAction(BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED);
+        filter.addAction(BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED);
+        filter.addAction(BluetoothInputDevice.ACTION_CONNECTION_STATE_CHANGED);
         filter.addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED);
         context.registerReceiver(mBroadcastReceiver, filter);
     }
 
-    private class StableState extends HierarchicalState {
+    private class StableState extends State {
         @Override
-        protected void enter() {
+        public void enter() {
             log("Entering Stable State");
             mPendingDevice = null;
         }
 
         @Override
-        protected boolean processMessage(Message msg) {
+        public boolean processMessage(Message msg) {
             if (msg.what != TRANSITION_TO_STABLE) {
                 transitionTo(mPendingCommandState);
             }
@@ -108,15 +119,15 @@ public class BluetoothProfileState extends HierarchicalStateMachine {
         }
     }
 
-    private class PendingCommandState extends HierarchicalState {
+    private class PendingCommandState extends State {
         @Override
-        protected void enter() {
+        public void enter() {
             log("Entering PendingCommandState State");
             dispatchMessage(getCurrentMessage());
         }
 
         @Override
-        protected boolean processMessage(Message msg) {
+        public boolean processMessage(Message msg) {
             if (msg.what == TRANSITION_TO_STABLE) {
                 transitionTo(mStableState);
             } else {

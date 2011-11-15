@@ -30,6 +30,7 @@ import android.util.Log;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.graphics.Bitmap;
+import android.graphics.SurfaceTexture;
 import android.media.AudioManager;
 
 import java.io.FileDescriptor;
@@ -42,15 +43,20 @@ import java.lang.ref.WeakReference;
  * MediaPlayer class can be used to control playback
  * of audio/video files and streams. An example on how to use the methods in
  * this class can be found in {@link android.widget.VideoView}.
- * Please see <a href="{@docRoot}guide/topics/media/index.html">Audio and Video</a>
- * for additional help using MediaPlayer.
  *
  * <p>Topics covered here are:
  * <ol>
  * <li><a href="#StateDiagram">State Diagram</a>
  * <li><a href="#Valid_and_Invalid_States">Valid and Invalid States</a>
  * <li><a href="#Permissions">Permissions</a>
+ * <li><a href="#Callbacks">Register informational and error callbacks</a>
  * </ol>
+ *
+ * <div class="special reference">
+ * <h3>Developer Guides</h3>
+ * <p>For more information about how to use MediaPlayer, read the
+ * <a href="{@docRoot}guide/topics/media/mediaplayer.html">Media Playback</a> developer guide.</p>
+ * </div>
  *
  * <a name="StateDiagram"></a>
  * <h3>State Diagram</h3>
@@ -379,6 +385,11 @@ import java.lang.ref.WeakReference;
  *     <td>{} </p></td>
  *     <td>This method can be called in any state and calling it does not change
  *         the object state. </p></td></tr>
+ * <tr><td>setSurface </p></td>
+ *     <td>any </p></td>
+ *     <td>{} </p></td>
+ *     <td>This method can be called in any state and calling it does not change
+ *         the object state. </p></td></tr>
  * <tr><td>setLooping </p></td>
  *     <td>{Idle, Initialized, Stopped, Prepared, Started, Paused,
  *         PlaybackCompleted}</p></td>
@@ -452,6 +463,28 @@ import java.lang.ref.WeakReference;
  * android.R.styleable#AndroidManifestUsesPermission &lt;uses-permission&gt;}
  * element.
  *
+ * <p>This class requires the {@link android.Manifest.permission#INTERNET} permission
+ * when used with network-based content.
+ *
+ * <a name="Callbacks"></a>
+ * <h3>Callbacks</h3>
+ * <p>Applications may want to register for informational and error
+ * events in order to be informed of some internal state update and
+ * possible runtime errors during playback or streaming. Registration for
+ * these events is done by properly setting the appropriate listeners (via calls
+ * to
+ * {@link #setOnPreparedListener(OnPreparedListener)}setOnPreparedListener,
+ * {@link #setOnVideoSizeChangedListener(OnVideoSizeChangedListener)}setOnVideoSizeChangedListener,
+ * {@link #setOnSeekCompleteListener(OnSeekCompleteListener)}setOnSeekCompleteListener,
+ * {@link #setOnCompletionListener(OnCompletionListener)}setOnCompletionListener,
+ * {@link #setOnBufferingUpdateListener(OnBufferingUpdateListener)}setOnBufferingUpdateListener,
+ * {@link #setOnInfoListener(OnInfoListener)}setOnInfoListener,
+ * {@link #setOnErrorListener(OnErrorListener)}setOnErrorListener, etc).
+ * In order to receive the respective callback
+ * associated with these listeners, applications are required to create
+ * MediaPlayer objects on a thread with its own Looper running (main UI
+ * thread by default has a Looper running).
+ *
  */
 public class MediaPlayer
 {
@@ -500,9 +533,9 @@ public class MediaPlayer
     private final static String IMEDIA_PLAYER = "android.media.IMediaPlayer";
 
     private int mNativeContext; // accessed by native methods
+    private int mNativeSurfaceTexture;  // accessed by native methods
     private int mListenerContext; // accessed by native methods
-    private Surface mSurface; // accessed by native methods
-    private SurfaceHolder  mSurfaceHolder;
+    private SurfaceHolder mSurfaceHolder;
     private EventHandler mEventHandler;
     private PowerManager.WakeLock mWakeLock = null;
     private boolean mScreenOnWhilePlaying;
@@ -533,9 +566,10 @@ public class MediaPlayer
     }
 
     /*
-     * Update the MediaPlayer ISurface. Call after updating mSurface.
+     * Update the MediaPlayer SurfaceTexture.
+     * Call after setting a new display surface.
      */
-    private native void _setVideoSurface();
+    private native void _setVideoSurface(Surface surface);
 
     /**
      * Create a request parcel which can be routed to the native media
@@ -577,20 +611,53 @@ public class MediaPlayer
     }
 
     /**
-     * Sets the SurfaceHolder to use for displaying the video portion of the media.
-     * This call is optional. Not calling it when playing back a video will
-     * result in only the audio track being played.
+     * Sets the {@link SurfaceHolder} to use for displaying the video
+     * portion of the media.
+     *
+     * Either a surface holder or surface must be set if a display or video sink
+     * is needed.  Not calling this method or {@link #setSurface(Surface)}
+     * when playing back a video will result in only the audio track being played.
+     * A null surface holder or surface will result in only the audio track being
+     * played.
      *
      * @param sh the SurfaceHolder to use for video display
      */
     public void setDisplay(SurfaceHolder sh) {
         mSurfaceHolder = sh;
+        Surface surface;
         if (sh != null) {
-            mSurface = sh.getSurface();
+            surface = sh.getSurface();
         } else {
-            mSurface = null;
+            surface = null;
         }
-        _setVideoSurface();
+        _setVideoSurface(surface);
+        updateSurfaceScreenOn();
+    }
+
+    /**
+     * Sets the {@link Surface} to be used as the sink for the video portion of
+     * the media. This is similar to {@link #setDisplay(SurfaceHolder)}, but
+     * does not support {@link #setScreenOnWhilePlaying(boolean)}.  Setting a
+     * Surface will un-set any Surface or SurfaceHolder that was previously set.
+     * A null surface will result in only the audio track being played.
+     *
+     * If the Surface sends frames to a {@link SurfaceTexture}, the timestamps
+     * returned from {@link SurfaceTexture#getTimestamp()} will have an
+     * unspecified zero point.  These timestamps cannot be directly compared
+     * between different media sources, different instances of the same media
+     * source, or multiple runs of the same program.  The timestamp is normally
+     * monotonically increasing and is unaffected by time-of-day adjustments,
+     * but it is reset when the position is set.
+     *
+     * @param surface The {@link Surface} to be used for the video portion of
+     * the media.
+     */
+    public void setSurface(Surface surface) {
+        if (mScreenOnWhilePlaying && surface != null) {
+            Log.w(TAG, "setScreenOnWhilePlaying(true) is ineffective for Surface");
+        }
+        mSurfaceHolder = null;
+        _setVideoSurface(surface);
         updateSurfaceScreenOn();
     }
 
@@ -644,6 +711,8 @@ public class MediaPlayer
 
         return null;
     }
+
+    // Note no convenience method to create a MediaPlayer with SurfaceTexture sink.
 
     /**
      * Convenience method to create a MediaPlayer for a given resource id.
@@ -699,7 +768,6 @@ public class MediaPlayer
      * @param uri the Content URI of the data you want to play
      * @param headers the headers to be sent together with the request for the data
      * @throws IllegalStateException if it is called in an invalid state
-     * @hide pending API council
      */
     public void setDataSource(Context context, Uri uri, Map<String, String> headers)
         throws IOException, IllegalArgumentException, SecurityException, IllegalStateException {
@@ -733,6 +801,7 @@ public class MediaPlayer
                 fd.close();
             }
         }
+
         Log.d(TAG, "Couldn't open file on client side, trying server side");
         setDataSource(uri.toString(), headers);
         return;
@@ -744,7 +813,8 @@ public class MediaPlayer
      * @param path the path of the file, or the http/rtsp URL of the stream you want to play
      * @throws IllegalStateException if it is called in an invalid state
      */
-    public native void setDataSource(String path) throws IOException, IllegalArgumentException, IllegalStateException;
+    public native void setDataSource(String path)
+            throws IOException, IllegalArgumentException, SecurityException, IllegalStateException;
 
     /**
      * Sets the data source (file-path or http/rtsp URL) to use.
@@ -754,8 +824,29 @@ public class MediaPlayer
      * @throws IllegalStateException if it is called in an invalid state
      * @hide pending API council
      */
-    public native void setDataSource(String path,  Map<String, String> headers)
-            throws IOException, IllegalArgumentException, IllegalStateException;
+    public void setDataSource(String path, Map<String, String> headers)
+            throws IOException, IllegalArgumentException, SecurityException, IllegalStateException
+    {
+        String[] keys = null;
+        String[] values = null;
+
+        if (headers != null) {
+            keys = new String[headers.size()];
+            values = new String[headers.size()];
+
+            int i = 0;
+            for (Map.Entry<String, String> entry: headers.entrySet()) {
+                keys[i] = entry.getKey();
+                values[i] = entry.getValue();
+                ++i;
+            }
+        }
+        _setDataSource(path, keys, values);
+    }
+
+    private native void _setDataSource(
+        String path, String[] keys, String[] values)
+        throws IOException, IllegalArgumentException, SecurityException, IllegalStateException;
 
     /**
      * Sets the data source (FileDescriptor) to use. It is the caller's responsibility
@@ -894,6 +985,9 @@ public class MediaPlayer
      */
     public void setScreenOnWhilePlaying(boolean screenOn) {
         if (mScreenOnWhilePlaying != screenOn) {
+            if (screenOn && mSurfaceHolder == null) {
+                Log.w(TAG, "setScreenOnWhilePlaying(true) is ineffective without a SurfaceHolder");
+            }
             mScreenOnWhilePlaying = screenOn;
             updateSurfaceScreenOn();
         }
@@ -1055,7 +1149,14 @@ public class MediaPlayer
     /**
      * Releases resources associated with this MediaPlayer object.
      * It is considered good practice to call this method when you're
-     * done using the MediaPlayer.
+     * done using the MediaPlayer. For instance, whenever the Activity
+     * of an application is paused, this method should be invoked to
+     * release the MediaPlayer object. In addition to unnecessary resources
+     * (such as memory and instances of codecs) being hold, failure to
+     * call this method immediately if a MediaPlayer object is no longer
+     * needed may also lead to continuous battery consumption for mobile
+     * devices, and playback failure if no multiple instances of the
+     * same codec is supported on a device.
      */
     public void release() {
         stayAwake(false);
@@ -1067,6 +1168,7 @@ public class MediaPlayer
         mOnErrorListener = null;
         mOnInfoListener = null;
         mOnVideoSizeChangedListener = null;
+        mOnTimedTextListener = null;
         _release();
     }
 
@@ -1085,53 +1187,6 @@ public class MediaPlayer
     }
 
     private native void _reset();
-
-    /**
-     * Suspends the MediaPlayer. The only methods that may be called while
-     * suspended are {@link #reset()}, {@link #release()} and {@link #resume()}.
-     * MediaPlayer will release its hardware resources as far as
-     * possible and reasonable. A successfully suspended MediaPlayer will
-     * cease sending events.
-     * If suspension is successful, this method returns true, otherwise
-     * false is returned and the player's state is not affected.
-     * @hide
-     */
-    public boolean suspend() {
-        if (native_suspend_resume(true) < 0) {
-            return false;
-        }
-
-        stayAwake(false);
-
-        // make sure none of the listeners get called anymore
-        mEventHandler.removeCallbacksAndMessages(null);
-
-        return true;
-    }
-
-    /**
-     * Resumes the MediaPlayer. Only to be called after a previous (successful)
-     * call to {@link #suspend()}.
-     * MediaPlayer will return to a state close to what it was in before
-     * suspension.
-     * @hide
-     */
-    public boolean resume() {
-        if (native_suspend_resume(false) < 0) {
-            return false;
-        }
-
-        if (isPlaying()) {
-            stayAwake(true);
-        }
-
-        return true;
-    }
-
-    /**
-     * @hide
-     */
-    private native int native_suspend_resume(boolean isSuspend);
 
     /**
      * Sets the audio stream type for this MediaPlayer. See {@link AudioManager}
@@ -1221,6 +1276,118 @@ public class MediaPlayer
      */
     public native void attachAuxEffect(int effectId);
 
+    /* Do not change these values (starting with KEY_PARAMETER) without updating
+     * their counterparts in include/media/mediaplayer.h!
+     */
+    /*
+     * Key used in setParameter method.
+     * Indicates the index of the timed text track to be enabled/disabled.
+     * The index includes both the in-band and out-of-band timed text.
+     * The index should start from in-band text if any. Application can retrieve the number
+     * of in-band text tracks by using MediaMetadataRetriever::extractMetadata().
+     * Note it might take a few hundred ms to scan an out-of-band text file
+     * before displaying it.
+     */
+    private static final int KEY_PARAMETER_TIMED_TEXT_TRACK_INDEX = 1000;
+    /*
+     * Key used in setParameter method.
+     * Used to add out-of-band timed text source path.
+     * Application can add multiple text sources by calling setParameter() with
+     * KEY_PARAMETER_TIMED_TEXT_ADD_OUT_OF_BAND_SOURCE multiple times.
+     */
+    private static final int KEY_PARAMETER_TIMED_TEXT_ADD_OUT_OF_BAND_SOURCE = 1001;
+
+    // There are currently no defined keys usable from Java with get*Parameter.
+    // But if any keys are defined, the order must be kept in sync with include/media/mediaplayer.h.
+    // private static final int KEY_PARAMETER_... = ...;
+
+    /**
+     * Sets the parameter indicated by key.
+     * @param key key indicates the parameter to be set.
+     * @param value value of the parameter to be set.
+     * @return true if the parameter is set successfully, false otherwise
+     * {@hide}
+     */
+    public native boolean setParameter(int key, Parcel value);
+
+    /**
+     * Sets the parameter indicated by key.
+     * @param key key indicates the parameter to be set.
+     * @param value value of the parameter to be set.
+     * @return true if the parameter is set successfully, false otherwise
+     * {@hide}
+     */
+    public boolean setParameter(int key, String value) {
+        Parcel p = Parcel.obtain();
+        p.writeString(value);
+        boolean ret = setParameter(key, p);
+        p.recycle();
+        return ret;
+    }
+
+    /**
+     * Sets the parameter indicated by key.
+     * @param key key indicates the parameter to be set.
+     * @param value value of the parameter to be set.
+     * @return true if the parameter is set successfully, false otherwise
+     * {@hide}
+     */
+    public boolean setParameter(int key, int value) {
+        Parcel p = Parcel.obtain();
+        p.writeInt(value);
+        boolean ret = setParameter(key, p);
+        p.recycle();
+        return ret;
+    }
+
+    /**
+     * Gets the value of the parameter indicated by key.
+     * @param key key indicates the parameter to get.
+     * @param reply value of the parameter to get.
+     */
+    private native void getParameter(int key, Parcel reply);
+
+    /**
+     * Gets the value of the parameter indicated by key.
+     * The caller is responsible for recycling the returned parcel.
+     * @param key key indicates the parameter to get.
+     * @return value of the parameter.
+     * {@hide}
+     */
+    public Parcel getParcelParameter(int key) {
+        Parcel p = Parcel.obtain();
+        getParameter(key, p);
+        return p;
+    }
+
+    /**
+     * Gets the value of the parameter indicated by key.
+     * @param key key indicates the parameter to get.
+     * @return value of the parameter.
+     * {@hide}
+     */
+    public String getStringParameter(int key) {
+        Parcel p = Parcel.obtain();
+        getParameter(key, p);
+        String ret = p.readString();
+        p.recycle();
+        return ret;
+    }
+
+    /**
+     * Gets the value of the parameter indicated by key.
+     * @param key key indicates the parameter to get.
+     * @return value of the parameter.
+     * {@hide}
+     */
+    public int getIntParameter(int key) {
+        Parcel p = Parcel.obtain();
+        getParameter(key, p);
+        int ret = p.readInt();
+        p.recycle();
+        return ret;
+    }
+
     /**
      * Sets the send level of the player to the attached auxiliary effect
      * {@see #attachAuxEffect(int)}. The level value range is 0 to 1.0.
@@ -1275,6 +1442,44 @@ public class MediaPlayer
     private native final void native_setup(Object mediaplayer_this);
     private native final void native_finalize();
 
+    /**
+     * @param index The index of the text track to be turned on.
+     * @return true if the text track is enabled successfully.
+     * {@hide}
+     */
+    public boolean enableTimedTextTrackIndex(int index) {
+        if (index < 0) {
+            return false;
+        }
+        return setParameter(KEY_PARAMETER_TIMED_TEXT_TRACK_INDEX, index);
+    }
+
+    /**
+     * Enables the first timed text track if any.
+     * @return true if the text track is enabled successfully
+     * {@hide}
+     */
+    public boolean enableTimedText() {
+        return enableTimedTextTrackIndex(0);
+    }
+
+    /**
+     * Disables timed text display.
+     * @return true if the text track is disabled successfully.
+     * {@hide}
+     */
+    public boolean disableTimedText() {
+        return setParameter(KEY_PARAMETER_TIMED_TEXT_TRACK_INDEX, -1);
+    }
+
+    /**
+     * @param reply Parcel with audio/video duration info for battery
+                    tracking usage
+     * @return The status code.
+     * {@hide}
+     */
+    public native static int native_pullBatteryData(Parcel reply);
+
     @Override
     protected void finalize() { native_finalize(); }
 
@@ -1287,6 +1492,7 @@ public class MediaPlayer
     private static final int MEDIA_BUFFERING_UPDATE = 3;
     private static final int MEDIA_SEEK_COMPLETE = 4;
     private static final int MEDIA_SET_VIDEO_SIZE = 5;
+    private static final int MEDIA_TIMED_TEXT = 99;
     private static final int MEDIA_ERROR = 100;
     private static final int MEDIA_INFO = 200;
 
@@ -1347,13 +1553,25 @@ public class MediaPlayer
                 return;
 
             case MEDIA_INFO:
-                // For PV specific code values (msg.arg2) look in
-                // opencore/pvmi/pvmf/include/pvmf_return_codes.h
-                Log.i(TAG, "Info (" + msg.arg1 + "," + msg.arg2 + ")");
+                if (msg.arg1 != MEDIA_INFO_VIDEO_TRACK_LAGGING) {
+                    Log.i(TAG, "Info (" + msg.arg1 + "," + msg.arg2 + ")");
+                }
                 if (mOnInfoListener != null) {
                     mOnInfoListener.onInfo(mMediaPlayer, msg.arg1, msg.arg2);
                 }
                 // No real default action so far.
+                return;
+            case MEDIA_TIMED_TEXT:
+                if (mOnTimedTextListener != null) {
+                    if (msg.obj == null) {
+                        mOnTimedTextListener.onTimedText(mMediaPlayer, null);
+                    } else {
+                        if (msg.obj instanceof byte[]) {
+                            TimedText text = new TimedText((byte[])(msg.obj));
+                            mOnTimedTextListener.onTimedText(mMediaPlayer, text);
+                        }
+                    }
+                }
                 return;
 
             case MEDIA_NOP: // interface test message - ignore
@@ -1448,11 +1666,16 @@ public class MediaPlayer
     public interface OnBufferingUpdateListener
     {
         /**
-         * Called to update status in buffering a media stream.
+         * Called to update status in buffering a media stream received through
+         * progressive HTTP download. The received buffering percentage
+         * indicates how much of the content has been buffered or played.
+         * For example a buffering update of 80 percent when half the content
+         * has already been played indicates that the next 30 percent of the
+         * content to play has been buffered.
          *
          * @param mp      the MediaPlayer the update pertains to
-         * @param percent the percentage (0-100) of the buffer
-         *                that has been filled thus far
+         * @param percent the percentage (0-100) of the content
+         *                that has been buffered or played thus far
          */
         void onBufferingUpdate(MediaPlayer mp, int percent);
     }
@@ -1525,6 +1748,39 @@ public class MediaPlayer
     }
 
     private OnVideoSizeChangedListener mOnVideoSizeChangedListener;
+
+    /**
+     * Interface definition of a callback to be invoked when a
+     * timed text is available for display.
+     * {@hide}
+     */
+    public interface OnTimedTextListener
+    {
+        /**
+         * Called to indicate an avaliable timed text
+         *
+         * @param mp             the MediaPlayer associated with this callback
+         * @param text           the timed text sample which contains the text
+         *                       needed to be displayed and the display format.
+         * {@hide}
+         */
+        public void onTimedText(MediaPlayer mp, TimedText text);
+    }
+
+    /**
+     * Register a callback to be invoked when a timed text is available
+     * for display.
+     *
+     * @param listener the callback that will be run
+     * {@hide}
+     */
+    public void setOnTimedTextListener(OnTimedTextListener listener)
+    {
+        mOnTimedTextListener = listener;
+    }
+
+    private OnTimedTextListener mOnTimedTextListener;
+
 
     /* Do not change these values without updating their counterparts
      * in include/media/mediaplayer.h!
@@ -1602,10 +1858,12 @@ public class MediaPlayer
 
     /** MediaPlayer is temporarily pausing playback internally in order to
      * buffer more data.
+     * @see android.media.MediaPlayer.OnInfoListener
      */
     public static final int MEDIA_INFO_BUFFERING_START = 701;
 
     /** MediaPlayer is resuming playback after filling buffers.
+     * @see android.media.MediaPlayer.OnInfoListener
      */
     public static final int MEDIA_INFO_BUFFERING_END = 702;
 
@@ -1640,6 +1898,8 @@ public class MediaPlayer
          * <ul>
          * <li>{@link #MEDIA_INFO_UNKNOWN}
          * <li>{@link #MEDIA_INFO_VIDEO_TRACK_LAGGING}
+         * <li>{@link #MEDIA_INFO_BUFFERING_START}
+         * <li>{@link #MEDIA_INFO_BUFFERING_END}
          * <li>{@link #MEDIA_INFO_BAD_INTERLEAVING}
          * <li>{@link #MEDIA_INFO_NOT_SEEKABLE}
          * <li>{@link #MEDIA_INFO_METADATA_UPDATE}

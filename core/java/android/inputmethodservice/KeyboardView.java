@@ -28,6 +28,7 @@ import android.graphics.Paint.Align;
 import android.graphics.Region.Op;
 import android.graphics.drawable.Drawable;
 import android.inputmethodservice.Keyboard.Key;
+import android.media.AudioManager;
 import android.os.Handler;
 import android.os.Message;
 import android.util.AttributeSet;
@@ -39,6 +40,8 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup.LayoutParams;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityManager;
 import android.widget.PopupWindow;
 import android.widget.TextView;
 
@@ -142,7 +145,8 @@ public class KeyboardView extends View implements View.OnClickListener {
     private int mPreviewTextSizeLarge;
     private int mPreviewOffset;
     private int mPreviewHeight;
-    private int[] mOffsetInWindow;
+    // Working variable
+    private final int[] mCoordinates = new int[2];
 
     private PopupWindow mPopupKeyboard;
     private View mMiniKeyboardContainer;
@@ -152,7 +156,6 @@ public class KeyboardView extends View implements View.OnClickListener {
     private int mMiniKeyboardOffsetX;
     private int mMiniKeyboardOffsetY;
     private Map<Key,View> mMiniKeyboardCache;
-    private int[] mWindowOffset;
     private Key[] mKeys;
 
     /** Listener for {@link OnKeyboardActionListener}. */
@@ -175,7 +178,6 @@ public class KeyboardView extends View implements View.OnClickListener {
     private boolean mShowTouchPoints = true;
     private int mPopupPreviewX;
     private int mPopupPreviewY;
-    private int mWindowY;
 
     private int mLastX;
     private int mLastY;
@@ -242,7 +244,13 @@ public class KeyboardView extends View implements View.OnClickListener {
     private boolean mKeyboardChanged;
     /** The canvas for the above mutable keyboard bitmap */
     private Canvas mCanvas;
-    
+    /** The accessibility manager for accessibility support */
+    private AccessibilityManager mAccessibilityManager;
+    /** The audio manager for accessibility support */
+    private AudioManager mAudioManager;
+    /** Whether the requirement of a headset to hear passwords if accessibility is enabled is announced. */
+    private boolean mHeadsetRequiredToHearPasswordsAnnounced;
+
     Handler mHandler = new Handler() {
         @Override
         public void handleMessage(Message msg) {
@@ -362,9 +370,14 @@ public class KeyboardView extends View implements View.OnClickListener {
         mSwipeThreshold = (int) (500 * getResources().getDisplayMetrics().density);
         mDisambiguateSwipe = getResources().getBoolean(
                 com.android.internal.R.bool.config_swipeDisambiguation);
+
+        mAccessibilityManager = AccessibilityManager.getInstance(context);
+        mAudioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
+
         resetMultiTap();
         initGestureDetector();
     }
+
 
     private void initGestureDetector() {
         mGestureDetector = new GestureDetector(getContext(), new GestureDetector.SimpleOnGestureListener() {
@@ -605,6 +618,9 @@ public class KeyboardView extends View implements View.OnClickListener {
     @Override
     public void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
+        if (mKeyboard != null) {
+            mKeyboard.resize(w, h);
+        }
         // Release the buffer, if any and it will be reallocated on the next draw
         mBuffer = null;
     }
@@ -835,12 +851,18 @@ public class KeyboardView extends View implements View.OnClickListener {
         final Key[] keys = mKeys;
         if (oldKeyIndex != mCurrentKeyIndex) {
             if (oldKeyIndex != NOT_A_KEY && keys.length > oldKeyIndex) {
-                keys[oldKeyIndex].onReleased(mCurrentKeyIndex == NOT_A_KEY);
+                Key oldKey = keys[oldKeyIndex];
+                oldKey.onReleased(mCurrentKeyIndex == NOT_A_KEY);
                 invalidateKey(oldKeyIndex);
+                sendAccessibilityEventForUnicodeCharacter(AccessibilityEvent.TYPE_VIEW_HOVER_EXIT,
+                        oldKey.codes[0]);
             }
             if (mCurrentKeyIndex != NOT_A_KEY && keys.length > mCurrentKeyIndex) {
-                keys[mCurrentKeyIndex].onPressed();
+                Key newKey = keys[mCurrentKeyIndex];
+                newKey.onPressed();
                 invalidateKey(mCurrentKeyIndex);
+                sendAccessibilityEventForUnicodeCharacter(AccessibilityEvent.TYPE_VIEW_HOVER_ENTER,
+                        newKey.codes[0]);
             }
         }
         // If key changed and preview is on ...
@@ -905,23 +927,19 @@ public class KeyboardView extends View implements View.OnClickListener {
             mPopupPreviewY = - mPreviewText.getMeasuredHeight();
         }
         mHandler.removeMessages(MSG_REMOVE_PREVIEW);
-        if (mOffsetInWindow == null) {
-            mOffsetInWindow = new int[2];
-            getLocationInWindow(mOffsetInWindow);
-            mOffsetInWindow[0] += mMiniKeyboardOffsetX; // Offset may be zero
-            mOffsetInWindow[1] += mMiniKeyboardOffsetY; // Offset may be zero
-            int[] mWindowLocation = new int[2];
-            getLocationOnScreen(mWindowLocation);
-            mWindowY = mWindowLocation[1];
-        }
+        getLocationInWindow(mCoordinates);
+        mCoordinates[0] += mMiniKeyboardOffsetX; // Offset may be zero
+        mCoordinates[1] += mMiniKeyboardOffsetY; // Offset may be zero
+
         // Set the preview background state
         mPreviewText.getBackground().setState(
                 key.popupResId != 0 ? LONG_PRESSABLE_STATE_SET : EMPTY_STATE_SET);
-        mPopupPreviewX += mOffsetInWindow[0];
-        mPopupPreviewY += mOffsetInWindow[1];
+        mPopupPreviewX += mCoordinates[0];
+        mPopupPreviewY += mCoordinates[1];
 
         // If the popup cannot be shown above the key, put it on the side
-        if (mPopupPreviewY + mWindowY < 0) {
+        getLocationOnScreen(mCoordinates);
+        if (mPopupPreviewY + mCoordinates[1] < 0) {
             // If the key you're pressing is on the left side of the keyboard, show the popup on
             // the right, offset by enough to see at least one key to the left/right.
             if (key.x + key.width <= getWidth() / 2) {
@@ -942,6 +960,53 @@ public class KeyboardView extends View implements View.OnClickListener {
                     mPopupPreviewX, mPopupPreviewY);
         }
         mPreviewText.setVisibility(VISIBLE);
+    }
+
+    private void sendAccessibilityEventForUnicodeCharacter(int eventType, int code) {
+        if (mAccessibilityManager.isEnabled()) {
+            AccessibilityEvent event = AccessibilityEvent.obtain(eventType);
+            onInitializeAccessibilityEvent(event);
+            String text = null;
+            // Add text only if headset is used to avoid leaking passwords.
+            if (mAudioManager.isBluetoothA2dpOn() || mAudioManager.isWiredHeadsetOn()) {
+                switch (code) {
+                    case Keyboard.KEYCODE_ALT:
+                        text = mContext.getString(R.string.keyboardview_keycode_alt);
+                        break;
+                    case Keyboard.KEYCODE_CANCEL:
+                        text = mContext.getString(R.string.keyboardview_keycode_cancel);
+                        break;
+                    case Keyboard.KEYCODE_DELETE:
+                        text = mContext.getString(R.string.keyboardview_keycode_delete);
+                        break;
+                    case Keyboard.KEYCODE_DONE:
+                        text = mContext.getString(R.string.keyboardview_keycode_done);
+                        break;
+                    case Keyboard.KEYCODE_MODE_CHANGE:
+                        text = mContext.getString(R.string.keyboardview_keycode_mode_change);
+                        break;
+                    case Keyboard.KEYCODE_SHIFT:
+                        text = mContext.getString(R.string.keyboardview_keycode_shift);
+                        break;
+                    case '\n':
+                        text = mContext.getString(R.string.keyboardview_keycode_enter);
+                        break;
+                    default:
+                        text = String.valueOf((char) code);
+                }
+            } else if (!mHeadsetRequiredToHearPasswordsAnnounced) {
+                // We want the waring for required head set to be send with both the
+                // hover enter and hover exit event, so set the flag after the exit.
+                if (eventType == AccessibilityEvent.TYPE_VIEW_HOVER_EXIT) {
+                    mHeadsetRequiredToHearPasswordsAnnounced = true;
+                }
+                text = mContext.getString(R.string.keyboard_headset_required_to_hear_password);
+            } else {
+                text = mContext.getString(R.string.keyboard_password_character_no_headset);
+            }
+            event.getText().add(text);
+            mAccessibilityManager.sendAccessibilityEvent(event);
+        }
     }
 
     /**
@@ -1057,16 +1122,13 @@ public class KeyboardView extends View implements View.OnClickListener {
                 mMiniKeyboard = (KeyboardView) mMiniKeyboardContainer.findViewById(
                         com.android.internal.R.id.keyboardView);
             }
-            if (mWindowOffset == null) {
-                mWindowOffset = new int[2];
-                getLocationInWindow(mWindowOffset);
-            }
+            getLocationInWindow(mCoordinates);
             mPopupX = popupKey.x + mPaddingLeft;
             mPopupY = popupKey.y + mPaddingTop;
             mPopupX = mPopupX + popupKey.width - mMiniKeyboardContainer.getMeasuredWidth();
             mPopupY = mPopupY - mMiniKeyboardContainer.getMeasuredHeight();
-            final int x = mPopupX + mMiniKeyboardContainer.getPaddingRight() + mWindowOffset[0];
-            final int y = mPopupY + mMiniKeyboardContainer.getPaddingBottom() + mWindowOffset[1];
+            final int x = mPopupX + mMiniKeyboardContainer.getPaddingRight() + mCoordinates[0];
+            final int y = mPopupY + mMiniKeyboardContainer.getPaddingBottom() + mCoordinates[1];
             mMiniKeyboard.setPopupOffset(x < 0 ? 0 : x, y);
             mMiniKeyboard.setShifted(isShifted());
             mPopupKeyboard.setContentView(mMiniKeyboardContainer);
@@ -1081,11 +1143,46 @@ public class KeyboardView extends View implements View.OnClickListener {
         return false;
     }
 
-    private long mOldEventTime;
-    private boolean mUsedVelocity;
+    @Override
+    public boolean onHoverEvent(MotionEvent event) {
+        // If touch exploring is enabled we ignore touch events and transform
+        // the stream of hover events as touch events. This allows one consistent
+        // event stream to drive the keyboard since during touch exploring the
+        // first touch generates only hover events and tapping on the same
+        // location generates hover and touch events.
+        if (mAccessibilityManager.isTouchExplorationEnabled() && event.getPointerCount() == 1) {
+            final int action = event.getAction();
+            switch (action) {
+                case MotionEvent.ACTION_HOVER_ENTER:
+                    event.setAction(MotionEvent.ACTION_DOWN);
+                    break;
+                case MotionEvent.ACTION_HOVER_MOVE:
+                    event.setAction(MotionEvent.ACTION_MOVE);
+                    break;
+                case MotionEvent.ACTION_HOVER_EXIT:
+                    event.setAction(MotionEvent.ACTION_UP);
+                    break;
+            }
+            onTouchEventInternal(event);
+            event.setAction(action);
+        }
+        return super.onHoverEvent(event);
+    }
 
     @Override
-    public boolean onTouchEvent(MotionEvent me) {
+    public boolean onTouchEvent(MotionEvent event) {
+        // If touch exploring is enabled we ignore touch events and transform
+        // the stream of hover events as touch events. This allows one consistent
+        // event stream to drive the keyboard since during touch exploring the
+        // first touch generates only hover events and tapping on the same
+        // location generates hover and touch events.
+        if (mAccessibilityManager.isTouchExplorationEnabled()) {
+            return true;
+        }
+        return onTouchEventInternal(event);
+    }
+
+    private boolean onTouchEventInternal(MotionEvent me) {
         // Convert multi-pointer up/down events to single up/down events to 
         // deal with the typical multi-pointer behavior of two-thumb typing
         final int pointerCount = me.getPointerCount();
@@ -1128,10 +1225,11 @@ public class KeyboardView extends View implements View.OnClickListener {
 
     private boolean onModifiedTouchEvent(MotionEvent me, boolean possiblePoly) {
         int touchX = (int) me.getX() - mPaddingLeft;
-        int touchY = (int) me.getY() + mVerticalCorrection - mPaddingTop;
+        int touchY = (int) me.getY() - mPaddingTop;
+        if (touchY >= -mVerticalCorrection)
+            touchY += mVerticalCorrection;
         final int action = me.getAction();
         final long eventTime = me.getEventTime();
-        mOldEventTime = eventTime;
         int keyIndex = getKeyIndices(touchX, touchY, null);
         mPossiblePoly = possiblePoly;
 

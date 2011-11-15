@@ -18,16 +18,22 @@ package com.android.internal.policy.impl;
 
 import com.android.internal.R;
 
+import android.app.ActivityManager;
 import android.content.Context;
 import android.content.pm.ActivityInfo;
+import android.content.res.Resources;
 import android.graphics.PixelFormat;
 import android.graphics.Canvas;
+import android.os.IBinder;
+import android.os.SystemProperties;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewManager;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
+
+import android.graphics.Color;
 
 /**
  * Manages creating, showing, hiding and resetting the keyguard.  Calls back
@@ -54,13 +60,18 @@ public class KeyguardViewManager implements KeyguardWindowController {
 
     private boolean mScreenOn = false;
 
+    public interface ShowListener {
+        void onShown(IBinder windowToken);
+    };
+
     /**
      * @param context Used to create views.
      * @param viewManager Keyguard will be attached to this.
      * @param callback Used to notify of changes.
      */
     public KeyguardViewManager(Context context, ViewManager viewManager,
-            KeyguardViewCallback callback, KeyguardViewProperties keyguardViewProperties, KeyguardUpdateMonitor updateMonitor) {
+            KeyguardViewCallback callback, KeyguardViewProperties keyguardViewProperties,
+            KeyguardUpdateMonitor updateMonitor) {
         mContext = context;
         mViewManager = viewManager;
         mCallback = callback;
@@ -94,6 +105,10 @@ public class KeyguardViewManager implements KeyguardWindowController {
     public synchronized void show() {
         if (DEBUG) Log.d(TAG, "show(); mKeyguardView==" + mKeyguardView);
 
+        Resources res = mContext.getResources();
+        boolean enableScreenRotation =
+                SystemProperties.getBoolean("lockscreen.rot_override",false)
+                || res.getBoolean(R.bool.config_enableLockScreenRotation);
         if (mKeyguardHost == null) {
             if (DEBUG) Log.d(TAG, "keyguard host is null, creating it...");
 
@@ -108,17 +123,36 @@ public class KeyguardViewManager implements KeyguardWindowController {
             if (!mNeedsInput) {
                 flags |= WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM;
             }
+            if (ActivityManager.isHighEndGfx(((WindowManager)mContext.getSystemService(
+                    Context.WINDOW_SERVICE)).getDefaultDisplay())) {
+                flags |= WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED;
+            }
             WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
                     stretch, stretch, WindowManager.LayoutParams.TYPE_KEYGUARD,
                     flags, PixelFormat.TRANSLUCENT);
-            lp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN;
+            lp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
             lp.windowAnimations = com.android.internal.R.style.Animation_LockScreen;
-            lp.screenOrientation = ActivityInfo.SCREEN_ORIENTATION_NOSENSOR;
+            if (ActivityManager.isHighEndGfx(((WindowManager)mContext.getSystemService(
+                    Context.WINDOW_SERVICE)).getDefaultDisplay())) {
+                lp.flags |= WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED;
+                lp.privateFlags |=
+                        WindowManager.LayoutParams.PRIVATE_FLAG_FORCE_HARDWARE_ACCELERATED;
+            }
             lp.setTitle("Keyguard");
             mWindowLayoutParams = lp;
 
             mViewManager.addView(mKeyguardHost, lp);
         }
+
+        if (enableScreenRotation) {
+            if (DEBUG) Log.d(TAG, "Rotation sensor for lock screen On!");
+            mWindowLayoutParams.screenOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR;
+        } else {
+            if (DEBUG) Log.d(TAG, "Rotation sensor for lock screen Off!");
+            mWindowLayoutParams.screenOrientation = ActivityInfo.SCREEN_ORIENTATION_NOSENSOR;
+        }
+
+        mViewManager.updateViewLayout(mKeyguardHost, mWindowLayoutParams);
 
         if (mKeyguardView == null) {
             if (DEBUG) Log.d(TAG, "keyguard view is null, creating it...");
@@ -133,10 +167,21 @@ public class KeyguardViewManager implements KeyguardWindowController {
             mKeyguardHost.addView(mKeyguardView, lp);
 
             if (mScreenOn) {
-                mKeyguardView.onScreenTurnedOn();
+                mKeyguardView.show();
             }
         }
 
+        // Disable aspects of the system/status/navigation bars that are not appropriate or
+        // useful for the lockscreen but can be re-shown by dialogs or SHOW_WHEN_LOCKED activities.
+        // Other disabled bits are handled by the KeyguardViewMediator talking directly to the
+        // status bar service.
+        int visFlags =
+                ( View.STATUS_BAR_DISABLE_BACK
+                | View.STATUS_BAR_DISABLE_HOME
+                );
+        mKeyguardHost.setSystemUiVisibility(visFlags);
+
+        mViewManager.updateViewLayout(mKeyguardHost, mWindowLayoutParams);
         mKeyguardHost.setVisibility(View.VISIBLE);
         mKeyguardView.requestFocus();
     }
@@ -173,11 +218,32 @@ public class KeyguardViewManager implements KeyguardWindowController {
         }
     }
 
-    public synchronized void onScreenTurnedOn() {
+    public synchronized void onScreenTurnedOn(
+            final KeyguardViewManager.ShowListener showListener) {
         if (DEBUG) Log.d(TAG, "onScreenTurnedOn()");
         mScreenOn = true;
         if (mKeyguardView != null) {
             mKeyguardView.onScreenTurnedOn();
+
+            // Caller should wait for this window to be shown before turning
+            // on the screen.
+            if (mKeyguardHost.getVisibility() == View.VISIBLE) {
+                // Keyguard may be in the process of being shown, but not yet
+                // updated with the window manager...  give it a chance to do so.
+                mKeyguardHost.post(new Runnable() {
+                    @Override public void run() {
+                        if (mKeyguardHost.getVisibility() == View.VISIBLE) {
+                            showListener.onShown(mKeyguardHost.getWindowToken());
+                        } else {
+                            showListener.onShown(null);
+                        }
+                    }
+                });
+            } else {
+                showListener.onShown(null);
+            }
+        } else {
+            showListener.onShown(null);
         }
     }
 
@@ -195,7 +261,8 @@ public class KeyguardViewManager implements KeyguardWindowController {
      * Be sure not to take any action that takes a long time; any significant
      * action should be posted to a handler.
      *
-     * @param keyCode The wake key.
+     * @param keyCode The wake key.  May be {@link KeyEvent#KEYCODE_UNKNOWN} if waking
+     * for a reason other than a key press.
      */
     public boolean wakeWhenReadyTq(int keyCode) {
         if (DEBUG) Log.d(TAG, "wakeWhenReady(" + keyCode + ")");
@@ -213,6 +280,7 @@ public class KeyguardViewManager implements KeyguardWindowController {
      */
     public synchronized void hide() {
         if (DEBUG) Log.d(TAG, "hide()");
+
         if (mKeyguardHost != null) {
             mKeyguardHost.setVisibility(View.GONE);
             // Don't do this right away, so we can let the view continue to animate

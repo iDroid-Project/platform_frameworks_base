@@ -144,7 +144,7 @@ public class WindowManagerPermissionTests extends TestCase {
         }
         
         try {
-            mWm.prepareAppTransition(0);
+            mWm.prepareAppTransition(0, false);
             fail("IWindowManager.prepareAppTransition did not throw SecurityException as"
                     + " expected");
         } catch (SecurityException e) {
@@ -164,7 +164,7 @@ public class WindowManagerPermissionTests extends TestCase {
         }
         
         try {
-            mWm.setAppStartingWindow(null, "foo", 0, null, 0, 0, null, false);
+            mWm.setAppStartingWindow(null, "foo", 0, null, null, 0, 0, 0, null, false);
             fail("IWindowManager.setAppStartingWindow did not throw SecurityException as"
                     + " expected");
         } catch (SecurityException e) {
@@ -412,9 +412,31 @@ public class WindowManagerPermissionTests extends TestCase {
     @SmallTest
     public void testSET_ORIENTATION() {
         try {
-            mWm.setRotation(0, true, 0);
+            mWm.updateRotation(true);
             mWm.getSwitchState(0);
-            fail("IWindowManager.setRotation did not throw SecurityException as"
+            fail("IWindowManager.updateRotation did not throw SecurityException as"
+                    + " expected");
+        } catch (SecurityException e) {
+            // expected
+        } catch (RemoteException e) {
+            fail("Unexpected remote exception");
+        }
+
+        try {
+            mWm.freezeRotation(-1);
+            mWm.getSwitchState(0);
+            fail("IWindowManager.freezeRotation did not throw SecurityException as"
+                    + " expected");
+        } catch (SecurityException e) {
+            // expected
+        } catch (RemoteException e) {
+            fail("Unexpected remote exception");
+        }
+
+        try {
+            mWm.thawRotation();
+            mWm.getSwitchState(0);
+            fail("IWindowManager.thawRotation did not throw SecurityException as"
                     + " expected");
         } catch (SecurityException e) {
             // expected

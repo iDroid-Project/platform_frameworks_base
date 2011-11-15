@@ -47,20 +47,24 @@ class PendingIntentRecord extends IIntentSender.Stub {
         final int requestCode;
         final Intent requestIntent;
         final String requestResolvedType;
+        Intent[] allIntents;
+        String[] allResolvedTypes;
         final int flags;
         final int hashCode;
         
         private static final int ODD_PRIME_NUMBER = 37;
         
         Key(int _t, String _p, ActivityRecord _a, String _w,
-                int _r, Intent _i, String _it, int _f) {
+                int _r, Intent[] _i, String[] _it, int _f) {
             type = _t;
             packageName = _p;
             activity = _a;
             who = _w;
             requestCode = _r;
-            requestIntent = _i;
-            requestResolvedType = _it;
+            requestIntent = _i != null ? _i[_i.length-1] : null;
+            requestResolvedType = _it != null ? _it[_it.length-1] : null;
+            allIntents = _i;
+            allResolvedTypes = _it;
             flags = _f;
             
             int hash = 23;
@@ -72,11 +76,11 @@ class PendingIntentRecord extends IIntentSender.Stub {
             if (_a != null) {
                 hash = (ODD_PRIME_NUMBER*hash) + _a.hashCode();
             }
-            if (_i != null) {
-                hash = (ODD_PRIME_NUMBER*hash) + _i.filterHashCode();
+            if (requestIntent != null) {
+                hash = (ODD_PRIME_NUMBER*hash) + requestIntent.filterHashCode();
             }
-            if (_it != null) {
-                hash = (ODD_PRIME_NUMBER*hash) + _it.hashCode();
+            if (requestResolvedType != null) {
+                hash = (ODD_PRIME_NUMBER*hash) + requestResolvedType.hashCode();
             }
             hash = (ODD_PRIME_NUMBER*hash) + _p.hashCode();
             hash = (ODD_PRIME_NUMBER*hash) + _t;
@@ -146,7 +150,8 @@ class PendingIntentRecord extends IIntentSender.Stub {
         public String toString() {
             return "Key{" + typeName() + " pkg=" + packageName
                 + " intent="
-                + (requestIntent != null ? requestIntent.toShortString(true, false) : "<null>")
+                + (requestIntent != null
+                        ? requestIntent.toShortString(false, true, false) : "<null>")
                 + " flags=0x" + Integer.toHexString(flags) + "}";
         }
         
@@ -173,13 +178,13 @@ class PendingIntentRecord extends IIntentSender.Stub {
     }
 
     public int send(int code, Intent intent, String resolvedType,
-            IIntentReceiver finishedReceiver) {
+            IIntentReceiver finishedReceiver, String requiredPermission) {
         return sendInner(code, intent, resolvedType, finishedReceiver,
-                null, null, 0, 0, 0);
+                requiredPermission, null, null, 0, 0, 0);
     }
     
     int sendInner(int code, Intent intent, String resolvedType,
-            IIntentReceiver finishedReceiver,
+            IIntentReceiver finishedReceiver, String requiredPermission,
             IBinder resultTo, String resultWho, int requestCode,
             int flagsMask, int flagsValues) {
         synchronized(owner) {
@@ -209,9 +214,24 @@ class PendingIntentRecord extends IIntentSender.Stub {
                 switch (key.type) {
                     case IActivityManager.INTENT_SENDER_ACTIVITY:
                         try {
-                            owner.startActivityInPackage(uid,
-                                    finalIntent, resolvedType,
-                                    resultTo, resultWho, requestCode, false);
+                            if (key.allIntents != null && key.allIntents.length > 1) {
+                                Intent[] allIntents = new Intent[key.allIntents.length];
+                                String[] allResolvedTypes = new String[key.allIntents.length];
+                                System.arraycopy(key.allIntents, 0, allIntents, 0,
+                                        key.allIntents.length);
+                                if (key.allResolvedTypes != null) {
+                                    System.arraycopy(key.allResolvedTypes, 0, allResolvedTypes, 0,
+                                            key.allResolvedTypes.length);
+                                }
+                                allIntents[allIntents.length-1] = finalIntent;
+                                allResolvedTypes[allResolvedTypes.length-1] = resolvedType;
+                                owner.startActivitiesInPackage(uid, allIntents,
+                                        allResolvedTypes, resultTo);
+                            } else {
+                                owner.startActivityInPackage(uid,
+                                        finalIntent, resolvedType,
+                                        resultTo, resultWho, requestCode, false);
+                            }
                         } catch (RuntimeException e) {
                             Slog.w(ActivityManagerService.TAG,
                                     "Unable to send startActivity intent", e);
@@ -227,8 +247,8 @@ class PendingIntentRecord extends IIntentSender.Stub {
                             // that the broadcast be delivered synchronously
                             owner.broadcastIntentInPackage(key.packageName, uid,
                                     finalIntent, resolvedType,
-                                    finishedReceiver, code, null, null, null,
-                                    (finishedReceiver != null), false);
+                                    finishedReceiver, code, null, null,
+                                    requiredPermission, (finishedReceiver != null), false);
                             sendFinish = false;
                         } catch (RuntimeException e) {
                             Slog.w(ActivityManagerService.TAG,
@@ -298,7 +318,7 @@ class PendingIntentRecord extends IIntentSender.Stub {
         }
         if (key.requestIntent != null) {
             pw.print(prefix); pw.print("requestIntent=");
-                    pw.println(key.requestIntent.toShortString(true, true));
+                    pw.println(key.requestIntent.toShortString(false, true, true));
         }
         if (sent || canceled) {
             pw.print(prefix); pw.print("sent="); pw.print(sent);

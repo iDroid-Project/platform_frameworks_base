@@ -16,7 +16,6 @@
 
 package android.net.http;
 
-import android.util.Config;
 import android.util.Log;
 
 import java.util.ArrayList;
@@ -201,7 +200,7 @@ public final class Headers {
                 try {
                     contentLength = Long.parseLong(val);
                 } catch (NumberFormatException e) {
-                    if (Config.LOGV) {
+                    if (false) {
                         Log.v(LOGTAG, "Headers.headers(): error parsing"
                                 + " content length: " + buffer.toString());
                     }
@@ -262,7 +261,14 @@ public final class Headers {
             break;
         case HASH_CACHE_CONTROL:
             if (name.equals(CACHE_CONTROL)) {
-                mHeaders[IDX_CACHE_CONTROL] = val;
+                // In case where we receive more than one header, create a ',' separated list.
+                // This should be ok, according to RFC 2616 chapter 4.2
+                if (mHeaders[IDX_CACHE_CONTROL] != null &&
+                    mHeaders[IDX_CACHE_CONTROL].length() > 0) {
+                    mHeaders[IDX_CACHE_CONTROL] += (',' + val);
+                } else {
+                    mHeaders[IDX_CACHE_CONTROL] = val;
+                }
             }
             break;
         case HASH_LAST_MODIFIED:
@@ -442,7 +448,7 @@ public final class Headers {
         }
         int extraLen = mExtraHeaderNames.size();
         for (int i = 0; i < extraLen; i++) {
-            if (Config.LOGV) {
+            if (false) {
                 HttpLog.v("Headers.getHeaders() extra: " + i + " " +
                           mExtraHeaderNames.get(i) + " " + mExtraHeaderValues.get(i));
             }

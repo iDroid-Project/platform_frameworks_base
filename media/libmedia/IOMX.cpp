@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2009 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //#define LOG_NDEBUG 0
 #define LOG_TAG "IOMX"
 #include <utils/Log.h>
@@ -5,6 +21,7 @@
 #include <binder/IMemory.h>
 #include <binder/Parcel.h>
 #include <media/IOMX.h>
+#include <media/stagefright/foundation/ADebug.h>
 #include <surfaceflinger/ISurface.h>
 #include <surfaceflinger/Surface.h>
 
@@ -21,58 +38,20 @@ enum {
     SET_PARAMETER,
     GET_CONFIG,
     SET_CONFIG,
+    GET_STATE,
+    ENABLE_GRAPHIC_BUFFERS,
     USE_BUFFER,
+    USE_GRAPHIC_BUFFER,
+    STORE_META_DATA_IN_BUFFERS,
     ALLOC_BUFFER,
     ALLOC_BUFFER_WITH_BACKUP,
     FREE_BUFFER,
     FILL_BUFFER,
     EMPTY_BUFFER,
     GET_EXTENSION_INDEX,
-    CREATE_RENDERER,
     OBSERVER_ON_MSG,
-    RENDERER_RENDER,
+    GET_GRAPHIC_BUFFER_USAGE,
 };
-
-sp<IOMXRenderer> IOMX::createRenderer(
-        const sp<Surface> &surface,
-        const char *componentName,
-        OMX_COLOR_FORMATTYPE colorFormat,
-        size_t encodedWidth, size_t encodedHeight,
-        size_t displayWidth, size_t displayHeight,
-        int32_t rotationDegrees) {
-    return createRenderer(
-            surface->getISurface(),
-            componentName, colorFormat, encodedWidth, encodedHeight,
-            displayWidth, displayHeight,
-            rotationDegrees);
-}
-
-sp<IOMXRenderer> IOMX::createRendererFromJavaSurface(
-        JNIEnv *env, jobject javaSurface,
-        const char *componentName,
-        OMX_COLOR_FORMATTYPE colorFormat,
-        size_t encodedWidth, size_t encodedHeight,
-        size_t displayWidth, size_t displayHeight,
-        int32_t rotationDegrees) {
-    jclass surfaceClass = env->FindClass("android/view/Surface");
-    if (surfaceClass == NULL) {
-        LOGE("Can't find android/view/Surface");
-        return NULL;
-    }
-
-    jfieldID surfaceID = env->GetFieldID(surfaceClass, ANDROID_VIEW_SURFACE_JNI_ID, "I");
-    if (surfaceID == NULL) {
-        LOGE("Can't find Surface.mSurface");
-        return NULL;
-    }
-
-    sp<Surface> surface = (Surface *)env->GetIntField(javaSurface, surfaceID);
-
-    return createRenderer(
-            surface, componentName, colorFormat, encodedWidth,
-            encodedHeight, displayWidth, displayHeight,
-            rotationDegrees);
-}
 
 class BpOMX : public BpInterface<IOMX> {
 public:
@@ -220,6 +199,43 @@ public:
         return reply.readInt32();
     }
 
+    virtual status_t getState(
+            node_id node, OMX_STATETYPE* state) {
+        Parcel data, reply;
+        data.writeInterfaceToken(IOMX::getInterfaceDescriptor());
+        data.writeIntPtr((intptr_t)node);
+        remote()->transact(GET_STATE, data, &reply);
+
+        *state = static_cast<OMX_STATETYPE>(reply.readInt32());
+        return reply.readInt32();
+    }
+
+    virtual status_t enableGraphicBuffers(
+            node_id node, OMX_U32 port_index, OMX_BOOL enable) {
+        Parcel data, reply;
+        data.writeInterfaceToken(IOMX::getInterfaceDescriptor());
+        data.writeIntPtr((intptr_t)node);
+        data.writeInt32(port_index);
+        data.writeInt32((uint32_t)enable);
+        remote()->transact(ENABLE_GRAPHIC_BUFFERS, data, &reply);
+
+        status_t err = reply.readInt32();
+        return err;
+    }
+
+    virtual status_t getGraphicBufferUsage(
+            node_id node, OMX_U32 port_index, OMX_U32* usage) {
+        Parcel data, reply;
+        data.writeInterfaceToken(IOMX::getInterfaceDescriptor());
+        data.writeIntPtr((intptr_t)node);
+        data.writeInt32(port_index);
+        remote()->transact(GET_GRAPHIC_BUFFER_USAGE, data, &reply);
+
+        status_t err = reply.readInt32();
+        *usage = reply.readInt32();
+        return err;
+    }
+
     virtual status_t useBuffer(
             node_id node, OMX_U32 port_index, const sp<IMemory> &params,
             buffer_id *buffer) {
@@ -239,6 +255,42 @@ public:
 
         *buffer = (void*)reply.readIntPtr();
 
+        return err;
+    }
+
+
+    virtual status_t useGraphicBuffer(
+            node_id node, OMX_U32 port_index,
+            const sp<GraphicBuffer> &graphicBuffer, buffer_id *buffer) {
+        Parcel data, reply;
+        data.writeInterfaceToken(IOMX::getInterfaceDescriptor());
+        data.writeIntPtr((intptr_t)node);
+        data.writeInt32(port_index);
+        data.write(*graphicBuffer);
+        remote()->transact(USE_GRAPHIC_BUFFER, data, &reply);
+
+        status_t err = reply.readInt32();
+        if (err != OK) {
+            *buffer = 0;
+
+            return err;
+        }
+
+        *buffer = (void*)reply.readIntPtr();
+
+        return err;
+    }
+
+    virtual status_t storeMetaDataInBuffers(
+            node_id node, OMX_U32 port_index, OMX_BOOL enable) {
+        Parcel data, reply;
+        data.writeInterfaceToken(IOMX::getInterfaceDescriptor());
+        data.writeIntPtr((intptr_t)node);
+        data.writeInt32(port_index);
+        data.writeInt32((uint32_t)enable);
+        remote()->transact(STORE_META_DATA_IN_BUFFERS, data, &reply);
+
+        status_t err = reply.readInt32();
         return err;
     }
 
@@ -347,30 +399,6 @@ public:
 
         return err;
     }
-
-    virtual sp<IOMXRenderer> createRenderer(
-            const sp<ISurface> &surface,
-            const char *componentName,
-            OMX_COLOR_FORMATTYPE colorFormat,
-            size_t encodedWidth, size_t encodedHeight,
-            size_t displayWidth, size_t displayHeight,
-            int32_t rotationDegrees) {
-        Parcel data, reply;
-        data.writeInterfaceToken(IOMX::getInterfaceDescriptor());
-
-        data.writeStrongBinder(surface->asBinder());
-        data.writeCString(componentName);
-        data.writeInt32(colorFormat);
-        data.writeInt32(encodedWidth);
-        data.writeInt32(encodedHeight);
-        data.writeInt32(displayWidth);
-        data.writeInt32(displayHeight);
-        data.writeInt32(rotationDegrees);
-
-        remote()->transact(CREATE_RENDERER, data, &reply);
-
-        return interface_cast<IOMXRenderer>(reply.readStrongBinder());
-    }
 };
 
 IMPLEMENT_META_INTERFACE(OMX, "android.hardware.IOMX");
@@ -464,74 +492,8 @@ status_t BnOMX::onTransact(
         }
 
         case GET_PARAMETER:
-        {
-            CHECK_INTERFACE(IOMX, data, reply);
-
-            node_id node = (void*)data.readIntPtr();
-            OMX_INDEXTYPE index = static_cast<OMX_INDEXTYPE>(data.readInt32());
-
-            size_t size = data.readInt32();
-
-            // XXX I am not happy with this but Parcel::readInplace didn't work.
-            void *params = malloc(size);
-            data.read(params, size);
-
-            status_t err = getParameter(node, index, params, size);
-
-            reply->writeInt32(err);
-
-            if (err == OK) {
-                reply->write(params, size);
-            }
-
-            free(params);
-            params = NULL;
-
-            return NO_ERROR;
-        }
-
         case SET_PARAMETER:
-        {
-            CHECK_INTERFACE(IOMX, data, reply);
-
-            node_id node = (void*)data.readIntPtr();
-            OMX_INDEXTYPE index = static_cast<OMX_INDEXTYPE>(data.readInt32());
-
-            size_t size = data.readInt32();
-            void *params = const_cast<void *>(data.readInplace(size));
-
-            reply->writeInt32(setParameter(node, index, params, size));
-
-            return NO_ERROR;
-        }
-
         case GET_CONFIG:
-        {
-            CHECK_INTERFACE(IOMX, data, reply);
-
-            node_id node = (void*)data.readIntPtr();
-            OMX_INDEXTYPE index = static_cast<OMX_INDEXTYPE>(data.readInt32());
-
-            size_t size = data.readInt32();
-
-            // XXX I am not happy with this but Parcel::readInplace didn't work.
-            void *params = malloc(size);
-            data.read(params, size);
-
-            status_t err = getConfig(node, index, params, size);
-
-            reply->writeInt32(err);
-
-            if (err == OK) {
-                reply->write(params, size);
-            }
-
-            free(params);
-            params = NULL;
-
-            return NO_ERROR;
-        }
-
         case SET_CONFIG:
         {
             CHECK_INTERFACE(IOMX, data, reply);
@@ -540,9 +502,79 @@ status_t BnOMX::onTransact(
             OMX_INDEXTYPE index = static_cast<OMX_INDEXTYPE>(data.readInt32());
 
             size_t size = data.readInt32();
-            void *params = const_cast<void *>(data.readInplace(size));
 
-            reply->writeInt32(setConfig(node, index, params, size));
+            void *params = malloc(size);
+            data.read(params, size);
+
+            status_t err;
+            switch (code) {
+                case GET_PARAMETER:
+                    err = getParameter(node, index, params, size);
+                    break;
+                case SET_PARAMETER:
+                    err = setParameter(node, index, params, size);
+                    break;
+                case GET_CONFIG:
+                    err = getConfig(node, index, params, size);
+                    break;
+                case SET_CONFIG:
+                    err = setConfig(node, index, params, size);
+                    break;
+                default:
+                    TRESPASS();
+            }
+
+            reply->writeInt32(err);
+
+            if ((code == GET_PARAMETER || code == GET_CONFIG) && err == OK) {
+                reply->write(params, size);
+            }
+
+            free(params);
+            params = NULL;
+
+            return NO_ERROR;
+        }
+
+        case GET_STATE:
+        {
+            CHECK_INTERFACE(IOMX, data, reply);
+
+            node_id node = (void*)data.readIntPtr();
+            OMX_STATETYPE state = OMX_StateInvalid;
+
+            status_t err = getState(node, &state);
+            reply->writeInt32(state);
+            reply->writeInt32(err);
+
+            return NO_ERROR;
+        }
+
+        case ENABLE_GRAPHIC_BUFFERS:
+        {
+            CHECK_INTERFACE(IOMX, data, reply);
+
+            node_id node = (void*)data.readIntPtr();
+            OMX_U32 port_index = data.readInt32();
+            OMX_BOOL enable = (OMX_BOOL)data.readInt32();
+
+            status_t err = enableGraphicBuffers(node, port_index, enable);
+            reply->writeInt32(err);
+
+            return NO_ERROR;
+        }
+
+        case GET_GRAPHIC_BUFFER_USAGE:
+        {
+            CHECK_INTERFACE(IOMX, data, reply);
+
+            node_id node = (void*)data.readIntPtr();
+            OMX_U32 port_index = data.readInt32();
+
+            OMX_U32 usage = 0;
+            status_t err = getGraphicBufferUsage(node, port_index, &usage);
+            reply->writeInt32(err);
+            reply->writeInt32(usage);
 
             return NO_ERROR;
         }
@@ -563,6 +595,41 @@ status_t BnOMX::onTransact(
             if (err == OK) {
                 reply->writeIntPtr((intptr_t)buffer);
             }
+
+            return NO_ERROR;
+        }
+
+        case USE_GRAPHIC_BUFFER:
+        {
+            CHECK_INTERFACE(IOMX, data, reply);
+
+            node_id node = (void*)data.readIntPtr();
+            OMX_U32 port_index = data.readInt32();
+            sp<GraphicBuffer> graphicBuffer = new GraphicBuffer();
+            data.read(*graphicBuffer);
+
+            buffer_id buffer;
+            status_t err = useGraphicBuffer(
+                    node, port_index, graphicBuffer, &buffer);
+            reply->writeInt32(err);
+
+            if (err == OK) {
+                reply->writeIntPtr((intptr_t)buffer);
+            }
+
+            return NO_ERROR;
+        }
+
+        case STORE_META_DATA_IN_BUFFERS:
+        {
+            CHECK_INTERFACE(IOMX, data, reply);
+
+            node_id node = (void*)data.readIntPtr();
+            OMX_U32 port_index = data.readInt32();
+            OMX_BOOL enable = (OMX_BOOL)data.readInt32();
+
+            status_t err = storeMetaDataInBuffers(node, port_index, enable);
+            reply->writeInt32(err);
 
             return NO_ERROR;
         }
@@ -672,35 +739,6 @@ status_t BnOMX::onTransact(
             return OK;
         }
 
-        case CREATE_RENDERER:
-        {
-            CHECK_INTERFACE(IOMX, data, reply);
-
-            sp<ISurface> isurface =
-                interface_cast<ISurface>(data.readStrongBinder());
-
-            const char *componentName = data.readCString();
-
-            OMX_COLOR_FORMATTYPE colorFormat =
-                static_cast<OMX_COLOR_FORMATTYPE>(data.readInt32());
-
-            size_t encodedWidth = (size_t)data.readInt32();
-            size_t encodedHeight = (size_t)data.readInt32();
-            size_t displayWidth = (size_t)data.readInt32();
-            size_t displayHeight = (size_t)data.readInt32();
-            int32_t rotationDegrees = data.readInt32();
-
-            sp<IOMXRenderer> renderer =
-                createRenderer(isurface, componentName, colorFormat,
-                               encodedWidth, encodedHeight,
-                               displayWidth, displayHeight,
-                               rotationDegrees);
-
-            reply->writeStrongBinder(renderer->asBinder());
-
-            return OK;
-        }
-
         default:
             return BBinder::onTransact(code, data, reply, flags);
     }
@@ -737,46 +775,6 @@ status_t BnOMXObserver::onTransact(
 
             // XXX Could use readInplace maybe?
             onMessage(msg);
-
-            return NO_ERROR;
-        }
-
-        default:
-            return BBinder::onTransact(code, data, reply, flags);
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-class BpOMXRenderer : public BpInterface<IOMXRenderer> {
-public:
-    BpOMXRenderer(const sp<IBinder> &impl)
-        : BpInterface<IOMXRenderer>(impl) {
-    }
-
-    virtual void render(IOMX::buffer_id buffer) {
-        Parcel data, reply;
-        data.writeInterfaceToken(IOMXRenderer::getInterfaceDescriptor());
-        data.writeIntPtr((intptr_t)buffer);
-
-        // NOTE: Do NOT make this a ONE_WAY call, it must be synchronous
-        // so that the caller knows when to recycle the buffer.
-        remote()->transact(RENDERER_RENDER, data, &reply);
-    }
-};
-
-IMPLEMENT_META_INTERFACE(OMXRenderer, "android.hardware.IOMXRenderer");
-
-status_t BnOMXRenderer::onTransact(
-    uint32_t code, const Parcel &data, Parcel *reply, uint32_t flags) {
-    switch (code) {
-        case RENDERER_RENDER:
-        {
-            CHECK_INTERFACE(IOMXRenderer, data, reply);
-
-            IOMX::buffer_id buffer = (void*)data.readIntPtr();
-
-            render(buffer);
 
             return NO_ERROR;
         }

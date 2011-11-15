@@ -24,12 +24,12 @@ import android.os.ServiceManager;
 import android.os.Message;
 import android.util.Slog;
 
-import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 
 public class LightsService {
     private static final String TAG = "LightsService";
+    private static final boolean DEBUG = false;
 
     static final int LIGHT_ID_BACKLIGHT = 0;
     static final int LIGHT_ID_KEYBOARD = 1;
@@ -115,6 +115,8 @@ public class LightsService {
 
         private void setLightLocked(int color, int mode, int onMS, int offMS, int brightnessMode) {
             if (color != mColor || mode != mMode || onMS != mOnMS || offMS != mOffMS) {
+                if (DEBUG) Slog.v(TAG, "setLight #" + mId + ": color=#"
+                        + Integer.toHexString(color));
                 mColor = color;
                 mMode = mode;
                 mOnMS = onMS;
@@ -146,7 +148,6 @@ public class LightsService {
                 fis.close();
                 return (result != '0');
             } catch (Exception e) {
-                Slog.e(TAG, "getFlashlightEnabled failed", e);
                 return false;
             }
         }
@@ -166,7 +167,7 @@ public class LightsService {
                 fos.write(bytes);
                 fos.close();
             } catch (Exception e) {
-                Slog.e(TAG, "setFlashlightEnabled failed", e);
+                // fail silently
             }
         }
     };

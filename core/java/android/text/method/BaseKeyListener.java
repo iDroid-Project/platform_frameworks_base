@@ -22,80 +22,106 @@ import android.text.*;
 import android.text.method.TextKeyListener.Capitalize;
 import android.widget.TextView;
 
-public abstract class BaseKeyListener
-extends MetaKeyKeyListener
-implements KeyListener {
+/**
+ * Abstract base class for key listeners.
+ *
+ * Provides a basic foundation for entering and editing text.
+ * Subclasses should override {@link #onKeyDown} and {@link #onKeyUp} to insert
+ * characters as keys are pressed.
+ */
+public abstract class BaseKeyListener extends MetaKeyKeyListener
+        implements KeyListener {
     /* package */ static final Object OLD_SEL_START = new NoCopySpan.Concrete();
 
     /**
-     * Performs the action that happens when you press the DEL key in
-     * a TextView.  If there is a selection, deletes the selection;
-     * otherwise, DEL alone deletes the character before the cursor,
-     * if any;
-     * ALT+DEL deletes everything on the line the cursor is on.
+     * Performs the action that happens when you press the {@link KeyEvent#KEYCODE_DEL} key in
+     * a {@link TextView}.  If there is a selection, deletes the selection; otherwise,
+     * deletes the character before the cursor, if any; ALT+DEL deletes everything on
+     * the line the cursor is on.
      *
-     * @return true if anything was deleted; false otherwise.   
+     * @return true if anything was deleted; false otherwise.
      */
-    public boolean backspace(View view, Editable content, int keyCode,
-                             KeyEvent event) {
-        int selStart, selEnd;
-        boolean result = true;
-
-        {
-            int a = Selection.getSelectionStart(content);
-            int b = Selection.getSelectionEnd(content);
-
-            selStart = Math.min(a, b);
-            selEnd = Math.max(a, b);
-        }
-
-        if (selStart != selEnd) {
-            content.delete(selStart, selEnd);
-        } else if (altBackspace(view, content, keyCode, event)) {
-            result = true;
-        } else {
-            int to = TextUtils.getOffsetBefore(content, selEnd);
-
-            if (to != selEnd) {
-                content.delete(Math.min(to, selEnd), Math.max(to, selEnd));
-            }
-            else {
-                result = false;
-            }
-        }
-
-        if (result)
-            adjustMetaAfterKeypress(content);
-
-        return result;
+    public boolean backspace(View view, Editable content, int keyCode, KeyEvent event) {
+        return backspaceOrForwardDelete(view, content, keyCode, event, false);
     }
 
-    private boolean altBackspace(View view, Editable content, int keyCode,
-                                 KeyEvent event) {
-        if (getMetaState(content, META_ALT_ON) != 1) {
+    /**
+     * Performs the action that happens when you press the {@link KeyEvent#KEYCODE_FORWARD_DEL}
+     * key in a {@link TextView}.  If there is a selection, deletes the selection; otherwise,
+     * deletes the character before the cursor, if any; ALT+FORWARD_DEL deletes everything on
+     * the line the cursor is on.
+     *
+     * @return true if anything was deleted; false otherwise.
+     */
+    public boolean forwardDelete(View view, Editable content, int keyCode, KeyEvent event) {
+        return backspaceOrForwardDelete(view, content, keyCode, event, true);
+    }
+
+    private boolean backspaceOrForwardDelete(View view, Editable content, int keyCode,
+            KeyEvent event, boolean isForwardDelete) {
+        // Ensure the key event does not have modifiers except ALT or SHIFT.
+        if (!KeyEvent.metaStateHasNoModifiers(event.getMetaState()
+                & ~(KeyEvent.META_SHIFT_MASK | KeyEvent.META_ALT_MASK))) {
             return false;
         }
 
-        if (!(view instanceof TextView)) {
-            return false;
+        // If there is a current selection, delete it.
+        if (deleteSelection(view, content)) {
+            return true;
         }
 
-        Layout layout = ((TextView) view).getLayout();
-
-        if (layout == null) {
-            return false;
+        // Alt+Backspace or Alt+ForwardDelete deletes the current line, if possible.
+        if (event.isAltPressed() || getMetaState(content, META_ALT_ON) == 1) {
+            if (deleteLine(view, content)) {
+                return true;
+            }
         }
 
-        int l = layout.getLineForOffset(Selection.getSelectionStart(content));
-        int start = layout.getLineStart(l);
-        int end = layout.getLineEnd(l);
-
-        if (end == start) {
-            return false;
+        // Delete a character.
+        final int start = Selection.getSelectionEnd(content);
+        final int end;
+        if (isForwardDelete || event.isShiftPressed()
+                || getMetaState(content, META_SHIFT_ON) == 1) {
+            end = TextUtils.getOffsetAfter(content, start);
+        } else {
+            end = TextUtils.getOffsetBefore(content, start);
         }
+        if (start != end) {
+            content.delete(Math.min(start, end), Math.max(start, end));
+            return true;
+        }
+        return false;
+    }
 
-        content.delete(start, end);
-        return true;
+    private boolean deleteSelection(View view, Editable content) {
+        int selectionStart = Selection.getSelectionStart(content);
+        int selectionEnd = Selection.getSelectionEnd(content);
+        if (selectionEnd < selectionStart) {
+            int temp = selectionEnd;
+            selectionEnd = selectionStart;
+            selectionStart = temp;
+        }
+        if (selectionStart != selectionEnd) {
+            content.delete(selectionStart, selectionEnd);
+            return true;
+        }
+        return false;
+    }
+
+    private boolean deleteLine(View view, Editable content) {
+        if (view instanceof TextView) {
+            final Layout layout = ((TextView) view).getLayout();
+            if (layout != null) {
+                final int line = layout.getLineForOffset(Selection.getSelectionStart(content));
+                final int start = layout.getLineStart(line);
+                final int end = layout.getLineEnd(line);
+                if (end != start) {
+                    content.delete(start, end);
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     static int makeTextContentType(Capitalize caps, boolean autoText) {
@@ -116,17 +142,29 @@ implements KeyListener {
         }
         return contentType;
     }
-    
+
     public boolean onKeyDown(View view, Editable content,
                              int keyCode, KeyEvent event) {
-        if (keyCode == KeyEvent.KEYCODE_DEL) {
-            backspace(view, content, keyCode, event);
-            return true;
+        boolean handled;
+        switch (keyCode) {
+            case KeyEvent.KEYCODE_DEL:
+                handled = backspace(view, content, keyCode, event);
+                break;
+            case KeyEvent.KEYCODE_FORWARD_DEL:
+                handled = forwardDelete(view, content, keyCode, event);
+                break;
+            default:
+                handled = false;
+                break;
         }
-        
+
+        if (handled) {
+            adjustMetaAfterKeypress(content);
+        }
+
         return super.onKeyDown(view, content, keyCode, event);
     }
-    
+
     /**
      * Base implementation handles ACTION_MULTIPLE KEYCODE_UNKNOWN by inserting
      * the event's text into the content.
@@ -137,23 +175,21 @@ implements KeyListener {
             // Not something we are interested in.
             return false;
         }
-        
-        int selStart, selEnd;
 
-        {
-            int a = Selection.getSelectionStart(content);
-            int b = Selection.getSelectionEnd(content);
-
-            selStart = Math.min(a, b);
-            selEnd = Math.max(a, b);
+        int selectionStart = Selection.getSelectionStart(content);
+        int selectionEnd = Selection.getSelectionEnd(content);
+        if (selectionEnd < selectionStart) {
+            int temp = selectionEnd;
+            selectionEnd = selectionStart;
+            selectionStart = temp;
         }
 
         CharSequence text = event.getCharacters();
         if (text == null) {
             return false;
         }
-        
-        content.replace(selStart, selEnd, text);
+
+        content.replace(selectionStart, selectionEnd, text);
         return true;
     }
 }

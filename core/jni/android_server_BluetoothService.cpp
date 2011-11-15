@@ -1,25 +1,34 @@
 /*
 ** Copyright 2006, The Android Open Source Project
 **
-** Licensed under the Apache License, Version 2.0 (the "License"); 
-** you may not use this file except in compliance with the License. 
-** You may obtain a copy of the License at 
+** Licensed under the Apache License, Version 2.0 (the "License");
+** you may not use this file except in compliance with the License.
+** You may obtain a copy of the License at
 **
-**     http://www.apache.org/licenses/LICENSE-2.0 
+**     http://www.apache.org/licenses/LICENSE-2.0
 **
-** Unless required by applicable law or agreed to in writing, software 
-** distributed under the License is distributed on an "AS IS" BASIS, 
-** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. 
-** See the License for the specific language governing permissions and 
+** Unless required by applicable law or agreed to in writing, software
+** distributed under the License is distributed on an "AS IS" BASIS,
+** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+** See the License for the specific language governing permissions and
 ** limitations under the License.
 */
 
 #define DBUS_ADAPTER_IFACE BLUEZ_DBUS_BASE_IFC ".Adapter"
 #define DBUS_DEVICE_IFACE BLUEZ_DBUS_BASE_IFC ".Device"
+#define DBUS_INPUT_IFACE BLUEZ_DBUS_BASE_IFC ".Input"
+#define DBUS_NETWORK_IFACE BLUEZ_DBUS_BASE_IFC ".Network"
+#define DBUS_NETWORKSERVER_IFACE BLUEZ_DBUS_BASE_IFC ".NetworkServer"
+#define DBUS_HEALTH_MANAGER_PATH "/org/bluez"
+#define DBUS_HEALTH_MANAGER_IFACE BLUEZ_DBUS_BASE_IFC ".HealthManager"
+#define DBUS_HEALTH_DEVICE_IFACE BLUEZ_DBUS_BASE_IFC ".HealthDevice"
+#define DBUS_HEALTH_CHANNEL_IFACE BLUEZ_DBUS_BASE_IFC ".HealthChannel"
+
 #define LOG_TAG "BluetoothService.cpp"
 
 #include "android_bluetooth_common.h"
 #include "android_runtime/AndroidRuntime.h"
+#include "android_util_Binder.h"
 #include "JNIHelp.h"
 #include "jni.h"
 #include "utils/Log.h"
@@ -68,6 +77,9 @@ extern DBusHandlerResult agent_event_filter(DBusConnection *conn,
 void onCreatePairedDeviceResult(DBusMessage *msg, void *user, void *nat);
 void onDiscoverServicesResult(DBusMessage *msg, void *user, void *nat);
 void onCreateDeviceResult(DBusMessage *msg, void *user, void *nat);
+void onInputDeviceConnectionResult(DBusMessage *msg, void *user, void *nat);
+void onPanDeviceConnectionResult(DBusMessage *msg, void *user, void *nat);
+void onHealthDeviceConnectionResult(DBusMessage *msg, void *user, void *nat);
 
 
 /** Get native data stored in the opaque (Java code maintained) pointer mNativeData
@@ -85,7 +97,7 @@ static inline native_data_t * get_native_data(JNIEnv *env, jobject object) {
 #endif
 
 static void classInitNative(JNIEnv* env, jclass clazz) {
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 #ifdef HAVE_BLUETOOTH
     field_mNativeData = get_field(env, clazz, "mNativeData", "I");
     field_mEventLoop = get_field(env, clazz, "mEventLoop",
@@ -97,7 +109,7 @@ static void classInitNative(JNIEnv* env, jclass clazz) {
  * Return false if dbus is down, or another serious error (out of memory)
 */
 static bool initializeNativeDataNative(JNIEnv* env, jobject object) {
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 #ifdef HAVE_BLUETOOTH
     native_data_t *nat = (native_data_t *)calloc(1, sizeof(native_data_t));
     if (NULL == nat) {
@@ -136,7 +148,7 @@ static const char *get_adapter_path(JNIEnv* env, jobject object) {
 
 // This function is called when the adapter is enabled.
 static jboolean setupNativeDataNative(JNIEnv* env, jobject object) {
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 #ifdef HAVE_BLUETOOTH
     native_data_t *nat =
         (native_data_t *)env->GetIntField(object, field_mNativeData);
@@ -159,7 +171,7 @@ static jboolean setupNativeDataNative(JNIEnv* env, jobject object) {
 }
 
 static jboolean tearDownNativeDataNative(JNIEnv *env, jobject object) {
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 #ifdef HAVE_BLUETOOTH
     native_data_t *nat =
                (native_data_t *)env->GetIntField(object, field_mNativeData);
@@ -173,7 +185,7 @@ static jboolean tearDownNativeDataNative(JNIEnv *env, jobject object) {
 }
 
 static void cleanupNativeDataNative(JNIEnv* env, jobject object) {
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 #ifdef HAVE_BLUETOOTH
     native_data_t *nat =
         (native_data_t *)env->GetIntField(object, field_mNativeData);
@@ -185,7 +197,7 @@ static void cleanupNativeDataNative(JNIEnv* env, jobject object) {
 }
 
 static jstring getAdapterPathNative(JNIEnv *env, jobject object) {
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 #ifdef HAVE_BLUETOOTH
     native_data_t *nat = get_native_data(env, object);
     if (nat) {
@@ -197,7 +209,7 @@ static jstring getAdapterPathNative(JNIEnv *env, jobject object) {
 
 
 static jboolean startDiscoveryNative(JNIEnv *env, jobject object) {
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 #ifdef HAVE_BLUETOOTH
     DBusMessage *msg = NULL;
     DBusMessage *reply = NULL;
@@ -242,15 +254,15 @@ done:
 #endif
 }
 
-static void stopDiscoveryNative(JNIEnv *env, jobject object) {
-    LOGV(__FUNCTION__);
+static jboolean stopDiscoveryNative(JNIEnv *env, jobject object) {
+    LOGV("%s", __FUNCTION__);
 #ifdef HAVE_BLUETOOTH
     DBusMessage *msg = NULL;
     DBusMessage *reply = NULL;
     DBusError err;
     const char *name;
-    jstring ret;
     native_data_t *nat;
+    jboolean ret = JNI_FALSE;
 
     dbus_error_init(&err);
 
@@ -280,16 +292,21 @@ static void stopDiscoveryNative(JNIEnv *env, jobject object) {
         } else {
             LOG_AND_FREE_DBUS_ERROR_WITH_MSG(&err, msg);
         }
+        goto done;
     }
 
+    ret = JNI_TRUE;
 done:
     if (msg) dbus_message_unref(msg);
     if (reply) dbus_message_unref(reply);
+    return ret;
+#else
+    return JNI_FALSE;
 #endif
 }
 
 static jbyteArray readAdapterOutOfBandDataNative(JNIEnv *env, jobject object) {
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 #ifdef HAVE_BLUETOOTH
     native_data_t *nat = get_native_data(env, object);
     DBusError err;
@@ -330,7 +347,7 @@ static jbyteArray readAdapterOutOfBandDataNative(JNIEnv *env, jobject object) {
 
 static jboolean createPairedDeviceNative(JNIEnv *env, jobject object,
                                          jstring address, jint timeout_ms) {
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 #ifdef HAVE_BLUETOOTH
     native_data_t *nat = get_native_data(env, object);
     jobject eventLoop = env->GetObjectField(object, field_mEventLoop);
@@ -366,7 +383,7 @@ static jboolean createPairedDeviceNative(JNIEnv *env, jobject object,
 
 static jboolean createPairedDeviceOutOfBandNative(JNIEnv *env, jobject object,
                                                 jstring address, jint timeout_ms) {
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 #ifdef HAVE_BLUETOOTH
     native_data_t *nat = get_native_data(env, object);
     jobject eventLoop = env->GetObjectField(object, field_mEventLoop);
@@ -403,7 +420,7 @@ static jint getDeviceServiceChannelNative(JNIEnv *env, jobject object,
                                           jstring path,
                                           jstring pattern, jint attr_id) {
 #ifdef HAVE_BLUETOOTH
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
     native_data_t *nat = get_native_data(env, object);
     jobject eventLoop = env->GetObjectField(object, field_mEventLoop);
     struct event_loop_native_data_t *eventLoopNat =
@@ -429,7 +446,7 @@ static jint getDeviceServiceChannelNative(JNIEnv *env, jobject object,
 
 static jboolean cancelDeviceCreationNative(JNIEnv *env, jobject object,
                                            jstring address) {
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
     jboolean result = JNI_FALSE;
 #ifdef HAVE_BLUETOOTH
     native_data_t *nat = get_native_data(env, object);
@@ -461,7 +478,7 @@ static jboolean cancelDeviceCreationNative(JNIEnv *env, jobject object,
 }
 
 static jboolean removeDeviceNative(JNIEnv *env, jobject object, jstring object_path) {
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 #ifdef HAVE_BLUETOOTH
     native_data_t *nat = get_native_data(env, object);
     if (nat) {
@@ -484,7 +501,7 @@ static jboolean removeDeviceNative(JNIEnv *env, jobject object, jstring object_p
 
 static jint enableNative(JNIEnv *env, jobject object) {
 #ifdef HAVE_BLUETOOTH
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
     return bt_enable();
 #endif
     return -1;
@@ -492,7 +509,7 @@ static jint enableNative(JNIEnv *env, jobject object) {
 
 static jint disableNative(JNIEnv *env, jobject object) {
 #ifdef HAVE_BLUETOOTH
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
     return bt_disable();
 #endif
     return -1;
@@ -500,7 +517,7 @@ static jint disableNative(JNIEnv *env, jobject object) {
 
 static jint isEnabledNative(JNIEnv *env, jobject object) {
 #ifdef HAVE_BLUETOOTH
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
     return bt_is_enabled();
 #endif
     return -1;
@@ -510,7 +527,7 @@ static jboolean setPairingConfirmationNative(JNIEnv *env, jobject object,
                                              jstring address, bool confirm,
                                              int nativeData) {
 #ifdef HAVE_BLUETOOTH
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
     native_data_t *nat = get_native_data(env, object);
     if (nat) {
         DBusMessage *msg = (DBusMessage *)nativeData;
@@ -541,7 +558,7 @@ static jboolean setPairingConfirmationNative(JNIEnv *env, jobject object,
 static jboolean setPasskeyNative(JNIEnv *env, jobject object, jstring address,
                          int passkey, int nativeData) {
 #ifdef HAVE_BLUETOOTH
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
     native_data_t *nat = get_native_data(env, object);
     if (nat) {
         DBusMessage *msg = (DBusMessage *)nativeData;
@@ -568,7 +585,7 @@ static jboolean setPasskeyNative(JNIEnv *env, jobject object, jstring address,
 static jboolean setRemoteOutOfBandDataNative(JNIEnv *env, jobject object, jstring address,
                          jbyteArray hash, jbyteArray randomizer, int nativeData) {
 #ifdef HAVE_BLUETOOTH
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
     native_data_t *nat = get_native_data(env, object);
     if (nat) {
         DBusMessage *msg = (DBusMessage *)nativeData;
@@ -602,7 +619,7 @@ static jboolean setRemoteOutOfBandDataNative(JNIEnv *env, jobject object, jstrin
 static jboolean setAuthorizationNative(JNIEnv *env, jobject object, jstring address,
                          jboolean val, int nativeData) {
 #ifdef HAVE_BLUETOOTH
-    LOGV(__FUNCTION__);
+  LOGV("%s", __FUNCTION__);
     native_data_t *nat = get_native_data(env, object);
     if (nat) {
         DBusMessage *msg = (DBusMessage *)nativeData;
@@ -631,7 +648,7 @@ static jboolean setAuthorizationNative(JNIEnv *env, jobject object, jstring addr
 static jboolean setPinNative(JNIEnv *env, jobject object, jstring address,
                          jstring pin, int nativeData) {
 #ifdef HAVE_BLUETOOTH
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
     native_data_t *nat = get_native_data(env, object);
     if (nat) {
         DBusMessage *msg = (DBusMessage *)nativeData;
@@ -661,7 +678,7 @@ static jboolean setPinNative(JNIEnv *env, jobject object, jstring address,
 static jboolean cancelPairingUserInputNative(JNIEnv *env, jobject object,
                                             jstring address, int nativeData) {
 #ifdef HAVE_BLUETOOTH
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
     native_data_t *nat = get_native_data(env, object);
     if (nat) {
         DBusMessage *msg = (DBusMessage *)nativeData;
@@ -687,7 +704,7 @@ static jobjectArray getDevicePropertiesNative(JNIEnv *env, jobject object,
                                                     jstring path)
 {
 #ifdef HAVE_BLUETOOTH
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
     native_data_t *nat = get_native_data(env, object);
     if (nat) {
         DBusMessage *msg, *reply;
@@ -716,9 +733,7 @@ static jobjectArray getDevicePropertiesNative(JNIEnv *env, jobject object,
            str_array =  parse_remote_device_properties(env, &iter);
         dbus_message_unref(reply);
 
-        env->PopLocalFrame(NULL);
-
-        return str_array;
+        return (jobjectArray) env->PopLocalFrame(str_array);
     }
 #endif
     return NULL;
@@ -726,7 +741,7 @@ static jobjectArray getDevicePropertiesNative(JNIEnv *env, jobject object,
 
 static jobjectArray getAdapterPropertiesNative(JNIEnv *env, jobject object) {
 #ifdef HAVE_BLUETOOTH
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
     native_data_t *nat = get_native_data(env, object);
     if (nat) {
         DBusMessage *msg, *reply;
@@ -752,8 +767,7 @@ static jobjectArray getAdapterPropertiesNative(JNIEnv *env, jobject object) {
             str_array = parse_adapter_properties(env, &iter);
         dbus_message_unref(reply);
 
-        env->PopLocalFrame(NULL);
-        return str_array;
+        return (jobjectArray) env->PopLocalFrame(str_array);
     }
 #endif
     return NULL;
@@ -762,14 +776,13 @@ static jobjectArray getAdapterPropertiesNative(JNIEnv *env, jobject object) {
 static jboolean setAdapterPropertyNative(JNIEnv *env, jobject object, jstring key,
                                          void *value, jint type) {
 #ifdef HAVE_BLUETOOTH
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
     native_data_t *nat = get_native_data(env, object);
     if (nat) {
-        DBusMessage *reply, *msg;
+        DBusMessage *msg;
         DBusMessageIter iter;
-        DBusError err;
+        dbus_bool_t reply = JNI_FALSE;
         const char *c_key = env->GetStringUTFChars(key, NULL);
-        dbus_error_init(&err);
 
         msg = dbus_message_new_method_call(BLUEZ_DBUS_BASE_IFC,
                                            get_adapter_path(env, object),
@@ -785,19 +798,13 @@ static jboolean setAdapterPropertyNative(JNIEnv *env, jobject object, jstring ke
         dbus_message_iter_init_append(msg, &iter);
         append_variant(&iter, type, value);
 
-        reply = dbus_connection_send_with_reply_and_block(nat->conn, msg, -1, &err);
+        // Asynchronous call - the callbacks come via propertyChange
+        reply = dbus_connection_send_with_reply(nat->conn, msg, NULL, -1);
         dbus_message_unref(msg);
 
         env->ReleaseStringUTFChars(key, c_key);
+        return reply ? JNI_TRUE : JNI_FALSE;
 
-        if (!reply) {
-            if (dbus_error_is_set(&err)) {
-                LOG_AND_FREE_DBUS_ERROR(&err);
-            } else
-                LOGE("DBus reply is NULL in function %s", __FUNCTION__);
-            return JNI_FALSE;
-        }
-        return JNI_TRUE;
     }
 #endif
     return JNI_FALSE;
@@ -836,17 +843,16 @@ static jboolean setAdapterPropertyBooleanNative(JNIEnv *env, jobject object, jst
 static jboolean setDevicePropertyNative(JNIEnv *env, jobject object, jstring path,
                                                jstring key, void *value, jint type) {
 #ifdef HAVE_BLUETOOTH
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
     native_data_t *nat = get_native_data(env, object);
     if (nat) {
-        DBusMessage *reply, *msg;
+        DBusMessage *msg;
         DBusMessageIter iter;
-        DBusError err;
+        dbus_bool_t reply = JNI_FALSE;
 
         const char *c_key = env->GetStringUTFChars(key, NULL);
         const char *c_path = env->GetStringUTFChars(path, NULL);
 
-        dbus_error_init(&err);
         msg = dbus_message_new_method_call(BLUEZ_DBUS_BASE_IFC,
                                           c_path, DBUS_DEVICE_IFACE, "SetProperty");
         if (!msg) {
@@ -860,19 +866,14 @@ static jboolean setDevicePropertyNative(JNIEnv *env, jobject object, jstring pat
         dbus_message_iter_init_append(msg, &iter);
         append_variant(&iter, type, value);
 
-        reply = dbus_connection_send_with_reply_and_block(nat->conn, msg, -1, &err);
+        // Asynchronous call - the callbacks come via Device propertyChange
+        reply = dbus_connection_send_with_reply(nat->conn, msg, NULL, -1);
         dbus_message_unref(msg);
 
-        env->ReleaseStringUTFChars(key, c_key);
         env->ReleaseStringUTFChars(path, c_path);
-        if (!reply) {
-            if (dbus_error_is_set(&err)) {
-                LOG_AND_FREE_DBUS_ERROR(&err);
-            } else
-            LOGE("DBus reply is NULL in function %s", __FUNCTION__);
-            return JNI_FALSE;
-        }
-        return JNI_TRUE;
+        env->ReleaseStringUTFChars(key, c_key);
+
+        return reply ? JNI_TRUE : JNI_FALSE;
     }
 #endif
     return JNI_FALSE;
@@ -888,10 +889,22 @@ static jboolean setDevicePropertyBooleanNative(JNIEnv *env, jobject object,
 #endif
 }
 
+static jboolean setDevicePropertyStringNative(JNIEnv *env, jobject object,
+                                              jstring path, jstring key, jstring value) {
+#ifdef HAVE_BLUETOOTH
+    const char *c_value = env->GetStringUTFChars(value, NULL);
+    jboolean ret = setDevicePropertyNative(env, object, path, key,
+                                           (void *)&c_value, DBUS_TYPE_STRING);
+    env->ReleaseStringUTFChars(value, (char *)c_value);
+    return ret;
+#else
+    return JNI_FALSE;
+#endif
+}
 
 static jboolean createDeviceNative(JNIEnv *env, jobject object,
                                                 jstring address) {
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 #ifdef HAVE_BLUETOOTH
     native_data_t *nat = get_native_data(env, object);
     jobject eventLoop = env->GetObjectField(object, field_mEventLoop);
@@ -922,7 +935,7 @@ static jboolean createDeviceNative(JNIEnv *env, jobject object,
 
 static jboolean discoverServicesNative(JNIEnv *env, jobject object,
                                                jstring path, jstring pattern) {
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 #ifdef HAVE_BLUETOOTH
     native_data_t *nat = get_native_data(env, object);
     jobject eventLoop = env->GetObjectField(object, field_mEventLoop);
@@ -956,9 +969,81 @@ static jboolean discoverServicesNative(JNIEnv *env, jobject object,
     return JNI_FALSE;
 }
 
+#ifdef HAVE_BLUETOOTH
+static jintArray extract_handles(JNIEnv *env, DBusMessage *reply) {
+    jint *handles;
+    jintArray handleArray = NULL;
+    int len;
+
+    DBusError err;
+    dbus_error_init(&err);
+
+    if (dbus_message_get_args(reply, &err,
+                              DBUS_TYPE_ARRAY, DBUS_TYPE_UINT32, &handles, &len,
+                              DBUS_TYPE_INVALID)) {
+        handleArray = env->NewIntArray(len);
+        if (handleArray) {
+            env->SetIntArrayRegion(handleArray, 0, len, handles);
+        } else {
+            LOGE("Null array in extract_handles");
+        }
+    } else {
+        LOG_AND_FREE_DBUS_ERROR(&err);
+    }
+    return handleArray;
+}
+#endif
+
+static jintArray addReservedServiceRecordsNative(JNIEnv *env, jobject object,
+                                                jintArray uuids) {
+    LOGV("%s", __FUNCTION__);
+#ifdef HAVE_BLUETOOTH
+    DBusMessage *reply = NULL;
+
+    native_data_t *nat = get_native_data(env, object);
+
+    jint* svc_classes = env->GetIntArrayElements(uuids, NULL);
+    if (!svc_classes) return NULL;
+
+    int len = env->GetArrayLength(uuids);
+    reply = dbus_func_args(env, nat->conn,
+                            get_adapter_path(env, object),
+                            DBUS_ADAPTER_IFACE, "AddReservedServiceRecords",
+                            DBUS_TYPE_ARRAY, DBUS_TYPE_UINT32,
+                            &svc_classes, len, DBUS_TYPE_INVALID);
+    env->ReleaseIntArrayElements(uuids, svc_classes, 0);
+    return reply ? extract_handles(env, reply) : NULL;
+
+#endif
+    return NULL;
+}
+
+static jboolean removeReservedServiceRecordsNative(JNIEnv *env, jobject object,
+                                                   jintArray handles) {
+    LOGV("%s", __FUNCTION__);
+#ifdef HAVE_BLUETOOTH
+    native_data_t *nat = get_native_data(env, object);
+    jint *values = env->GetIntArrayElements(handles, NULL);
+    DBusMessage *msg = NULL;
+    DBusMessage *reply = NULL;
+    if (values == NULL) return JNI_FALSE;
+
+    jsize len = env->GetArrayLength(handles);
+
+    reply = dbus_func_args(env, nat->conn,
+                            get_adapter_path(env, object),
+                            DBUS_ADAPTER_IFACE, "RemoveReservedServiceRecords",
+                            DBUS_TYPE_ARRAY, DBUS_TYPE_UINT32,
+                            &values, len, DBUS_TYPE_INVALID);
+    env->ReleaseIntArrayElements(handles, values, NULL);
+    return reply ? JNI_TRUE : JNI_FALSE;
+#endif
+    return JNI_FALSE;
+}
+
 static jint addRfcommServiceRecordNative(JNIEnv *env, jobject object,
         jstring name, jlong uuidMsb, jlong uuidLsb, jshort channel) {
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 #ifdef HAVE_BLUETOOTH
     native_data_t *nat = get_native_data(env, object);
     if (nat) {
@@ -983,7 +1068,7 @@ static jint addRfcommServiceRecordNative(JNIEnv *env, jobject object,
 }
 
 static jboolean removeServiceRecordNative(JNIEnv *env, jobject object, jint handle) {
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 #ifdef HAVE_BLUETOOTH
     native_data_t *nat = get_native_data(env, object);
     if (nat) {
@@ -1001,7 +1086,7 @@ static jboolean removeServiceRecordNative(JNIEnv *env, jobject object, jint hand
 
 static jboolean setLinkTimeoutNative(JNIEnv *env, jobject object, jstring object_path,
                                      jint num_slots) {
-    LOGV(__FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 #ifdef HAVE_BLUETOOTH
     native_data_t *nat = get_native_data(env, object);
     if (nat) {
@@ -1018,6 +1103,573 @@ static jboolean setLinkTimeoutNative(JNIEnv *env, jobject object, jstring object
 #endif
     return JNI_FALSE;
 }
+
+static jboolean connectInputDeviceNative(JNIEnv *env, jobject object, jstring path) {
+    LOGV("%s", __FUNCTION__);
+#ifdef HAVE_BLUETOOTH
+    native_data_t *nat = get_native_data(env, object);
+    jobject eventLoop = env->GetObjectField(object, field_mEventLoop);
+    struct event_loop_native_data_t *eventLoopNat =
+            get_EventLoop_native_data(env, eventLoop);
+
+    if (nat && eventLoopNat) {
+        const char *c_path = env->GetStringUTFChars(path, NULL);
+
+        int len = env->GetStringLength(path) + 1;
+        char *context_path = (char *)calloc(len, sizeof(char));
+        strlcpy(context_path, c_path, len);  // for callback
+
+        bool ret = dbus_func_args_async(env, nat->conn, -1, onInputDeviceConnectionResult,
+                                        context_path, eventLoopNat, c_path, DBUS_INPUT_IFACE,
+                                        "Connect",
+                                        DBUS_TYPE_INVALID);
+
+        env->ReleaseStringUTFChars(path, c_path);
+        return ret ? JNI_TRUE : JNI_FALSE;
+    }
+#endif
+    return JNI_FALSE;
+}
+
+static jboolean disconnectInputDeviceNative(JNIEnv *env, jobject object,
+                                     jstring path) {
+    LOGV("%s", __FUNCTION__);
+#ifdef HAVE_BLUETOOTH
+    native_data_t *nat = get_native_data(env, object);
+    jobject eventLoop = env->GetObjectField(object, field_mEventLoop);
+    struct event_loop_native_data_t *eventLoopNat =
+            get_EventLoop_native_data(env, eventLoop);
+
+    if (nat && eventLoopNat) {
+        const char *c_path = env->GetStringUTFChars(path, NULL);
+
+        int len = env->GetStringLength(path) + 1;
+        char *context_path = (char *)calloc(len, sizeof(char));
+        strlcpy(context_path, c_path, len);  // for callback
+
+        bool ret = dbus_func_args_async(env, nat->conn, -1, onInputDeviceConnectionResult,
+                                        context_path, eventLoopNat, c_path, DBUS_INPUT_IFACE,
+                                        "Disconnect",
+                                        DBUS_TYPE_INVALID);
+
+        env->ReleaseStringUTFChars(path, c_path);
+        return ret ? JNI_TRUE : JNI_FALSE;
+    }
+#endif
+    return JNI_FALSE;
+}
+
+static jboolean setBluetoothTetheringNative(JNIEnv *env, jobject object, jboolean value,
+                                            jstring src_role, jstring bridge) {
+    LOGV("%s", __FUNCTION__);
+#ifdef HAVE_BLUETOOTH
+    native_data_t *nat = get_native_data(env, object);
+    if (nat) {
+        DBusMessage *reply;
+        const char *c_role = env->GetStringUTFChars(src_role, NULL);
+        const char *c_bridge = env->GetStringUTFChars(bridge, NULL);
+        if (value) {
+            LOGE("setBluetoothTetheringNative true");
+            reply = dbus_func_args(env, nat->conn,
+                                  get_adapter_path(env, object),
+                                  DBUS_NETWORKSERVER_IFACE,
+                                  "Register",
+                                  DBUS_TYPE_STRING, &c_role,
+                                  DBUS_TYPE_STRING, &c_bridge,
+                                  DBUS_TYPE_INVALID);
+        } else {
+            LOGE("setBluetoothTetheringNative false");
+            reply = dbus_func_args(env, nat->conn,
+                                  get_adapter_path(env, object),
+                                  DBUS_NETWORKSERVER_IFACE,
+                                  "Unregister",
+                                  DBUS_TYPE_STRING, &c_role,
+                                  DBUS_TYPE_INVALID);
+        }
+        env->ReleaseStringUTFChars(src_role, c_role);
+        env->ReleaseStringUTFChars(bridge, c_bridge);
+        return reply ? JNI_TRUE : JNI_FALSE;
+    }
+#endif
+    return JNI_FALSE;
+}
+
+static jboolean connectPanDeviceNative(JNIEnv *env, jobject object, jstring path,
+                                       jstring dstRole) {
+    LOGV("%s", __FUNCTION__);
+#ifdef HAVE_BLUETOOTH
+    LOGE("connectPanDeviceNative");
+    native_data_t *nat = get_native_data(env, object);
+    jobject eventLoop = env->GetObjectField(object, field_mEventLoop);
+    struct event_loop_native_data_t *eventLoopNat =
+            get_EventLoop_native_data(env, eventLoop);
+
+    if (nat && eventLoopNat) {
+        const char *c_path = env->GetStringUTFChars(path, NULL);
+        const char *dst = env->GetStringUTFChars(dstRole, NULL);
+
+        int len = env->GetStringLength(path) + 1;
+        char *context_path = (char *)calloc(len, sizeof(char));
+        strlcpy(context_path, c_path, len);  // for callback
+
+        bool ret = dbus_func_args_async(env, nat->conn, -1,onPanDeviceConnectionResult,
+                                    context_path, eventLoopNat, c_path,
+                                    DBUS_NETWORK_IFACE, "Connect",
+                                    DBUS_TYPE_STRING, &dst,
+                                    DBUS_TYPE_INVALID);
+
+        env->ReleaseStringUTFChars(path, c_path);
+        env->ReleaseStringUTFChars(dstRole, dst);
+        return ret ? JNI_TRUE : JNI_FALSE;
+    }
+#endif
+    return JNI_FALSE;
+}
+
+static jboolean disconnectPanDeviceNative(JNIEnv *env, jobject object,
+                                     jstring path) {
+    LOGV("%s", __FUNCTION__);
+#ifdef HAVE_BLUETOOTH
+    LOGE("disconnectPanDeviceNative");
+    native_data_t *nat = get_native_data(env, object);
+    jobject eventLoop = env->GetObjectField(object, field_mEventLoop);
+    struct event_loop_native_data_t *eventLoopNat =
+            get_EventLoop_native_data(env, eventLoop);
+
+    if (nat && eventLoopNat) {
+        const char *c_path = env->GetStringUTFChars(path, NULL);
+
+        int len = env->GetStringLength(path) + 1;
+        char *context_path = (char *)calloc(len, sizeof(char));
+        strlcpy(context_path, c_path, len);  // for callback
+
+        bool ret = dbus_func_args_async(env, nat->conn, -1,onPanDeviceConnectionResult,
+                                        context_path, eventLoopNat, c_path,
+                                        DBUS_NETWORK_IFACE, "Disconnect",
+                                        DBUS_TYPE_INVALID);
+
+        env->ReleaseStringUTFChars(path, c_path);
+        return ret ? JNI_TRUE : JNI_FALSE;
+    }
+#endif
+    return JNI_FALSE;
+}
+
+static jboolean disconnectPanServerDeviceNative(JNIEnv *env, jobject object,
+                                                jstring path, jstring address,
+                                                jstring iface) {
+    LOGV("%s", __FUNCTION__);
+#ifdef HAVE_BLUETOOTH
+    LOGE("disconnectPanServerDeviceNative");
+    native_data_t *nat = get_native_data(env, object);
+    jobject eventLoop = env->GetObjectField(object, field_mEventLoop);
+    struct event_loop_native_data_t *eventLoopNat =
+            get_EventLoop_native_data(env, eventLoop);
+
+    if (nat && eventLoopNat) {
+        const char *c_address = env->GetStringUTFChars(address, NULL);
+        const char *c_path = env->GetStringUTFChars(path, NULL);
+        const char *c_iface = env->GetStringUTFChars(iface, NULL);
+
+        int len = env->GetStringLength(path) + 1;
+        char *context_path = (char *)calloc(len, sizeof(char));
+        strlcpy(context_path, c_path, len);  // for callback
+
+        bool ret = dbus_func_args_async(env, nat->conn, -1,
+                                        onPanDeviceConnectionResult,
+                                        context_path, eventLoopNat,
+                                        get_adapter_path(env, object),
+                                        DBUS_NETWORKSERVER_IFACE,
+                                        "DisconnectDevice",
+                                        DBUS_TYPE_STRING, &c_address,
+                                        DBUS_TYPE_STRING, &c_iface,
+                                        DBUS_TYPE_INVALID);
+
+        env->ReleaseStringUTFChars(address, c_address);
+        env->ReleaseStringUTFChars(iface, c_iface);
+        env->ReleaseStringUTFChars(path, c_path);
+        return ret ? JNI_TRUE : JNI_FALSE;
+    }
+#endif
+    return JNI_FALSE;
+}
+
+static jstring registerHealthApplicationNative(JNIEnv *env, jobject object,
+                                           jint dataType, jstring role,
+                                           jstring name, jstring channelType) {
+    LOGV("%s", __FUNCTION__);
+    jstring path = NULL;
+#ifdef HAVE_BLUETOOTH
+    native_data_t *nat = get_native_data(env, object);
+    if (nat) {
+        const char *c_role = env->GetStringUTFChars(role, NULL);
+        const char *c_name = env->GetStringUTFChars(name, NULL);
+        const char *c_channel_type = env->GetStringUTFChars(channelType, NULL);
+        char *c_path;
+        DBusMessage *msg, *reply;
+        DBusError err;
+        dbus_error_init(&err);
+
+        msg = dbus_message_new_method_call(BLUEZ_DBUS_BASE_IFC,
+                                            DBUS_HEALTH_MANAGER_PATH,
+                                            DBUS_HEALTH_MANAGER_IFACE,
+                                            "CreateApplication");
+
+        if (msg == NULL) {
+            LOGE("Could not allocate D-Bus message object!");
+            return NULL;
+        }
+
+        /* append arguments */
+        append_dict_args(msg,
+                         "DataType", DBUS_TYPE_UINT16, &dataType,
+                         "Role", DBUS_TYPE_STRING, &c_role,
+                         "Description", DBUS_TYPE_STRING, &c_name,
+                         "ChannelType", DBUS_TYPE_STRING, &c_channel_type,
+                         DBUS_TYPE_INVALID);
+
+
+        /* Make the call. */
+        reply = dbus_connection_send_with_reply_and_block(nat->conn, msg, -1, &err);
+
+        env->ReleaseStringUTFChars(role, c_role);
+        env->ReleaseStringUTFChars(name, c_name);
+        env->ReleaseStringUTFChars(channelType, c_channel_type);
+
+        if (!reply) {
+            if (dbus_error_is_set(&err)) {
+                LOG_AND_FREE_DBUS_ERROR(&err);
+            }
+        } else {
+            if (!dbus_message_get_args(reply, &err,
+                                      DBUS_TYPE_OBJECT_PATH, &c_path,
+                                      DBUS_TYPE_INVALID)) {
+                if (dbus_error_is_set(&err)) {
+                    LOG_AND_FREE_DBUS_ERROR(&err);
+                }
+            } else {
+               path = env->NewStringUTF(c_path);
+            }
+            dbus_message_unref(reply);
+        }
+    }
+#endif
+    return path;
+}
+
+static jstring registerSinkHealthApplicationNative(JNIEnv *env, jobject object,
+                                           jint dataType, jstring role,
+                                           jstring name) {
+    LOGV("%s", __FUNCTION__);
+    jstring path = NULL;
+#ifdef HAVE_BLUETOOTH
+    native_data_t *nat = get_native_data(env, object);
+    if (nat) {
+        const char *c_role = env->GetStringUTFChars(role, NULL);
+        const char *c_name = env->GetStringUTFChars(name, NULL);
+        char *c_path;
+
+        DBusMessage *msg, *reply;
+        DBusError err;
+        dbus_error_init(&err);
+
+        msg = dbus_message_new_method_call(BLUEZ_DBUS_BASE_IFC,
+                                            DBUS_HEALTH_MANAGER_PATH,
+                                            DBUS_HEALTH_MANAGER_IFACE,
+                                            "CreateApplication");
+
+        if (msg == NULL) {
+            LOGE("Could not allocate D-Bus message object!");
+            return NULL;
+        }
+
+        /* append arguments */
+        append_dict_args(msg,
+                         "DataType", DBUS_TYPE_UINT16, &dataType,
+                         "Role", DBUS_TYPE_STRING, &c_role,
+                         "Description", DBUS_TYPE_STRING, &c_name,
+                         DBUS_TYPE_INVALID);
+
+
+        /* Make the call. */
+        reply = dbus_connection_send_with_reply_and_block(nat->conn, msg, -1, &err);
+
+        env->ReleaseStringUTFChars(role, c_role);
+        env->ReleaseStringUTFChars(name, c_name);
+
+        if (!reply) {
+            if (dbus_error_is_set(&err)) {
+                LOG_AND_FREE_DBUS_ERROR(&err);
+            }
+        } else {
+            if (!dbus_message_get_args(reply, &err,
+                                      DBUS_TYPE_OBJECT_PATH, &c_path,
+                                      DBUS_TYPE_INVALID)) {
+                if (dbus_error_is_set(&err)) {
+                    LOG_AND_FREE_DBUS_ERROR(&err);
+                }
+            } else {
+                path = env->NewStringUTF(c_path);
+            }
+            dbus_message_unref(reply);
+        }
+    }
+#endif
+    return path;
+}
+
+static jboolean unregisterHealthApplicationNative(JNIEnv *env, jobject object,
+                                                    jstring path) {
+    LOGV("%s", __FUNCTION__);
+    jboolean result = JNI_FALSE;
+#ifdef HAVE_BLUETOOTH
+    native_data_t *nat = get_native_data(env, object);
+    if (nat) {
+        const char *c_path = env->GetStringUTFChars(path, NULL);
+        DBusError err;
+        dbus_error_init(&err);
+        DBusMessage *reply =
+            dbus_func_args_timeout(env, nat->conn, -1,
+                                   DBUS_HEALTH_MANAGER_PATH,
+                                   DBUS_HEALTH_MANAGER_IFACE, "DestroyApplication",
+                                   DBUS_TYPE_OBJECT_PATH, &c_path,
+                                   DBUS_TYPE_INVALID);
+
+        env->ReleaseStringUTFChars(path, c_path);
+
+        if (!reply) {
+            if (dbus_error_is_set(&err)) {
+                LOG_AND_FREE_DBUS_ERROR(&err);
+            }
+        } else {
+            result = JNI_TRUE;
+        }
+    }
+#endif
+    return result;
+}
+
+static jboolean createChannelNative(JNIEnv *env, jobject object,
+                                       jstring devicePath, jstring appPath, jstring config,
+                                       jint code) {
+    LOGV("%s", __FUNCTION__);
+#ifdef HAVE_BLUETOOTH
+    native_data_t *nat = get_native_data(env, object);
+    jobject eventLoop = env->GetObjectField(object, field_mEventLoop);
+    struct event_loop_native_data_t *eventLoopNat =
+            get_EventLoop_native_data(env, eventLoop);
+
+    if (nat && eventLoopNat) {
+        const char *c_device_path = env->GetStringUTFChars(devicePath, NULL);
+        const char *c_app_path = env->GetStringUTFChars(appPath, NULL);
+        const char *c_config = env->GetStringUTFChars(config, NULL);
+        int *data = (int *) malloc(sizeof(int));
+        if (data == NULL) return JNI_FALSE;
+
+        *data = code;
+        bool ret = dbus_func_args_async(env, nat->conn, -1, onHealthDeviceConnectionResult,
+                                        data, eventLoopNat, c_device_path,
+                                        DBUS_HEALTH_DEVICE_IFACE, "CreateChannel",
+                                        DBUS_TYPE_OBJECT_PATH, &c_app_path,
+                                        DBUS_TYPE_STRING, &c_config,
+                                        DBUS_TYPE_INVALID);
+
+
+        env->ReleaseStringUTFChars(devicePath, c_device_path);
+        env->ReleaseStringUTFChars(appPath, c_app_path);
+        env->ReleaseStringUTFChars(config, c_config);
+
+        return ret ? JNI_TRUE : JNI_FALSE;
+    }
+#endif
+    return JNI_FALSE;
+}
+
+static jboolean destroyChannelNative(JNIEnv *env, jobject object, jstring devicePath,
+                                     jstring channelPath, jint code) {
+    LOGE("%s", __FUNCTION__);
+#ifdef HAVE_BLUETOOTH
+    native_data_t *nat = get_native_data(env, object);
+    jobject eventLoop = env->GetObjectField(object, field_mEventLoop);
+    struct event_loop_native_data_t *eventLoopNat =
+            get_EventLoop_native_data(env, eventLoop);
+
+    if (nat && eventLoopNat) {
+        const char *c_device_path = env->GetStringUTFChars(devicePath, NULL);
+        const char *c_channel_path = env->GetStringUTFChars(channelPath, NULL);
+        int *data = (int *) malloc(sizeof(int));
+        if (data == NULL) return JNI_FALSE;
+
+        *data = code;
+        bool ret = dbus_func_args_async(env, nat->conn, -1, onHealthDeviceConnectionResult,
+                                        data, eventLoopNat, c_device_path,
+                                        DBUS_HEALTH_DEVICE_IFACE, "DestroyChannel",
+                                        DBUS_TYPE_OBJECT_PATH, &c_channel_path,
+                                        DBUS_TYPE_INVALID);
+
+        env->ReleaseStringUTFChars(devicePath, c_device_path);
+        env->ReleaseStringUTFChars(channelPath, c_channel_path);
+
+        return ret ? JNI_TRUE : JNI_FALSE;
+    }
+#endif
+    return JNI_FALSE;
+}
+
+static jstring getMainChannelNative(JNIEnv *env, jobject object, jstring devicePath) {
+    LOGE("%s", __FUNCTION__);
+#ifdef HAVE_BLUETOOTH
+    native_data_t *nat = get_native_data(env, object);
+    if (nat) {
+        const char *c_device_path = env->GetStringUTFChars(devicePath, NULL);
+        DBusError err;
+        dbus_error_init(&err);
+
+        DBusMessage *reply = dbus_func_args(env, nat->conn,
+                           c_device_path,
+                           DBUS_HEALTH_DEVICE_IFACE, "GetProperties",
+                           DBUS_TYPE_INVALID);
+        env->ReleaseStringUTFChars(devicePath, c_device_path);
+
+        if (!reply) {
+            if (dbus_error_is_set(&err)) {
+                LOG_AND_FREE_DBUS_ERROR(&err);
+            }
+        } else {
+            DBusMessageIter iter;
+            jobjectArray str_array = NULL;
+            if (dbus_message_iter_init(reply, &iter))
+                str_array = parse_health_device_properties(env, &iter);
+            dbus_message_unref(reply);
+            jstring path = (jstring) env->GetObjectArrayElement(str_array, 1);
+
+            return path;
+        }
+    }
+#endif
+    return NULL;
+}
+
+static jstring getChannelApplicationNative(JNIEnv *env, jobject object, jstring channelPath) {
+    LOGE("%s", __FUNCTION__);
+#ifdef HAVE_BLUETOOTH
+    native_data_t *nat = get_native_data(env, object);
+    if (nat) {
+        const char *c_channel_path = env->GetStringUTFChars(channelPath, NULL);
+        DBusError err;
+        dbus_error_init(&err);
+
+        DBusMessage *reply = dbus_func_args(env, nat->conn,
+                                            c_channel_path,
+                                            DBUS_HEALTH_CHANNEL_IFACE, "GetProperties",
+                                            DBUS_TYPE_INVALID);
+        env->ReleaseStringUTFChars(channelPath, c_channel_path);
+
+        if (!reply) {
+            if (dbus_error_is_set(&err)) {
+                LOG_AND_FREE_DBUS_ERROR(&err);
+            }
+        } else {
+            DBusMessageIter iter;
+            jobjectArray str_array = NULL;
+            if (dbus_message_iter_init(reply, &iter))
+                str_array = parse_health_channel_properties(env, &iter);
+            dbus_message_unref(reply);
+
+            jint len = env->GetArrayLength(str_array);
+
+            jstring name, path;
+            const char *c_name;
+
+            for (int i = 0; i < len; i+=2) {
+                name = (jstring) env->GetObjectArrayElement(str_array, i);
+                c_name = env->GetStringUTFChars(name, NULL);
+
+                if (!strcmp(c_name, "Application")) {
+                    path = (jstring) env->GetObjectArrayElement(str_array, i+1);
+                    env->ReleaseStringUTFChars(name, c_name);
+                    return path;
+                }
+                env->ReleaseStringUTFChars(name, c_name);
+            }
+        }
+    }
+#endif
+    return NULL;
+}
+
+static jboolean releaseChannelFdNative(JNIEnv *env, jobject object, jstring channelPath) {
+    LOGV("%s", __FUNCTION__);
+#ifdef HAVE_BLUETOOTH
+    native_data_t *nat = get_native_data(env, object);
+    if (nat) {
+        const char *c_channel_path = env->GetStringUTFChars(channelPath, NULL);
+        DBusError err;
+        dbus_error_init(&err);
+
+        DBusMessage *reply = dbus_func_args(env, nat->conn,
+                                            c_channel_path,
+                                            DBUS_HEALTH_CHANNEL_IFACE, "Release",
+                                            DBUS_TYPE_INVALID);
+        env->ReleaseStringUTFChars(channelPath, c_channel_path);
+
+        return reply ? JNI_TRUE : JNI_FALSE;
+    }
+#endif
+    return JNI_FALSE;
+}
+
+static jobject getChannelFdNative(JNIEnv *env, jobject object, jstring channelPath) {
+    LOGV("%s", __FUNCTION__);
+#ifdef HAVE_BLUETOOTH
+    native_data_t *nat = get_native_data(env, object);
+    if (nat) {
+        const char *c_channel_path = env->GetStringUTFChars(channelPath, NULL);
+        int32_t fd;
+        DBusError err;
+        dbus_error_init(&err);
+
+        DBusMessage *reply = dbus_func_args(env, nat->conn,
+                                            c_channel_path,
+                                            DBUS_HEALTH_CHANNEL_IFACE, "Acquire",
+                                            DBUS_TYPE_INVALID);
+        env->ReleaseStringUTFChars(channelPath, c_channel_path);
+
+        if (!reply) {
+            if (dbus_error_is_set(&err)) {
+                LOG_AND_FREE_DBUS_ERROR(&err);
+            }
+            return NULL;
+        }
+
+        fd = dbus_returns_unixfd(env, reply);
+        if (fd == -1) return NULL;
+
+        // Create FileDescriptor object
+        jobject fileDesc = jniCreateFileDescriptor(env, fd);
+        if (fileDesc == NULL) {
+            // FileDescriptor constructor has thrown an exception
+            releaseChannelFdNative(env, object, channelPath);
+            close(fd);
+            return NULL;
+        }
+
+        // Wrap it in a ParcelFileDescriptor
+        jobject parcelFileDesc = newParcelFileDescriptor(env, fileDesc);
+        if (parcelFileDesc == NULL) {
+            // ParcelFileDescriptor constructor has thrown an exception
+            releaseChannelFdNative(env, object, channelPath);
+            close(fd);
+            return NULL;
+        }
+
+        return parcelFileDesc;
+    }
+#endif
+    return NULL;
+}
+
+
 
 static JNINativeMethod sMethods[] = {
      /* name, signature, funcPtr */
@@ -1064,12 +1716,47 @@ static JNINativeMethod sMethods[] = {
             (void *)cancelPairingUserInputNative},
     {"setDevicePropertyBooleanNative", "(Ljava/lang/String;Ljava/lang/String;I)Z",
             (void *)setDevicePropertyBooleanNative},
+    {"setDevicePropertyStringNative", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Z",
+            (void *)setDevicePropertyStringNative},
     {"createDeviceNative", "(Ljava/lang/String;)Z", (void *)createDeviceNative},
     {"discoverServicesNative", "(Ljava/lang/String;Ljava/lang/String;)Z", (void *)discoverServicesNative},
     {"addRfcommServiceRecordNative", "(Ljava/lang/String;JJS)I", (void *)addRfcommServiceRecordNative},
     {"removeServiceRecordNative", "(I)Z", (void *)removeServiceRecordNative},
+    {"addReservedServiceRecordsNative", "([I)[I", (void *) addReservedServiceRecordsNative},
+    {"removeReservedServiceRecordsNative", "([I)Z", (void *) removeReservedServiceRecordsNative},
     {"setLinkTimeoutNative", "(Ljava/lang/String;I)Z", (void *)setLinkTimeoutNative},
+    // HID functions
+    {"connectInputDeviceNative", "(Ljava/lang/String;)Z", (void *)connectInputDeviceNative},
+    {"disconnectInputDeviceNative", "(Ljava/lang/String;)Z", (void *)disconnectInputDeviceNative},
+
+    {"setBluetoothTetheringNative", "(ZLjava/lang/String;Ljava/lang/String;)Z",
+              (void *)setBluetoothTetheringNative},
+    {"connectPanDeviceNative", "(Ljava/lang/String;Ljava/lang/String;)Z",
+              (void *)connectPanDeviceNative},
+    {"disconnectPanDeviceNative", "(Ljava/lang/String;)Z", (void *)disconnectPanDeviceNative},
+    {"disconnectPanServerDeviceNative", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Z",
+              (void *)disconnectPanServerDeviceNative},
+    // Health function
+    {"registerHealthApplicationNative",
+              "(ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+              (void *)registerHealthApplicationNative},
+    {"registerHealthApplicationNative",
+            "(ILjava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+            (void *)registerSinkHealthApplicationNative},
+
+    {"unregisterHealthApplicationNative", "(Ljava/lang/String;)Z",
+              (void *)unregisterHealthApplicationNative},
+    {"createChannelNative", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;I)Z",
+              (void *)createChannelNative},
+    {"destroyChannelNative", "(Ljava/lang/String;Ljava/lang/String;I)Z",
+              (void *)destroyChannelNative},
+    {"getMainChannelNative", "(Ljava/lang/String;)Ljava/lang/String;", (void *)getMainChannelNative},
+    {"getChannelApplicationNative", "(Ljava/lang/String;)Ljava/lang/String;",
+              (void *)getChannelApplicationNative},
+    {"getChannelFdNative", "(Ljava/lang/String;)Landroid/os/ParcelFileDescriptor;", (void *)getChannelFdNative},
+    {"releaseChannelFdNative", "(Ljava/lang/String;)Z", (void *)releaseChannelFdNative},
 };
+
 
 int register_android_server_BluetoothService(JNIEnv *env) {
     return AndroidRuntime::registerNativeMethods(env,

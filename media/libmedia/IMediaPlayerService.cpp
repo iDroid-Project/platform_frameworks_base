@@ -23,19 +23,21 @@
 #include <media/IMediaPlayerService.h>
 #include <media/IMediaRecorder.h>
 #include <media/IOMX.h>
+#include <media/IStreamSource.h>
 
 #include <utils/Errors.h>  // for status_t
 
 namespace android {
 
 enum {
-    CREATE_URL = IBinder::FIRST_CALL_TRANSACTION,
-    CREATE_FD,
+    CREATE = IBinder::FIRST_CALL_TRANSACTION,
     DECODE_URL,
     DECODE_FD,
     CREATE_MEDIA_RECORDER,
     CREATE_METADATA_RETRIEVER,
-    GET_OMX
+    GET_OMX,
+    ADD_BATTERY_DATA,
+    PULL_BATTERY_DATA
 };
 
 class BpMediaPlayerService: public BpInterface<IMediaPlayerService>
@@ -56,28 +58,14 @@ public:
     }
 
     virtual sp<IMediaPlayer> create(
-            pid_t pid, const sp<IMediaPlayerClient>& client,
-            const char* url, const KeyedVector<String8, String8> *headers, int audioSessionId) {
+            pid_t pid, const sp<IMediaPlayerClient>& client, int audioSessionId) {
         Parcel data, reply;
         data.writeInterfaceToken(IMediaPlayerService::getInterfaceDescriptor());
         data.writeInt32(pid);
         data.writeStrongBinder(client->asBinder());
-        data.writeCString(url);
-
-        if (headers == NULL) {
-            data.writeInt32(0);
-        } else {
-            // serialize the headers
-            data.writeInt32(headers->size());
-            for (size_t i = 0; i < headers->size(); ++i) {
-                data.writeString8(headers->keyAt(i));
-                data.writeString8(headers->valueAt(i));
-            }
-        }
         data.writeInt32(audioSessionId);
 
-        remote()->transact(CREATE_URL, data, &reply);
-
+        remote()->transact(CREATE, data, &reply);
         return interface_cast<IMediaPlayer>(reply.readStrongBinder());
     }
 
@@ -88,23 +76,6 @@ public:
         data.writeInt32(pid);
         remote()->transact(CREATE_MEDIA_RECORDER, data, &reply);
         return interface_cast<IMediaRecorder>(reply.readStrongBinder());
-    }
-
-    virtual sp<IMediaPlayer> create(pid_t pid, const sp<IMediaPlayerClient>& client, int fd,
-            int64_t offset, int64_t length, int audioSessionId)
-    {
-        Parcel data, reply;
-        data.writeInterfaceToken(IMediaPlayerService::getInterfaceDescriptor());
-        data.writeInt32(pid);
-        data.writeStrongBinder(client->asBinder());
-        data.writeFileDescriptor(fd);
-        data.writeInt64(offset);
-        data.writeInt64(length);
-        data.writeInt32(audioSessionId);
-
-        remote()->transact(CREATE_FD, data, &reply);
-
-        return interface_cast<IMediaPlayer>(reply.readStrongBinder());;
     }
 
     virtual sp<IMemory> decode(const char* url, uint32_t *pSampleRate, int* pNumChannels, int* pFormat)
@@ -139,6 +110,19 @@ public:
         remote()->transact(GET_OMX, data, &reply);
         return interface_cast<IOMX>(reply.readStrongBinder());
     }
+
+    virtual void addBatteryData(uint32_t params) {
+        Parcel data, reply;
+        data.writeInterfaceToken(IMediaPlayerService::getInterfaceDescriptor());
+        data.writeInt32(params);
+        remote()->transact(ADD_BATTERY_DATA, data, &reply);
+    }
+
+    virtual status_t pullBatteryData(Parcel* reply) {
+        Parcel data;
+        data.writeInterfaceToken(IMediaPlayerService::getInterfaceDescriptor());
+        return remote()->transact(PULL_BATTERY_DATA, data, reply);
+    }
 };
 
 IMPLEMENT_META_INTERFACE(MediaPlayerService, "android.media.IMediaPlayerService");
@@ -149,38 +133,13 @@ status_t BnMediaPlayerService::onTransact(
     uint32_t code, const Parcel& data, Parcel* reply, uint32_t flags)
 {
     switch(code) {
-        case CREATE_URL: {
+        case CREATE: {
             CHECK_INTERFACE(IMediaPlayerService, data, reply);
             pid_t pid = data.readInt32();
             sp<IMediaPlayerClient> client =
                 interface_cast<IMediaPlayerClient>(data.readStrongBinder());
-            const char* url = data.readCString();
-
-            KeyedVector<String8, String8> headers;
-            int32_t numHeaders = data.readInt32();
-            for (int i = 0; i < numHeaders; ++i) {
-                String8 key = data.readString8();
-                String8 value = data.readString8();
-                headers.add(key, value);
-            }
             int audioSessionId = data.readInt32();
-
-            sp<IMediaPlayer> player = create(
-                    pid, client, url, numHeaders > 0 ? &headers : NULL, audioSessionId);
-
-            reply->writeStrongBinder(player->asBinder());
-            return NO_ERROR;
-        } break;
-        case CREATE_FD: {
-            CHECK_INTERFACE(IMediaPlayerService, data, reply);
-            pid_t pid = data.readInt32();
-            sp<IMediaPlayerClient> client = interface_cast<IMediaPlayerClient>(data.readStrongBinder());
-            int fd = dup(data.readFileDescriptor());
-            int64_t offset = data.readInt64();
-            int64_t length = data.readInt64();
-            int audioSessionId = data.readInt32();
-
-            sp<IMediaPlayer> player = create(pid, client, fd, offset, length, audioSessionId);
+            sp<IMediaPlayer> player = create(pid, client, audioSessionId);
             reply->writeStrongBinder(player->asBinder());
             return NO_ERROR;
         } break;
@@ -230,6 +189,17 @@ status_t BnMediaPlayerService::onTransact(
             CHECK_INTERFACE(IMediaPlayerService, data, reply);
             sp<IOMX> omx = getOMX();
             reply->writeStrongBinder(omx->asBinder());
+            return NO_ERROR;
+        } break;
+        case ADD_BATTERY_DATA: {
+            CHECK_INTERFACE(IMediaPlayerService, data, reply);
+            uint32_t params = data.readInt32();
+            addBatteryData(params);
+            return NO_ERROR;
+        } break;
+        case PULL_BATTERY_DATA: {
+            CHECK_INTERFACE(IMediaPlayerService, data, reply);
+            pullBatteryData(reply);
             return NO_ERROR;
         } break;
         default:

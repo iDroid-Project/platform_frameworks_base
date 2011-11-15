@@ -28,22 +28,41 @@ struct ALooper;
 struct PageCache;
 
 struct NuCachedSource2 : public DataSource {
-    NuCachedSource2(const sp<DataSource> &source);
+    NuCachedSource2(
+            const sp<DataSource> &source,
+            const char *cacheConfig = NULL,
+            bool disconnectAtHighwatermark = false);
 
     virtual status_t initCheck() const;
 
-    virtual ssize_t readAt(off_t offset, void *data, size_t size);
+    virtual ssize_t readAt(off64_t offset, void *data, size_t size);
 
-    virtual status_t getSize(off_t *size);
+    virtual status_t getSize(off64_t *size);
     virtual uint32_t flags();
+
+    virtual sp<DecryptHandle> DrmInitialization();
+    virtual void getDrmInfo(sp<DecryptHandle> &handle, DrmManagerClient **client);
+    virtual String8 getUri();
+
+    virtual String8 getMIMEType() const;
 
     ////////////////////////////////////////////////////////////////////////////
 
     size_t cachedSize();
-    size_t approxDataRemaining(bool *eos);
+    size_t approxDataRemaining(status_t *finalStatus);
 
-    void suspend();
-    void clearCacheAndResume();
+    void resumeFetchingIfNecessary();
+
+    // The following methods are supported only if the
+    // data source is HTTP-based; otherwise, ERROR_UNSUPPORTED
+    // is returned.
+    status_t getEstimatedBandwidthKbps(int32_t *kbps);
+    status_t setCacheStatCollectFreq(int32_t freqMs);
+
+    static void RemoveCacheSpecificHeaders(
+            KeyedVector<String8, String8> *headers,
+            String8 *cacheConfig,
+            bool *disconnectAtHighwatermark);
 
 protected:
     virtual ~NuCachedSource2();
@@ -52,19 +71,22 @@ private:
     friend struct AHandlerReflector<NuCachedSource2>;
 
     enum {
-        kPageSize            = 65536,
-        kHighWaterThreshold  = 5 * 1024 * 1024,
-        kLowWaterThreshold   = 512 * 1024,
+        kPageSize                       = 65536,
+        kDefaultHighWaterThreshold      = 20 * 1024 * 1024,
+        kDefaultLowWaterThreshold       = 4 * 1024 * 1024,
 
         // Read data after a 15 sec timeout whether we're actively
         // fetching or not.
-        kKeepAliveIntervalUs = 15000000,
+        kDefaultKeepAliveIntervalUs     = 15000000,
     };
 
     enum {
         kWhatFetchMore  = 'fetc',
         kWhatRead       = 'read',
-        kWhatSuspend    = 'susp',
+    };
+
+    enum {
+        kMaxNumRetries = 10,
     };
 
     sp<DataSource> mSource;
@@ -76,25 +98,38 @@ private:
     Condition mCondition;
 
     PageCache *mCache;
-    off_t mCacheOffset;
+    off64_t mCacheOffset;
     status_t mFinalStatus;
-    off_t mLastAccessPos;
+    off64_t mLastAccessPos;
     sp<AMessage> mAsyncResult;
     bool mFetching;
     int64_t mLastFetchTimeUs;
-    bool mSuspended;
+
+    int32_t mNumRetriesLeft;
+
+    size_t mHighwaterThresholdBytes;
+    size_t mLowwaterThresholdBytes;
+
+    // If the keep-alive interval is 0, keep-alives are disabled.
+    int64_t mKeepAliveIntervalUs;
+
+    bool mDisconnectAtHighwatermark;
 
     void onMessageReceived(const sp<AMessage> &msg);
     void onFetch();
     void onRead(const sp<AMessage> &msg);
-    void onSuspend();
 
     void fetchInternal();
-    ssize_t readInternal(off_t offset, void *data, size_t size);
-    status_t seekInternal_l(off_t offset);
+    ssize_t readInternal(off64_t offset, void *data, size_t size);
+    status_t seekInternal_l(off64_t offset);
 
-    size_t approxDataRemaining_l(bool *eos);
-    void restartPrefetcherIfNecessary_l(bool force = false);
+    size_t approxDataRemaining_l(status_t *finalStatus);
+
+    void restartPrefetcherIfNecessary_l(
+            bool ignoreLowWaterThreshold = false, bool force = false);
+
+    void updateCacheParamsFromSystemProperty();
+    void updateCacheParamsFromString(const char *s);
 
     DISALLOW_EVIL_CONSTRUCTORS(NuCachedSource2);
 };

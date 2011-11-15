@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009 The Android Open Source Project
+ * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,21 +18,15 @@
 #define ANDROID_STRUCTURED_TYPE_H
 
 #include "rsElement.h"
-#include "rsVertexArray.h"
 
 // ---------------------------------------------------------------------------
 namespace android {
 namespace renderscript {
 
 
-class Type : public ObjectBase
-{
+class Type : public ObjectBase {
 public:
-    Type(Context *);
-    virtual ~Type();
-
     Type * createTex2D(const Element *, size_t w, size_t h, bool mip);
-
 
     size_t getOffsetForFace(uint32_t face) const;
 
@@ -49,31 +43,39 @@ public:
     uint32_t getLODDimX(uint32_t lod) const {rsAssert(lod < mLODCount); return mLODs[lod].mX;}
     uint32_t getLODDimY(uint32_t lod) const {rsAssert(lod < mLODCount); return mLODs[lod].mY;}
     uint32_t getLODDimZ(uint32_t lod) const {rsAssert(lod < mLODCount); return mLODs[lod].mZ;}
-    uint32_t getLODOffset(uint32_t lod) const {rsAssert(lod < mLODCount); return mLODs[lod].mOffset;}
 
+    uint32_t getLODOffset(uint32_t lod) const {rsAssert(lod < mLODCount); return mLODs[lod].mOffset;}
     uint32_t getLODOffset(uint32_t lod, uint32_t x) const;
     uint32_t getLODOffset(uint32_t lod, uint32_t x, uint32_t y) const;
     uint32_t getLODOffset(uint32_t lod, uint32_t x, uint32_t y, uint32_t z) const;
 
+    uint32_t getLODFaceOffset(uint32_t lod, RsAllocationCubemapFace face, uint32_t x, uint32_t y) const;
+
     uint32_t getLODCount() const {return mLODCount;}
     bool getIsNp2() const;
-
-
-    void setElement(const Element *e) {mElement.set(e);}
-    void setDimX(uint32_t v) {mDimX = v;}
-    void setDimY(uint32_t v) {mDimY = v;}
-    void setDimZ(uint32_t v) {mDimZ = v;}
-    void setDimFaces(bool v) {mFaces = v;}
-    void setDimLOD(bool v) {mDimLOD = v;}
-
 
     void clear();
     void compute();
 
-    void enableGLVertexBuffer(class VertexArray *) const;
-    void enableGLVertexBuffer2(class VertexArray *) const;
-
     void dumpLOGV(const char *prefix) const;
+    virtual void serialize(OStream *stream) const;
+    virtual RsA3DClassID getClassId() const { return RS_A3D_CLASS_ID_TYPE; }
+    static Type *createFromStream(Context *rsc, IStream *stream);
+
+    ObjectBaseRef<Type> cloneAndResize1D(Context *rsc, uint32_t dimX) const;
+    ObjectBaseRef<Type> cloneAndResize2D(Context *rsc, uint32_t dimX, uint32_t dimY) const;
+
+    static ObjectBaseRef<Type> getTypeRef(Context *rsc, const Element *e,
+                                          uint32_t dimX, uint32_t dimY, uint32_t dimZ,
+                                          bool dimLOD, bool dimFaces);
+
+    static Type* getType(Context *rsc, const Element *e,
+                         uint32_t dimX, uint32_t dimY, uint32_t dimZ,
+                         bool dimLOD, bool dimFaces) {
+        ObjectBaseRef<Type> type = getTypeRef(rsc, e, dimX, dimY, dimZ, dimLOD, dimFaces);
+        type->incUserRef();
+        return type.get();
+    }
 
 protected:
     struct LOD {
@@ -101,10 +103,6 @@ protected:
     bool mDimLOD;
     bool mFaces;
 
-    // A list of array dimensions.  The count is the number of array dimensions and the
-    // sizes is a per array size.
-    //Vector<size_t> mDimArraysSizes;
-
     // count of mipmap levels, 0 indicates no mipmapping
 
     size_t mMipChainSizeBytes;
@@ -112,18 +110,12 @@ protected:
     LOD *mLODs;
     uint32_t mLODCount;
 
-    struct GLState_t {
-        VertexArray::Attrib mUser[RS_MAX_ATTRIBS];
-        VertexArray::Attrib mVtx;
-        VertexArray::Attrib mNorm;
-        VertexArray::Attrib mColor;
-        VertexArray::Attrib mTex;
-        VertexArray::Attrib mPointSize;
-    };
-    GLState_t mGL;
-    void makeGLComponents();
+protected:
+    virtual void preDestroy() const;
+    virtual ~Type();
 
 private:
+    Type(Context *);
     Type(const Type &);
 };
 
@@ -132,14 +124,6 @@ class TypeState {
 public:
     TypeState();
     ~TypeState();
-
-    size_t mX;
-    size_t mY;
-    size_t mZ;
-    uint32_t mLOD;
-    bool mFaces;
-    ObjectBaseRef<const Element> mElement;
-
 
     // Cache of all existing types.
     Vector<Type *> mTypes;

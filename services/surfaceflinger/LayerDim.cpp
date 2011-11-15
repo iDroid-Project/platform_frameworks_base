@@ -30,27 +30,10 @@
 namespace android {
 // ---------------------------------------------------------------------------
 
-bool LayerDim::sUseTexture;
-GLuint LayerDim::sTexId;
-EGLImageKHR LayerDim::sImage;
-int32_t LayerDim::sWidth;
-int32_t LayerDim::sHeight;
-
-// ---------------------------------------------------------------------------
-
 LayerDim::LayerDim(SurfaceFlinger* flinger, DisplayID display,
         const sp<Client>& client)
     : LayerBaseClient(flinger, display, client)
 {
-}
-
-void LayerDim::initDimmer(SurfaceFlinger* flinger, uint32_t w, uint32_t h)
-{
-    sTexId = -1;
-    sImage = EGL_NO_IMAGE_KHR;
-    sWidth = w;
-    sHeight = h;
-    sUseTexture = false;
 }
 
 LayerDim::~LayerDim()
@@ -66,27 +49,19 @@ void LayerDim::onDraw(const Region& clip) const
         const DisplayHardware& hw(graphicPlane(0).displayHardware());
         const GLfloat alpha = s.alpha/255.0f;
         const uint32_t fbHeight = hw.getHeight();
-        glDisable(GL_DITHER);
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-        glColor4f(0, 0, 0, alpha);
-
-#if defined(GL_OES_EGL_image_external)
-        if (GLExtensions::getInstance().haveTextureExternal()) {
-            glDisable(GL_TEXTURE_EXTERNAL_OES);
-        }
-#endif
+        glDisable(GL_TEXTURE_EXTERNAL_OES);
         glDisable(GL_TEXTURE_2D);
 
-        GLshort w = sWidth;
-        GLshort h = sHeight;
-        const GLshort vertices[4][2] = {
-                { 0, 0 },
-                { 0, h },
-                { w, h },
-                { w, 0 }
-        };
-        glVertexPointer(2, GL_SHORT, 0, vertices);
+        if (s.alpha == 0xFF) {
+            glDisable(GL_BLEND);
+        } else {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        }
+
+        glColor4f(0, 0, 0, alpha);
+
+        glVertexPointer(2, GL_FLOAT, 0, mVertices);
 
         while (it != end) {
             const Rect& r = *it++;
@@ -94,8 +69,9 @@ void LayerDim::onDraw(const Region& clip) const
             glScissor(r.left, sy, r.width(), r.height());
             glDrawArrays(GL_TRIANGLE_FAN, 0, 4); 
         }
+        glDisable(GL_BLEND);
+        glDisableClientState(GL_TEXTURE_COORD_ARRAY);
     }
-    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
 }
 
 // ---------------------------------------------------------------------------

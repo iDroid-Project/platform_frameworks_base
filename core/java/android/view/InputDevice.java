@@ -21,6 +21,9 @@ import android.os.Parcelable;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Describes the capabilities of a particular input device.
  * <p>
@@ -41,9 +44,9 @@ public final class InputDevice implements Parcelable {
     private String mName;
     private int mSources;
     private int mKeyboardType;
-    
-    private MotionRange[] mMotionRanges;
-    
+
+    private final ArrayList<MotionRange> mMotionRanges = new ArrayList<MotionRange>();
+
     /**
      * A mask for input source classes.
      * 
@@ -98,7 +101,16 @@ public final class InputDevice implements Parcelable {
      * Use {@link #getMotionRange} to query the range of positions.
      */
     public static final int SOURCE_CLASS_POSITION = 0x00000008;
-    
+
+    /**
+     * The input source is a joystick.
+     *
+     * A {@link MotionEvent} should be interpreted as absolute joystick movements.
+     *
+     * Use {@link #getMotionRange} to query the range of positions.
+     */
+    public static final int SOURCE_CLASS_JOYSTICK = 0x00000010;
+
     /**
      * The input source is unknown.
      */
@@ -117,7 +129,15 @@ public final class InputDevice implements Parcelable {
      * @see #SOURCE_CLASS_BUTTON
      */
     public static final int SOURCE_DPAD = 0x00000200 | SOURCE_CLASS_BUTTON;
-    
+
+    /**
+     * The input source is a game pad.
+     * (It may also be a {@link #SOURCE_JOYSTICK}).
+     *
+     * @see #SOURCE_CLASS_BUTTON
+     */
+    public static final int SOURCE_GAMEPAD = 0x00000400 | SOURCE_CLASS_BUTTON;
+
     /**
      * The input source is a touch screen pointing device.
      * 
@@ -133,7 +153,14 @@ public final class InputDevice implements Parcelable {
      * @see #SOURCE_CLASS_POINTER
      */
     public static final int SOURCE_MOUSE = 0x00002000 | SOURCE_CLASS_POINTER;
-    
+
+    /**
+     * The input source is a stylus pointing device.
+     *
+     * @see #SOURCE_CLASS_POINTER
+     */
+    public static final int SOURCE_STYLUS = 0x00004000 | SOURCE_CLASS_POINTER;
+
     /**
      * The input source is a trackball.
      * 
@@ -148,7 +175,15 @@ public final class InputDevice implements Parcelable {
      * @see #SOURCE_CLASS_POSITION
      */
     public static final int SOURCE_TOUCHPAD = 0x00100000 | SOURCE_CLASS_POSITION;
-    
+
+    /**
+     * The input source is a joystick.
+     * (It may also be a {@link #SOURCE_GAMEPAD}).
+     *
+     * @see #SOURCE_CLASS_JOYSTICK
+     */
+    public static final int SOURCE_JOYSTICK = 0x01000000 | SOURCE_CLASS_JOYSTICK;
+
     /**
      * A special input source constant that is used when filtering input devices
      * to match devices that provide any type of input source.
@@ -156,70 +191,85 @@ public final class InputDevice implements Parcelable {
     public static final int SOURCE_ANY = 0xffffff00;
 
     /**
-     * Constant for retrieving the range of values for {@link MotionEvent.PointerCoords#x}.
+     * Constant for retrieving the range of values for {@link MotionEvent#AXIS_X}.
      * 
      * @see #getMotionRange
+     * @deprecated Use {@link MotionEvent#AXIS_X} instead.
      */
-    public static final int MOTION_RANGE_X = 0;
-    
+    @Deprecated
+    public static final int MOTION_RANGE_X = MotionEvent.AXIS_X;
+
     /**
-     * Constant for retrieving the range of values for {@link MotionEvent.PointerCoords#y}.
+     * Constant for retrieving the range of values for {@link MotionEvent#AXIS_Y}.
      * 
      * @see #getMotionRange
+     * @deprecated Use {@link MotionEvent#AXIS_Y} instead.
      */
-    public static final int MOTION_RANGE_Y = 1;
-    
+    @Deprecated
+    public static final int MOTION_RANGE_Y = MotionEvent.AXIS_Y;
+
     /**
-     * Constant for retrieving the range of values for {@link MotionEvent.PointerCoords#pressure}.
+     * Constant for retrieving the range of values for {@link MotionEvent#AXIS_PRESSURE}.
      * 
      * @see #getMotionRange
+     * @deprecated Use {@link MotionEvent#AXIS_PRESSURE} instead.
      */
-    public static final int MOTION_RANGE_PRESSURE = 2;
-    
+    @Deprecated
+    public static final int MOTION_RANGE_PRESSURE = MotionEvent.AXIS_PRESSURE;
+
     /**
-     * Constant for retrieving the range of values for {@link MotionEvent.PointerCoords#size}.
+     * Constant for retrieving the range of values for {@link MotionEvent#AXIS_SIZE}.
      * 
      * @see #getMotionRange
+     * @deprecated Use {@link MotionEvent#AXIS_SIZE} instead.
      */
-    public static final int MOTION_RANGE_SIZE = 3;
-    
+    @Deprecated
+    public static final int MOTION_RANGE_SIZE = MotionEvent.AXIS_SIZE;
+
     /**
-     * Constant for retrieving the range of values for {@link MotionEvent.PointerCoords#touchMajor}.
+     * Constant for retrieving the range of values for {@link MotionEvent#AXIS_TOUCH_MAJOR}.
      * 
      * @see #getMotionRange
+     * @deprecated Use {@link MotionEvent#AXIS_TOUCH_MAJOR} instead.
      */
-    public static final int MOTION_RANGE_TOUCH_MAJOR = 4;
-    
+    @Deprecated
+    public static final int MOTION_RANGE_TOUCH_MAJOR = MotionEvent.AXIS_TOUCH_MAJOR;
+
     /**
-     * Constant for retrieving the range of values for {@link MotionEvent.PointerCoords#touchMinor}.
+     * Constant for retrieving the range of values for {@link MotionEvent#AXIS_TOUCH_MINOR}.
      * 
      * @see #getMotionRange
+     * @deprecated Use {@link MotionEvent#AXIS_TOUCH_MINOR} instead.
      */
-    public static final int MOTION_RANGE_TOUCH_MINOR = 5;
-    
+    @Deprecated
+    public static final int MOTION_RANGE_TOUCH_MINOR = MotionEvent.AXIS_TOUCH_MINOR;
+
     /**
-     * Constant for retrieving the range of values for {@link MotionEvent.PointerCoords#toolMajor}.
+     * Constant for retrieving the range of values for {@link MotionEvent#AXIS_TOOL_MAJOR}.
      * 
      * @see #getMotionRange
+     * @deprecated Use {@link MotionEvent#AXIS_TOOL_MAJOR} instead.
      */
-    public static final int MOTION_RANGE_TOOL_MAJOR = 6;
-    
+    @Deprecated
+    public static final int MOTION_RANGE_TOOL_MAJOR = MotionEvent.AXIS_TOOL_MAJOR;
+
     /**
-     * Constant for retrieving the range of values for {@link MotionEvent.PointerCoords#toolMinor}.
+     * Constant for retrieving the range of values for {@link MotionEvent#AXIS_TOOL_MINOR}.
      * 
      * @see #getMotionRange
+     * @deprecated Use {@link MotionEvent#AXIS_TOOL_MINOR} instead.
      */
-    public static final int MOTION_RANGE_TOOL_MINOR = 7;
-    
+    @Deprecated
+    public static final int MOTION_RANGE_TOOL_MINOR = MotionEvent.AXIS_TOOL_MINOR;
+
     /**
-     * Constant for retrieving the range of values for
-     * {@link MotionEvent.PointerCoords#orientation}.
+     * Constant for retrieving the range of values for {@link MotionEvent#AXIS_ORIENTATION}.
      * 
      * @see #getMotionRange
+     * @deprecated Use {@link MotionEvent#AXIS_ORIENTATION} instead.
      */
-    public static final int MOTION_RANGE_ORIENTATION = 8;
-    
-    private static final int MOTION_RANGE_LAST = MOTION_RANGE_ORIENTATION;
+    @Deprecated
+    public static final int MOTION_RANGE_ORIENTATION = MotionEvent.AXIS_ORIENTATION;
     
     /**
      * There is no keyboard.
@@ -236,10 +286,9 @@ public final class InputDevice implements Parcelable {
      * The keyboard supports a complement of alphabetic keys.
      */
     public static final int KEYBOARD_TYPE_ALPHABETIC = 2;
-    
+
     // Called by native code.
     private InputDevice() {
-        mMotionRanges = new MotionRange[MOTION_RANGE_LAST + 1];
     }
 
     /**
@@ -248,7 +297,7 @@ public final class InputDevice implements Parcelable {
      * @return The input device or null if not found.
      */
     public static InputDevice getDevice(int id) {
-        IWindowManager wm = IWindowManager.Stub.asInterface(ServiceManager.getService("window"));
+        IWindowManager wm = Display.getWindowManager();
         try {
             return wm.getInputDevice(id);
         } catch (RemoteException ex) {
@@ -262,7 +311,7 @@ public final class InputDevice implements Parcelable {
      * @return The input device ids.
      */
     public static int[] getDeviceIds() {
-        IWindowManager wm = IWindowManager.Stub.asInterface(ServiceManager.getService("window"));
+        IWindowManager wm = Display.getWindowManager();
         try {
             return wm.getInputDeviceIds();
         } catch (RemoteException ex) {
@@ -310,91 +359,161 @@ public final class InputDevice implements Parcelable {
     public KeyCharacterMap getKeyCharacterMap() {
         return KeyCharacterMap.load(mId);
     }
-    
+
     /**
-     * Gets information about the range of values for a particular {@link MotionEvent}
-     * coordinate.
-     * @param rangeType The motion range constant.
-     * @return The range of values, or null if the requested coordinate is not
+     * Gets information about the range of values for a particular {@link MotionEvent} axis.
+     * If the device supports multiple sources, the same axis may have different meanings
+     * for each source.  Returns information about the first axis found for any source.
+     * To obtain information about the axis for a specific source, use
+     * {@link #getMotionRange(int, int)}.
+     *
+     * @param axis The axis constant.
+     * @return The range of values, or null if the requested axis is not
      * supported by the device.
+     *
+     * @see MotionEvent#AXIS_X
+     * @see MotionEvent#AXIS_Y
+     * @see #getSupportedAxes()
      */
-    public MotionRange getMotionRange(int rangeType) {
-        if (rangeType < 0 || rangeType > MOTION_RANGE_LAST) {
-            throw new IllegalArgumentException("Requested range is out of bounds.");
+    public MotionRange getMotionRange(int axis) {
+        final int numRanges = mMotionRanges.size();
+        for (int i = 0; i < numRanges; i++) {
+            final MotionRange range = mMotionRanges.get(i);
+            if (range.mAxis == axis) {
+                return range;
+            }
         }
-        
-        return mMotionRanges[rangeType];
+        return null;
     }
-    
-    private void addMotionRange(int rangeType, float min, float max, float flat, float fuzz) {
-        if (rangeType >= 0 && rangeType <= MOTION_RANGE_LAST) {
-            MotionRange range = new MotionRange(min, max, flat, fuzz);
-            mMotionRanges[rangeType] = range;
-        }
-    }
-    
+
     /**
-     * Provides information about the range of values for a particular {@link MotionEvent}
-     * coordinate.
+     * Gets information about the range of values for a particular {@link MotionEvent} axis
+     * used by a particular source on the device.
+     * If the device supports multiple sources, the same axis may have different meanings
+     * for each source.
+     *
+     * @param axis The axis constant.
+     * @param source The source for which to return information.
+     * @return The range of values, or null if the requested axis is not
+     * supported by the device.
+     *
+     * @see MotionEvent#AXIS_X
+     * @see MotionEvent#AXIS_Y
+     * @see #getSupportedAxes()
+     */
+    public MotionRange getMotionRange(int axis, int source) {
+        final int numRanges = mMotionRanges.size();
+        for (int i = 0; i < numRanges; i++) {
+            final MotionRange range = mMotionRanges.get(i);
+            if (range.mAxis == axis && range.mSource == source) {
+                return range;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Gets the ranges for all axes supported by the device.
+     * @return The motion ranges for the device.
+     *
+     * @see #getMotionRange(int, int)
+     */
+    public List<MotionRange> getMotionRanges() {
+        return mMotionRanges;
+    }
+
+    private void addMotionRange(int axis, int source,
+            float min, float max, float flat, float fuzz) {
+        mMotionRanges.add(new MotionRange(axis, source, min, max, flat, fuzz));
+    }
+
+    /**
+     * Provides information about the range of values for a particular {@link MotionEvent} axis.
+     *
+     * @see InputDevice#getMotionRange(int)
      */
     public static final class MotionRange {
+        private int mAxis;
+        private int mSource;
         private float mMin;
         private float mMax;
         private float mFlat;
         private float mFuzz;
-        
-        private MotionRange(float min, float max, float flat, float fuzz) {
+
+        private MotionRange(int axis, int source, float min, float max, float flat, float fuzz) {
+            mAxis = axis;
+            mSource = source;
             mMin = min;
             mMax = max;
             mFlat = flat;
             mFuzz = fuzz;
         }
-        
+
         /**
-         * Gets the minimum value for the coordinate.
-         * @return The minimum value.
+         * Gets the axis id.
+         * @return The axis id.
+         */
+        public int getAxis() {
+            return mAxis;
+        }
+
+        /**
+         * Gets the source for which the axis is defined.
+         * @return The source.
+         */
+        public int getSource() {
+            return mSource;
+        }
+
+        /**
+         * Gets the inclusive minimum value for the axis.
+         * @return The inclusive minimum value.
          */
         public float getMin() {
             return mMin;
         }
-        
+
         /**
-         * Gets the maximum value for the coordinate.
-         * @return The minimum value.
+         * Gets the inclusive maximum value for the axis.
+         * @return The inclusive maximum value.
          */
         public float getMax() {
             return mMax;
         }
-        
+
         /**
-         * Gets the range of the coordinate (difference between maximum and minimum).
+         * Gets the range of the axis (difference between maximum and minimum).
          * @return The range of values.
          */
         public float getRange() {
             return mMax - mMin;
         }
-        
+
         /**
-         * Gets the extent of the center flat position with respect to this coordinate.
+         * Gets the extent of the center flat position with respect to this axis.
+         * <p>
          * For example, a flat value of 8 means that the center position is between -8 and +8.
          * This value is mainly useful for calibrating self-centering devices.
+         * </p>
          * @return The extent of the center flat position.
          */
         public float getFlat() {
             return mFlat;
         }
-        
+
         /**
-         * Gets the error tolerance for input device measurements with respect to this coordinate.
+         * Gets the error tolerance for input device measurements with respect to this axis.
+         * <p>
          * For example, a value of 2 indicates that the measured value may be up to +/- 2 units
          * away from the actual value due to noise and device sensitivity limitations.
+         * </p>
          * @return The error tolerance.
          */
         public float getFuzz() {
             return mFuzz;
         }
     }
-    
+
     public static final Parcelable.Creator<InputDevice> CREATOR
             = new Parcelable.Creator<InputDevice>() {
         public InputDevice createFromParcel(Parcel in) {
@@ -413,14 +532,13 @@ public final class InputDevice implements Parcelable {
         mName = in.readString();
         mSources = in.readInt();
         mKeyboardType = in.readInt();
-        
+
         for (;;) {
-            int rangeType = in.readInt();
-            if (rangeType < 0) {
+            int axis = in.readInt();
+            if (axis < 0) {
                 break;
             }
-            
-            addMotionRange(rangeType,
+            addMotionRange(axis, in.readInt(),
                     in.readFloat(), in.readFloat(), in.readFloat(), in.readFloat());
         }
     }
@@ -431,25 +549,25 @@ public final class InputDevice implements Parcelable {
         out.writeString(mName);
         out.writeInt(mSources);
         out.writeInt(mKeyboardType);
-        
-        for (int i = 0; i <= MOTION_RANGE_LAST; i++) {
-            MotionRange range = mMotionRanges[i];
-            if (range != null) {
-                out.writeInt(i);
-                out.writeFloat(range.mMin);
-                out.writeFloat(range.mMax);
-                out.writeFloat(range.mFlat);
-                out.writeFloat(range.mFuzz);
-            }
+
+        final int numRanges = mMotionRanges.size();
+        for (int i = 0; i < numRanges; i++) {
+            MotionRange range = mMotionRanges.get(i);
+            out.writeInt(range.mAxis);
+            out.writeInt(range.mSource);
+            out.writeFloat(range.mMin);
+            out.writeFloat(range.mMax);
+            out.writeFloat(range.mFlat);
+            out.writeFloat(range.mFuzz);
         }
         out.writeInt(-1);
     }
-    
+
     @Override
     public int describeContents() {
         return 0;
     }
-    
+
     @Override
     public String toString() {
         StringBuilder description = new StringBuilder();
@@ -468,47 +586,38 @@ public final class InputDevice implements Parcelable {
                 break;
         }
         description.append("\n");
-        
-        description.append("  Sources:");
+
+        description.append("  Sources: 0x").append(Integer.toHexString(mSources)).append(" (");
         appendSourceDescriptionIfApplicable(description, SOURCE_KEYBOARD, "keyboard");
         appendSourceDescriptionIfApplicable(description, SOURCE_DPAD, "dpad");
         appendSourceDescriptionIfApplicable(description, SOURCE_TOUCHSCREEN, "touchscreen");
         appendSourceDescriptionIfApplicable(description, SOURCE_MOUSE, "mouse");
+        appendSourceDescriptionIfApplicable(description, SOURCE_STYLUS, "stylus");
         appendSourceDescriptionIfApplicable(description, SOURCE_TRACKBALL, "trackball");
         appendSourceDescriptionIfApplicable(description, SOURCE_TOUCHPAD, "touchpad");
-        description.append("\n");
-        
-        appendRangeDescriptionIfApplicable(description, MOTION_RANGE_X, "x");
-        appendRangeDescriptionIfApplicable(description, MOTION_RANGE_Y, "y");
-        appendRangeDescriptionIfApplicable(description, MOTION_RANGE_PRESSURE, "pressure");
-        appendRangeDescriptionIfApplicable(description, MOTION_RANGE_SIZE, "size");
-        appendRangeDescriptionIfApplicable(description, MOTION_RANGE_TOUCH_MAJOR, "touchMajor");
-        appendRangeDescriptionIfApplicable(description, MOTION_RANGE_TOUCH_MINOR, "touchMinor");
-        appendRangeDescriptionIfApplicable(description, MOTION_RANGE_TOOL_MAJOR, "toolMajor");
-        appendRangeDescriptionIfApplicable(description, MOTION_RANGE_TOOL_MINOR, "toolMinor");
-        appendRangeDescriptionIfApplicable(description, MOTION_RANGE_ORIENTATION, "orientation");
-        
+        appendSourceDescriptionIfApplicable(description, SOURCE_JOYSTICK, "joystick");
+        appendSourceDescriptionIfApplicable(description, SOURCE_GAMEPAD, "gamepad");
+        description.append(" )\n");
+
+        final int numAxes = mMotionRanges.size();
+        for (int i = 0; i < numAxes; i++) {
+            MotionRange range = mMotionRanges.get(i);
+            description.append("    ").append(MotionEvent.axisToString(range.mAxis));
+            description.append(": source=0x").append(Integer.toHexString(range.mSource));
+            description.append(" min=").append(range.mMin);
+            description.append(" max=").append(range.mMax);
+            description.append(" flat=").append(range.mFlat);
+            description.append(" fuzz=").append(range.mFuzz);
+            description.append("\n");
+        }
         return description.toString();
     }
-    
+
     private void appendSourceDescriptionIfApplicable(StringBuilder description, int source,
             String sourceName) {
         if ((mSources & source) == source) {
             description.append(" ");
             description.append(sourceName);
-        }
-    }
-    
-    private void appendRangeDescriptionIfApplicable(StringBuilder description,
-            int rangeType, String rangeName) {
-        MotionRange range = mMotionRanges[rangeType];
-        if (range != null) {
-            description.append("  Range[").append(rangeName);
-            description.append("]: min=").append(range.mMin);
-            description.append(" max=").append(range.mMax);
-            description.append(" flat=").append(range.mFlat);
-            description.append(" fuzz=").append(range.mFuzz);
-            description.append("\n");
         }
     }
 }

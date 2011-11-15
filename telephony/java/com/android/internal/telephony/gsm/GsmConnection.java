@@ -23,7 +23,6 @@ import android.os.Message;
 import android.os.PowerManager;
 import android.os.Registrant;
 import android.os.SystemClock;
-import android.util.Config;
 import android.util.Log;
 import android.telephony.PhoneNumberUtils;
 import android.telephony.ServiceState;
@@ -374,11 +373,11 @@ public class GsmConnection extends Connection {
                 } else if (phone.getIccCard().getState() != SimCard.State.READY) {
                     return DisconnectCause.ICC_ERROR;
                 } else if (causeCode == CallFailCause.ERROR_UNSPECIFIED) {
-                    if (phone.mSST.rs.isCsRestricted()) {
+                    if (phone.mSST.mRestrictedState.isCsRestricted()) {
                         return DisconnectCause.CS_RESTRICTED;
-                    } else if (phone.mSST.rs.isCsEmergencyRestricted()) {
+                    } else if (phone.mSST.mRestrictedState.isCsEmergencyRestricted()) {
                         return DisconnectCause.CS_RESTRICTED_EMERGENCY;
-                    } else if (phone.mSST.rs.isCsNormalRestricted()) {
+                    } else if (phone.mSST.mRestrictedState.isCsNormalRestricted()) {
                         return DisconnectCause.CS_RESTRICTED_NORMAL;
                     } else {
                         return DisconnectCause.ERROR_UNSPECIFIED;
@@ -410,7 +409,7 @@ public class GsmConnection extends Connection {
             duration = SystemClock.elapsedRealtime() - connectTimeReal;
             disconnected = true;
 
-            if (Config.LOGD) Log.d(LOG_TAG,
+            if (false) Log.d(LOG_TAG,
                     "[GSMConn] onDisconnect: cause=" + cause);
 
             owner.phone.notifyDisconnect(this);

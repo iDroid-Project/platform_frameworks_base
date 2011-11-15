@@ -22,6 +22,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.database.Cursor;
 import android.location.Criteria;
 import android.location.IGpsStatusListener;
 import android.location.IGpsStatusProvider;
@@ -32,7 +33,7 @@ import android.location.LocationManager;
 import android.location.LocationProvider;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
-import android.net.SntpClient;
+import android.net.Uri;
 import android.os.Binder;
 import android.os.Bundle;
 import android.os.Handler;
@@ -46,11 +47,13 @@ import android.os.ServiceManager;
 import android.os.SystemClock;
 import android.os.WorkSource;
 import android.provider.Settings;
+import android.provider.Telephony.Carriers;
 import android.provider.Telephony.Sms.Intents;
 import android.telephony.SmsMessage;
 import android.telephony.TelephonyManager;
 import android.telephony.gsm.GsmCellLocation;
 import android.util.Log;
+import android.util.NtpTrustedTime;
 import android.util.SparseIntArray;
 
 import com.android.internal.app.IBatteryStats;
@@ -61,7 +64,7 @@ import com.android.internal.telephony.Phone;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.StringBufferInputStream;
+import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.Map.Entry;
@@ -132,7 +135,7 @@ public class GpsLocationProvider implements LocationProviderInterface {
     private static final int GPS_CAPABILITY_MSB = 0x0000002;
     private static final int GPS_CAPABILITY_MSA = 0x0000004;
     private static final int GPS_CAPABILITY_SINGLE_SHOT = 0x0000008;
-
+    private static final int GPS_CAPABILITY_ON_DEMAND_TIME = 0x0000010;
 
     // these need to match AGpsType enum in gps.h
     private static final int AGPS_TYPE_SUPL = 1;
@@ -200,6 +203,9 @@ public class GpsLocationProvider implements LocationProviderInterface {
     private boolean mInjectNtpTimePending = true;
     private boolean mDownloadXtraDataPending = true;
 
+    // set to true if the GPS engine does not do on-demand NTP time requests
+    private boolean mPeriodicTimeInjection;
+
     // true if GPS is navigating
     private boolean mNavigating;
 
@@ -232,13 +238,13 @@ public class GpsLocationProvider implements LocationProviderInterface {
 
     // properties loaded from PROPERTIES_FILE
     private Properties mProperties;
-    private String mNtpServer;
     private String mSuplServerHost;
     private int mSuplServerPort;
     private String mC2KServerHost;
     private int mC2KServerPort;
 
     private final Context mContext;
+    private final NtpTrustedTime mNtpTime;
     private final ILocationManager mLocationManager;
     private Location mLocation = new Location(LocationManager.GPS_PROVIDER);
     private Bundle mLocationExtras = new Bundle();
@@ -253,6 +259,7 @@ public class GpsLocationProvider implements LocationProviderInterface {
 
     private String mAGpsApn;
     private int mAGpsDataConnectionState;
+    private int mAGpsDataConnectionIpAddr;
     private final ConnectivityManager mConnMgr;
     private final GpsNetInitiatedHandler mNIHandler; 
 
@@ -277,15 +284,11 @@ public class GpsLocationProvider implements LocationProviderInterface {
     private final SparseIntArray mClientUids = new SparseIntArray();
 
     // how often to request NTP time, in milliseconds
-    // current setting 4 hours
-    private static final long NTP_INTERVAL = 4*60*60*1000;
+    // current setting 24 hours
+    private static final long NTP_INTERVAL = 24*60*60*1000;
     // how long to wait if we have a network error in NTP or XTRA downloading
     // current setting - 5 minutes
     private static final long RETRY_INTERVAL = 5*60*1000;
-
-    // to avoid injecting bad NTP time, we reject any time fixes that differ from system time
-    // by more than 5 minutes.
-    private static final long MAX_NTP_SYSTEM_TIME_OFFSET = 5*60*1000;
 
     private final IGpsStatusProvider mGpsStatusProvider = new IGpsStatusProvider.Stub() {
         public void addGpsStatusListener(IGpsStatusListener listener) throws RemoteException {
@@ -375,6 +378,7 @@ public class GpsLocationProvider implements LocationProviderInterface {
 
     public GpsLocationProvider(Context context, ILocationManager locationManager) {
         mContext = context;
+        mNtpTime = NtpTrustedTime.getInstance(context);
         mLocationManager = locationManager;
         mNIHandler = new GpsNetInitiatedHandler(context);
 
@@ -415,7 +419,6 @@ public class GpsLocationProvider implements LocationProviderInterface {
             FileInputStream stream = new FileInputStream(file);
             mProperties.load(stream);
             stream.close();
-            mNtpServer = mProperties.getProperty("NTP_SERVER", null);
 
             mSuplServerHost = mProperties.getProperty("SUPL_HOST");
             String portString = mProperties.getProperty("SUPL_PORT");
@@ -489,15 +492,37 @@ public class GpsLocationProvider implements LocationProviderInterface {
         }
 
         if (info != null) {
+            boolean dataEnabled = Settings.Secure.getInt(mContext.getContentResolver(),
+                                                         Settings.Secure.MOBILE_DATA, 1) == 1;
+            boolean networkAvailable = info.isAvailable() && dataEnabled;
+            String defaultApn = getSelectedApn();
+            if (defaultApn == null) {
+                defaultApn = "dummy-apn";
+            }
+
             native_update_network_state(info.isConnected(), info.getType(),
-                    info.isRoaming(), info.getExtraInfo());
+                                        info.isRoaming(), networkAvailable,
+                                        info.getExtraInfo(), defaultApn);
         }
 
         if (info != null && info.getType() == ConnectivityManager.TYPE_MOBILE_SUPL
                 && mAGpsDataConnectionState == AGPS_DATA_CONNECTION_OPENING) {
             String apnName = info.getExtraInfo();
-            if (mNetworkAvailable && apnName != null && apnName.length() > 0) {
+            if (mNetworkAvailable) {
+                if (apnName == null) {
+                    /* Assign a dummy value in the case of C2K as otherwise we will have a runtime 
+                    exception in the following call to native_agps_data_conn_open*/
+                    apnName = "dummy-apn";
+                }
                 mAGpsApn = apnName;
+                if (DEBUG) Log.d(TAG, "mAGpsDataConnectionIpAddr " + mAGpsDataConnectionIpAddr);
+                if (mAGpsDataConnectionIpAddr != 0xffffffff) {
+                    boolean route_result;
+                    if (DEBUG) Log.d(TAG, "call requestRouteToHost");
+                    route_result = mConnMgr.requestRouteToHost(ConnectivityManager.TYPE_MOBILE_SUPL,
+                        mAGpsDataConnectionIpAddr);
+                    if (route_result == false) Log.d(TAG, "call requestRouteToHost failed");
+                }
                 if (DEBUG) Log.d(TAG, "call native_agps_data_conn_open");
                 native_agps_data_conn_open(apnName);
                 mAGpsDataConnectionState = AGPS_DATA_CONNECTION_OPEN;
@@ -527,13 +552,13 @@ public class GpsLocationProvider implements LocationProviderInterface {
         }
         mInjectNtpTimePending = false;
 
-        SntpClient client = new SntpClient();
         long delay;
 
-        if (client.requestTime(mNtpServer, 10000)) {
-            long time = client.getNtpTime();
-            long timeReference = client.getNtpTimeReference();
-            int certainty = (int)(client.getRoundTripTime()/2);
+        // GPS requires fresh NTP time
+        if (mNtpTime.forceRefresh()) {
+            long time = mNtpTime.getCachedNtpTime();
+            long timeReference = mNtpTime.getCachedNtpTimeReference();
+            long certainty = mNtpTime.getCacheCertainty();
             long now = System.currentTimeMillis();
 
             Log.d(TAG, "NTP server returned: "
@@ -542,17 +567,19 @@ public class GpsLocationProvider implements LocationProviderInterface {
                     + " certainty: " + certainty
                     + " system time offset: " + (time - now));
 
-            native_inject_time(time, timeReference, certainty);
+            native_inject_time(time, timeReference, (int) certainty);
             delay = NTP_INTERVAL;
         } else {
             if (DEBUG) Log.d(TAG, "requestTime failed");
             delay = RETRY_INTERVAL;
         }
 
-        // send delayed message for next NTP injection
-        // since this is delayed and not urgent we do not hold a wake lock here
-        mHandler.removeMessages(INJECT_NTP_TIME);
-        mHandler.sendMessageDelayed(Message.obtain(mHandler, INJECT_NTP_TIME), delay);
+        if (mPeriodicTimeInjection) {
+            // send delayed message for next NTP injection
+            // since this is delayed and not urgent we do not hold a wake lock here
+            mHandler.removeMessages(INJECT_NTP_TIME);
+            mHandler.sendMessageDelayed(Message.obtain(mHandler, INJECT_NTP_TIME), delay);
+        }
     }
 
     private void handleDownloadXtraData() {
@@ -1225,7 +1252,7 @@ public class GpsLocationProvider implements LocationProviderInterface {
     /**
      * called from native code to update AGPS status
      */
-    private void reportAGpsStatus(int type, int status) {
+    private void reportAGpsStatus(int type, int status, int ipaddr) {
         switch (status) {
             case GPS_REQUEST_AGPS_DATA_CONN:
                 if (DEBUG) Log.d(TAG, "GPS_REQUEST_AGPS_DATA_CONN");
@@ -1234,9 +1261,19 @@ public class GpsLocationProvider implements LocationProviderInterface {
                 mAGpsDataConnectionState = AGPS_DATA_CONNECTION_OPENING;
                 int result = mConnMgr.startUsingNetworkFeature(
                         ConnectivityManager.TYPE_MOBILE, Phone.FEATURE_ENABLE_SUPL);
+                mAGpsDataConnectionIpAddr = ipaddr;
                 if (result == Phone.APN_ALREADY_ACTIVE) {
                     if (DEBUG) Log.d(TAG, "Phone.APN_ALREADY_ACTIVE");
                     if (mAGpsApn != null) {
+                        Log.d(TAG, "mAGpsDataConnectionIpAddr " + mAGpsDataConnectionIpAddr);
+                        if (mAGpsDataConnectionIpAddr != 0xffffffff) {
+                            boolean route_result;
+                            if (DEBUG) Log.d(TAG, "call requestRouteToHost");
+                            route_result = mConnMgr.requestRouteToHost(
+                                ConnectivityManager.TYPE_MOBILE_SUPL,
+                                mAGpsDataConnectionIpAddr);
+                            if (route_result == false) Log.d(TAG, "call requestRouteToHost failed");
+                        }
                         native_agps_data_conn_open(mAGpsApn);
                         mAGpsDataConnectionState = AGPS_DATA_CONNECTION_OPEN;
                     } else {
@@ -1305,6 +1342,11 @@ public class GpsLocationProvider implements LocationProviderInterface {
      */
     private void setEngineCapabilities(int capabilities) {
         mEngineCapabilities = capabilities;
+
+        if (!hasCapability(GPS_CAPABILITY_ON_DEMAND_TIME) && !mPeriodicTimeInjection) {
+            mPeriodicTimeInjection = true;
+            requestUtcTime();
+        }
     }
 
     /**
@@ -1385,7 +1427,7 @@ public class GpsLocationProvider implements LocationProviderInterface {
         Properties extraProp = new Properties();
 
         try {
-            extraProp.load(new StringBufferInputStream(extras));
+            extraProp.load(new StringReader(extras));
         }
         catch (IOException e)
         {
@@ -1435,6 +1477,14 @@ public class GpsLocationProvider implements LocationProviderInterface {
             }
         }
         native_agps_set_id(type, data);
+    }
+
+    /**
+     * Called from native code to request utc time info
+     */
+
+    private void requestUtcTime() {
+        sendMessage(INJECT_NTP_TIME, 0, null);
     }
 
     /**
@@ -1554,6 +1604,25 @@ public class GpsLocationProvider implements LocationProviderInterface {
         }
     }
 
+    private String getSelectedApn() {
+        Uri uri = Uri.parse("content://telephony/carriers/preferapn");
+        String apn = null;
+
+        Cursor cursor = mContext.getContentResolver().query(uri, new String[] {"apn"},
+                null, null, Carriers.DEFAULT_SORT_ORDER);
+
+        if (null != cursor) {
+            try {
+                if (cursor.moveToFirst()) {
+                    apn = cursor.getString(0);
+                }
+            } finally {
+                cursor.close();
+            }
+        }
+        return apn;
+    }
+
     // for GPS SV statistics
     private static final int MAX_SVS = 32;
     private static final int EPHEMERIS_MASK = 0;
@@ -1612,5 +1681,5 @@ public class GpsLocationProvider implements LocationProviderInterface {
     private native void native_agps_set_id(int type, String setid);
 
     private native void native_update_network_state(boolean connected, int type,
-            boolean roaming, String extraInfo);
+            boolean roaming, boolean available, String extraInfo, String defaultAPN);
 }

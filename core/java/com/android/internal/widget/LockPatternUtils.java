@@ -16,28 +16,38 @@
 
 package com.android.internal.widget;
 
-import android.app.admin.DevicePolicyManager;
-import android.content.ContentResolver;
-import android.content.Context;
-import android.os.FileObserver;
-import android.os.RemoteException;
-import android.os.ServiceManager;
-import android.os.SystemClock;
-import android.provider.Settings;
-import android.security.MessageDigest;
-import android.telephony.TelephonyManager;
-import android.text.TextUtils;
-import android.util.Log;
-import android.widget.Button;
-
 import com.android.internal.R;
 import com.android.internal.telephony.ITelephony;
 import com.google.android.collect.Lists;
+
+import android.app.admin.DevicePolicyManager;
+import android.content.ContentResolver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.hardware.Camera;
+import android.hardware.Camera.CameraInfo;
+import android.os.FileObserver;
+import android.os.IBinder;
+import android.os.RemoteException;
+import android.os.ServiceManager;
+import android.os.SystemClock;
+import android.os.SystemProperties;
+import android.os.storage.IMountService;
+import android.provider.Settings;
+import android.security.KeyStore;
+import android.telephony.TelephonyManager;
+import android.text.TextUtils;
+import android.util.Log;
+import android.view.View;
+import android.widget.Button;
+import android.widget.TextView;
 
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.Arrays;
@@ -45,9 +55,11 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Utilities for the lock patten and its settings.
+ * Utilities for the lock pattern and its settings.
  */
 public class LockPatternUtils {
+
+    private static final String OPTION_ENABLE_FACELOCK = "enable_facelock";
 
     private static final String TAG = "LockPatternUtils";
 
@@ -78,6 +90,13 @@ public class LockPatternUtils {
      */
     public static final long FAILED_ATTEMPT_COUNTDOWN_INTERVAL_MS = 1000L;
 
+
+    /**
+     * This dictates when we start telling the user that continued failed attempts will wipe
+     * their device.
+     */
+    public static final int FAILED_ATTEMPTS_BEFORE_WIPE_GRACE = 5;
+
     /**
      * The minimum number of dots in a valid pattern.
      */
@@ -88,13 +107,22 @@ public class LockPatternUtils {
      * attempt for it to be counted against the counts that affect
      * {@link #FAILED_ATTEMPTS_BEFORE_TIMEOUT} and {@link #FAILED_ATTEMPTS_BEFORE_RESET}
      */
-    public static final int MIN_PATTERN_REGISTER_FAIL = 3;
+    public static final int MIN_PATTERN_REGISTER_FAIL = MIN_LOCK_PATTERN_SIZE;
 
     private final static String LOCKOUT_PERMANENT_KEY = "lockscreen.lockedoutpermanently";
     private final static String LOCKOUT_ATTEMPT_DEADLINE = "lockscreen.lockoutattemptdeadline";
     private final static String PATTERN_EVER_CHOSEN_KEY = "lockscreen.patterneverchosen";
     public final static String PASSWORD_TYPE_KEY = "lockscreen.password_type";
+    public static final String PASSWORD_TYPE_ALTERNATE_KEY = "lockscreen.password_type_alternate";
     private final static String LOCK_PASSWORD_SALT_KEY = "lockscreen.password_salt";
+    private final static String DISABLE_LOCKSCREEN_KEY = "lockscreen.disabled";
+    private final static String LOCKSCREEN_OPTIONS = "lockscreen.options";
+    public final static String LOCKSCREEN_BIOMETRIC_WEAK_FALLBACK
+            = "lockscreen.biometric_weak_fallback";
+    public final static String BIOMETRIC_WEAK_EVER_CHOSEN_KEY
+            = "lockscreen.biometricweakeverchosen";
+
+    private final static String PASSWORD_HISTORY_KEY = "lockscreen.passwordhistory";
 
     private final Context mContext;
     private final ContentResolver mContentResolver;
@@ -104,7 +132,25 @@ public class LockPatternUtils {
 
     private static final AtomicBoolean sHaveNonZeroPatternFile = new AtomicBoolean(false);
     private static final AtomicBoolean sHaveNonZeroPasswordFile = new AtomicBoolean(false);
+
     private static FileObserver sPasswordObserver;
+
+    private static class PasswordFileObserver extends FileObserver {
+        public PasswordFileObserver(String path, int mask) {
+            super(path, mask);
+        }
+
+        @Override
+        public void onEvent(int event, String path) {
+            if (LOCK_PATTERN_FILE.equals(path)) {
+                Log.d(TAG, "lock pattern file changed");
+                sHaveNonZeroPatternFile.set(new File(sLockPatternFilename).length() > 0);
+            } else if (LOCK_PASSWORD_FILE.equals(path)) {
+                Log.d(TAG, "lock password file changed");
+                sHaveNonZeroPasswordFile.set(new File(sLockPasswordFilename).length() > 0);
+            }
+        }
+    }
 
     public DevicePolicyManager getDevicePolicyManager() {
         if (mDevicePolicyManager == null) {
@@ -135,17 +181,7 @@ public class LockPatternUtils {
             sHaveNonZeroPasswordFile.set(new File(sLockPasswordFilename).length() > 0);
             int fileObserverMask = FileObserver.CLOSE_WRITE | FileObserver.DELETE |
                     FileObserver.MOVED_TO | FileObserver.CREATE;
-            sPasswordObserver = new FileObserver(dataSystemDirectory, fileObserverMask) {
-                    public void onEvent(int event, String path) {
-                        if (LOCK_PATTERN_FILE.equals(path)) {
-                            Log.d(TAG, "lock pattern file changed");
-                            sHaveNonZeroPatternFile.set(new File(sLockPatternFilename).length() > 0);
-                        } else if (LOCK_PASSWORD_FILE.equals(path)) {
-                            Log.d(TAG, "lock password file changed");
-                            sHaveNonZeroPasswordFile.set(new File(sLockPasswordFilename).length() > 0);
-                        }
-                    }
-                };
+            sPasswordObserver = new PasswordFileObserver(dataSystemDirectory, fileObserverMask);
             sPasswordObserver.startWatching();
         }
     }
@@ -163,6 +199,33 @@ public class LockPatternUtils {
         return getDevicePolicyManager().getPasswordQuality(null);
     }
 
+    public int getRequestedPasswordHistoryLength() {
+        return getDevicePolicyManager().getPasswordHistoryLength(null);
+    }
+
+    public int getRequestedPasswordMinimumLetters() {
+        return getDevicePolicyManager().getPasswordMinimumLetters(null);
+    }
+
+    public int getRequestedPasswordMinimumUpperCase() {
+        return getDevicePolicyManager().getPasswordMinimumUpperCase(null);
+    }
+
+    public int getRequestedPasswordMinimumLowerCase() {
+        return getDevicePolicyManager().getPasswordMinimumLowerCase(null);
+    }
+
+    public int getRequestedPasswordMinimumNumeric() {
+        return getDevicePolicyManager().getPasswordMinimumNumeric(null);
+    }
+
+    public int getRequestedPasswordMinimumSymbols() {
+        return getDevicePolicyManager().getPasswordMinimumSymbols(null);
+    }
+
+    public int getRequestedPasswordMinimumNonLetter() {
+        return getDevicePolicyManager().getPasswordMinimumNonLetter(null);
+    }
     /**
      * Returns the actual password mode, as set by keyguard after updating the password.
      *
@@ -227,6 +290,33 @@ public class LockPatternUtils {
     }
 
     /**
+     * Check to see if a password matches any of the passwords stored in the
+     * password history.
+     *
+     * @param password The password to check.
+     * @return Whether the password matches any in the history.
+     */
+    public boolean checkPasswordHistory(String password) {
+        String passwordHashString = new String(passwordToHash(password));
+        String passwordHistory = getString(PASSWORD_HISTORY_KEY);
+        if (passwordHistory == null) {
+            return false;
+        }
+        // Password History may be too long...
+        int passwordHashLength = passwordHashString.length();
+        int passwordHistoryLength = getRequestedPasswordHistoryLength();
+        if(passwordHistoryLength == 0) {
+            return false;
+        }
+        int neededPasswordHistoryLength = passwordHashLength * passwordHistoryLength
+                + passwordHistoryLength - 1;
+        if (passwordHistory.length() > neededPasswordHistoryLength) {
+            passwordHistory = passwordHistory.substring(0, neededPasswordHistoryLength);
+        }
+        return passwordHistory.contains(passwordHashString);
+    }
+
+    /**
      * Check to see if the user has stored a lock pattern.
      * @return Whether a saved pattern exists.
      */
@@ -253,15 +343,34 @@ public class LockPatternUtils {
     }
 
     /**
+     * Return true if the user has ever chosen biometric weak.  This is true even if biometric
+     * weak is not current set.
+     *
+     * @return True if the user has ever chosen biometric weak.
+     */
+    public boolean isBiometricWeakEverChosen() {
+        return getBoolean(BIOMETRIC_WEAK_EVER_CHOSEN_KEY);
+    }
+
+    /**
      * Used by device policy manager to validate the current password
      * information it has.
      */
     public int getActivePasswordQuality() {
         int activePasswordQuality = DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED;
-        switch (getKeyguardStoredPasswordQuality()) {
+        // Note we don't want to use getKeyguardStoredPasswordQuality() because we want this to
+        // return biometric_weak if that is being used instead of the backup
+        int quality =
+                (int) getLong(PASSWORD_TYPE_KEY, DevicePolicyManager.PASSWORD_QUALITY_SOMETHING);
+        switch (quality) {
             case DevicePolicyManager.PASSWORD_QUALITY_SOMETHING:
                 if (isLockPatternEnabled()) {
                     activePasswordQuality = DevicePolicyManager.PASSWORD_QUALITY_SOMETHING;
+                }
+                break;
+            case DevicePolicyManager.PASSWORD_QUALITY_BIOMETRIC_WEAK:
+                if (isBiometricWeakInstalled()) {
+                    activePasswordQuality = DevicePolicyManager.PASSWORD_QUALITY_BIOMETRIC_WEAK;
                 }
                 break;
             case DevicePolicyManager.PASSWORD_QUALITY_NUMERIC:
@@ -279,20 +388,46 @@ public class LockPatternUtils {
                     activePasswordQuality = DevicePolicyManager.PASSWORD_QUALITY_ALPHANUMERIC;
                 }
                 break;
+            case DevicePolicyManager.PASSWORD_QUALITY_COMPLEX:
+                if (isLockPasswordEnabled()) {
+                    activePasswordQuality = DevicePolicyManager.PASSWORD_QUALITY_COMPLEX;
+                }
+                break;
         }
+
         return activePasswordQuality;
     }
 
     /**
      * Clear any lock pattern or password.
      */
-    public void clearLock() {
-        getDevicePolicyManager().setActivePasswordState(
-                DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED, 0);
+    public void clearLock(boolean isFallback) {
+        if(!isFallback) deleteGallery();
         saveLockPassword(null, DevicePolicyManager.PASSWORD_QUALITY_SOMETHING);
         setLockPatternEnabled(false);
         saveLockPattern(null);
         setLong(PASSWORD_TYPE_KEY, DevicePolicyManager.PASSWORD_QUALITY_SOMETHING);
+        setLong(PASSWORD_TYPE_ALTERNATE_KEY, DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED);
+    }
+
+    /**
+     * Disable showing lock screen at all when the DevicePolicyManager allows it.
+     * This is only meaningful if pattern, pin or password are not set.
+     *
+     * @param disable Disables lock screen when true
+     */
+    public void setLockScreenDisabled(boolean disable) {
+        setLong(DISABLE_LOCKSCREEN_KEY, disable ? 1 : 0);
+    }
+
+    /**
+     * Determine if LockScreen can be disabled. This is used, for example, to tell if we should
+     * show LockScreen or go straight to the home screen.
+     *
+     * @return true if lock screen is can be disabled
+     */
+    public boolean isLockScreenDisabled() {
+        return !isSecure() && getLong(DISABLE_LOCKSCREEN_KEY, 0) != 0;
     }
 
     /**
@@ -300,8 +435,50 @@ public class LockPatternUtils {
      * @param pattern The new pattern to save.
      */
     public void saveLockPattern(List<LockPatternView.Cell> pattern) {
+        this.saveLockPattern(pattern, false);
+    }
+
+    /**
+     * Calls back SetupFaceLock to save the temporary gallery file if this is the backup lock.
+     * This doesn't have to verify that biometric is enabled because it's only called in that case
+    */
+    void moveTempGallery() {
+        Intent intent = new Intent().setClassName("com.android.facelock",
+                "com.android.facelock.SetupFaceLock");
+        intent.putExtra("moveTempGallery", true);
+        mContext.startActivity(intent);
+    }
+
+    /**
+     * Calls back SetupFaceLock to delete the temporary gallery file
+     */
+    public void deleteTempGallery() {
+        Intent intent = new Intent().setClassName("com.android.facelock",
+                "com.android.facelock.SetupFaceLock");
+        intent.putExtra("deleteTempGallery", true);
+        mContext.startActivity(intent);
+    }
+
+    /**
+     * Calls back SetupFaceLock to delete the gallery file when the lock type is changed
+    */
+    void deleteGallery() {
+        if(usingBiometricWeak()) {
+            Intent intent = new Intent().setClassName("com.android.facelock",
+                    "com.android.facelock.SetupFaceLock");
+            intent.putExtra("deleteGallery", true);
+            mContext.startActivity(intent);
+        }
+    }
+
+    /**
+     * Save a lock pattern.
+     * @param pattern The new pattern to save.
+     * @param isFallback Specifies if this is a fallback to biometric weak
+     */
+    public void saveLockPattern(List<LockPatternView.Cell> pattern, boolean isFallback) {
         // Compute the hash
-        final byte[] hash  = LockPatternUtils.patternToHash(pattern);
+        final byte[] hash = LockPatternUtils.patternToHash(pattern);
         try {
             // Write the hash to file
             RandomAccessFile raf = new RandomAccessFile(sLockPatternFilename, "rw");
@@ -313,17 +490,32 @@ public class LockPatternUtils {
             }
             raf.close();
             DevicePolicyManager dpm = getDevicePolicyManager();
+            KeyStore keyStore = KeyStore.getInstance();
             if (pattern != null) {
+                keyStore.password(patternToString(pattern));
                 setBoolean(PATTERN_EVER_CHOSEN_KEY, true);
-                setLong(PASSWORD_TYPE_KEY, DevicePolicyManager.PASSWORD_QUALITY_SOMETHING);
-                dpm.setActivePasswordState(
-                        DevicePolicyManager.PASSWORD_QUALITY_SOMETHING, pattern.size());
+                if (!isFallback) {
+                    deleteGallery();
+                    setLong(PASSWORD_TYPE_KEY, DevicePolicyManager.PASSWORD_QUALITY_SOMETHING);
+                } else {
+                    setLong(PASSWORD_TYPE_KEY, DevicePolicyManager.PASSWORD_QUALITY_BIOMETRIC_WEAK);
+                    setLong(PASSWORD_TYPE_ALTERNATE_KEY,
+                            DevicePolicyManager.PASSWORD_QUALITY_SOMETHING);
+                    setBoolean(BIOMETRIC_WEAK_EVER_CHOSEN_KEY, true);
+                    moveTempGallery();
+                }
+                dpm.setActivePasswordState(DevicePolicyManager.PASSWORD_QUALITY_SOMETHING, pattern
+                        .size(), 0, 0, 0, 0, 0, 0);
             } else {
-                dpm.setActivePasswordState(
-                        DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED, 0);
+                if (keyStore.isEmpty()) {
+                    keyStore.reset();
+                }
+                dpm.setActivePasswordState(DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED, 0, 0,
+                        0, 0, 0, 0, 0);
             }
         } catch (FileNotFoundException fnfe) {
-            // Cant do much, unless we want to fail over to using the settings provider
+            // Cant do much, unless we want to fail over to using the settings
+            // provider
             Log.e(TAG, "Unable to save lock pattern to " + sLockPatternFilename);
         } catch (IOException ioe) {
             // Cant do much
@@ -358,6 +550,27 @@ public class LockPatternUtils {
         return DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED;
     }
 
+    /** Update the encryption password if it is enabled **/
+    private void updateEncryptionPassword(String password) {
+        DevicePolicyManager dpm = getDevicePolicyManager();
+        if (dpm.getStorageEncryptionStatus() != DevicePolicyManager.ENCRYPTION_STATUS_ACTIVE) {
+            return;
+        }
+
+        IBinder service = ServiceManager.getService("mount");
+        if (service == null) {
+            Log.e(TAG, "Could not find the mount service to update the encryption password");
+            return;
+        }
+
+        IMountService mountService = IMountService.Stub.asInterface(service);
+        try {
+            mountService.changeEncryptionPassword(password);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Error changing encryption password", e);
+        }
+    }
+
     /**
      * Save a lock password.  Does not ensure that the password is as good
      * as the requested mode, but will adjust the mode to be as good as the
@@ -366,6 +579,18 @@ public class LockPatternUtils {
      * @param quality {@see DevicePolicyManager#getPasswordQuality(android.content.ComponentName)}
      */
     public void saveLockPassword(String password, int quality) {
+        this.saveLockPassword(password, quality, false);
+    }
+
+    /**
+     * Save a lock password.  Does not ensure that the password is as good
+     * as the requested mode, but will adjust the mode to be as good as the
+     * pattern.
+     * @param password The password to save
+     * @param quality {@see DevicePolicyManager#getPasswordQuality(android.content.ComponentName)}
+     * @param isFallback Specifies if this is a fallback to biometric weak
+     */
+    public void saveLockPassword(String password, int quality, boolean isFallback) {
         // Compute the hash
         final byte[] hash = passwordToHash(password);
         try {
@@ -379,19 +604,81 @@ public class LockPatternUtils {
             }
             raf.close();
             DevicePolicyManager dpm = getDevicePolicyManager();
+            KeyStore keyStore = KeyStore.getInstance();
             if (password != null) {
+                // Update the encryption password.
+                updateEncryptionPassword(password);
+
+                // Update the keystore password
+                keyStore.password(password);
+
                 int computedQuality = computePasswordQuality(password);
-                setLong(PASSWORD_TYPE_KEY, computedQuality);
+                if (!isFallback) {
+                    deleteGallery();
+                    setLong(PASSWORD_TYPE_KEY, Math.max(quality, computedQuality));
+                } else {
+                    setLong(PASSWORD_TYPE_KEY, DevicePolicyManager.PASSWORD_QUALITY_BIOMETRIC_WEAK);
+                    setLong(PASSWORD_TYPE_ALTERNATE_KEY, Math.max(quality, computedQuality));
+                    setBoolean(BIOMETRIC_WEAK_EVER_CHOSEN_KEY, true);
+                    moveTempGallery();
+                }
                 if (computedQuality != DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED) {
-                    dpm.setActivePasswordState(computedQuality, password.length());
+                    int letters = 0;
+                    int uppercase = 0;
+                    int lowercase = 0;
+                    int numbers = 0;
+                    int symbols = 0;
+                    int nonletter = 0;
+                    for (int i = 0; i < password.length(); i++) {
+                        char c = password.charAt(i);
+                        if (c >= 'A' && c <= 'Z') {
+                            letters++;
+                            uppercase++;
+                        } else if (c >= 'a' && c <= 'z') {
+                            letters++;
+                            lowercase++;
+                        } else if (c >= '0' && c <= '9') {
+                            numbers++;
+                            nonletter++;
+                        } else {
+                            symbols++;
+                            nonletter++;
+                        }
+                    }
+                    dpm.setActivePasswordState(Math.max(quality, computedQuality), password
+                            .length(), letters, uppercase, lowercase, numbers, symbols, nonletter);
                 } else {
                     // The password is not anything.
                     dpm.setActivePasswordState(
-                            DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED, 0);
+                            DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED, 0, 0, 0, 0, 0, 0, 0);
                 }
+                // Add the password to the password history. We assume all
+                // password
+                // hashes have the same length for simplicity of implementation.
+                String passwordHistory = getString(PASSWORD_HISTORY_KEY);
+                if (passwordHistory == null) {
+                    passwordHistory = new String();
+                }
+                int passwordHistoryLength = getRequestedPasswordHistoryLength();
+                if (passwordHistoryLength == 0) {
+                    passwordHistory = "";
+                } else {
+                    passwordHistory = new String(hash) + "," + passwordHistory;
+                    // Cut it to contain passwordHistoryLength hashes
+                    // and passwordHistoryLength -1 commas.
+                    passwordHistory = passwordHistory.substring(0, Math.min(hash.length
+                            * passwordHistoryLength + passwordHistoryLength - 1, passwordHistory
+                            .length()));
+                }
+                setString(PASSWORD_HISTORY_KEY, passwordHistory);
             } else {
+                // Conditionally reset the keystore if empty. If
+                // non-empty, we are just switching key guard type
+                if (keyStore.isEmpty()) {
+                    keyStore.reset();
+                }
                 dpm.setActivePasswordState(
-                        DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED, 0);
+                        DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED, 0, 0, 0, 0, 0, 0, 0);
             }
         } catch (FileNotFoundException fnfe) {
             // Cant do much, unless we want to fail over to using the settings provider
@@ -409,7 +696,25 @@ public class LockPatternUtils {
      * @return stored password quality
      */
     public int getKeyguardStoredPasswordQuality() {
-        return (int) getLong(PASSWORD_TYPE_KEY, DevicePolicyManager.PASSWORD_QUALITY_SOMETHING);
+        int quality =
+                (int) getLong(PASSWORD_TYPE_KEY, DevicePolicyManager.PASSWORD_QUALITY_SOMETHING);
+        // If the user has chosen to use weak biometric sensor, then return the backup locking
+        // method and treat biometric as a special case.
+        if (quality == DevicePolicyManager.PASSWORD_QUALITY_BIOMETRIC_WEAK) {
+            quality =
+                (int) getLong(PASSWORD_TYPE_ALTERNATE_KEY,
+                        DevicePolicyManager.PASSWORD_QUALITY_SOMETHING);
+        }
+        return quality;
+    }
+
+    /**
+     * @return true if the lockscreen method is set to biometric weak
+     */
+    public boolean usingBiometricWeak() {
+        int quality =
+                (int) getLong(PASSWORD_TYPE_KEY, DevicePolicyManager.PASSWORD_QUALITY_SOMETHING);
+        return quality == DevicePolicyManager.PASSWORD_QUALITY_BIOMETRIC_WEAK;
     }
 
     /**
@@ -496,7 +801,7 @@ public class LockPatternUtils {
      * @param password the gesture pattern.
      * @return the hash of the pattern in a byte array.
      */
-     public byte[] passwordToHash(String password) {
+    public byte[] passwordToHash(String password) {
         if (password == null) {
             return null;
         }
@@ -524,23 +829,65 @@ public class LockPatternUtils {
     }
 
     /**
-     * @return Whether the lock password is enabled.
+     * @return Whether the lock password is enabled, or if it is set as a backup for biometric weak
      */
     public boolean isLockPasswordEnabled() {
         long mode = getLong(PASSWORD_TYPE_KEY, 0);
-        return savedPasswordExists() &&
-                (mode == DevicePolicyManager.PASSWORD_QUALITY_ALPHABETIC
-                        || mode == DevicePolicyManager.PASSWORD_QUALITY_NUMERIC
-                        || mode == DevicePolicyManager.PASSWORD_QUALITY_ALPHANUMERIC);
+        long backupMode = getLong(PASSWORD_TYPE_ALTERNATE_KEY, 0);
+        final boolean passwordEnabled = mode == DevicePolicyManager.PASSWORD_QUALITY_ALPHABETIC
+                || mode == DevicePolicyManager.PASSWORD_QUALITY_NUMERIC
+                || mode == DevicePolicyManager.PASSWORD_QUALITY_ALPHANUMERIC
+                || mode == DevicePolicyManager.PASSWORD_QUALITY_COMPLEX;
+        final boolean backupEnabled = backupMode == DevicePolicyManager.PASSWORD_QUALITY_ALPHABETIC
+                || backupMode == DevicePolicyManager.PASSWORD_QUALITY_NUMERIC
+                || backupMode == DevicePolicyManager.PASSWORD_QUALITY_ALPHANUMERIC
+                || backupMode == DevicePolicyManager.PASSWORD_QUALITY_COMPLEX;
+
+        return savedPasswordExists() && (passwordEnabled ||
+                (usingBiometricWeak() && backupEnabled));
     }
 
     /**
-     * @return Whether the lock pattern is enabled.
+     * @return Whether the lock pattern is enabled, or if it is set as a backup for biometric weak
      */
     public boolean isLockPatternEnabled() {
+        final boolean backupEnabled =
+                getLong(PASSWORD_TYPE_ALTERNATE_KEY, DevicePolicyManager.PASSWORD_QUALITY_SOMETHING)
+                == DevicePolicyManager.PASSWORD_QUALITY_SOMETHING;
+
         return getBoolean(Settings.Secure.LOCK_PATTERN_ENABLED)
-                && getLong(PASSWORD_TYPE_KEY, DevicePolicyManager.PASSWORD_QUALITY_SOMETHING)
-                        == DevicePolicyManager.PASSWORD_QUALITY_SOMETHING;
+                && (getLong(PASSWORD_TYPE_KEY, DevicePolicyManager.PASSWORD_QUALITY_SOMETHING)
+                        == DevicePolicyManager.PASSWORD_QUALITY_SOMETHING ||
+                        (usingBiometricWeak() && backupEnabled));
+    }
+
+    /**
+     * @return Whether biometric weak lock is installed and that the front facing camera exists
+     */
+    public boolean isBiometricWeakInstalled() {
+        // Check that the system flag was set
+        if (!OPTION_ENABLE_FACELOCK.equals(getString(LOCKSCREEN_OPTIONS))) {
+            return false;
+        }
+
+        // Check that it's installed
+        PackageManager pm = mContext.getPackageManager();
+        try {
+            pm.getPackageInfo("com.android.facelock", PackageManager.GET_ACTIVITIES);
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
+        }
+
+        // Check that the camera is enabled
+        if (!pm.hasSystemFeature(PackageManager.FEATURE_CAMERA_FRONT)) {
+            return false;
+        }
+        if (getDevicePolicyManager().getCameraDisabled(null)) {
+            return false;
+        }
+
+
+        return true;
     }
 
     /**
@@ -624,6 +971,16 @@ public class LockPatternUtils {
         setBoolean(LOCKOUT_PERMANENT_KEY, locked);
     }
 
+    public boolean isEmergencyCallCapable() {
+        return mContext.getResources().getBoolean(
+                com.android.internal.R.bool.config_voice_capable);
+    }
+
+    public boolean isPukUnlockScreenEnable() {
+        return mContext.getResources().getBoolean(
+                com.android.internal.R.bool.config_enable_puk_unlock_screen);
+    }
+
     /**
      * @return A formatted string of the next alarm (for showing on the lock screen),
      *   or null if there is no next alarm.
@@ -655,26 +1012,52 @@ public class LockPatternUtils {
         android.provider.Settings.Secure.putLong(mContentResolver, secureSettingKey, value);
     }
 
+    private String getString(String secureSettingKey) {
+        return android.provider.Settings.Secure.getString(mContentResolver, secureSettingKey);
+    }
+
+    private void setString(String secureSettingKey, String value) {
+        android.provider.Settings.Secure.putString(mContentResolver, secureSettingKey, value);
+    }
+
     public boolean isSecure() {
         long mode = getKeyguardStoredPasswordQuality();
         final boolean isPattern = mode == DevicePolicyManager.PASSWORD_QUALITY_SOMETHING;
         final boolean isPassword = mode == DevicePolicyManager.PASSWORD_QUALITY_NUMERIC
                 || mode == DevicePolicyManager.PASSWORD_QUALITY_ALPHABETIC
-                || mode == DevicePolicyManager.PASSWORD_QUALITY_ALPHANUMERIC;
+                || mode == DevicePolicyManager.PASSWORD_QUALITY_ALPHANUMERIC
+                || mode == DevicePolicyManager.PASSWORD_QUALITY_COMPLEX;
         final boolean secure = isPattern && isLockPatternEnabled() && savedPatternExists()
                 || isPassword && savedPasswordExists();
         return secure;
     }
 
     /**
-     * Sets the text on the emergency button to indicate what action will be taken.
+     * Sets the emergency button visibility based on isEmergencyCallCapable().
+     *
+     * If the emergency button is visible, sets the text on the emergency button
+     * to indicate what action will be taken.
+     *
      * If there's currently a call in progress, the button will take them to the call
      * @param button the button to update
+     * @param the phone state:
+     *  {@link TelephonyManager#CALL_STATE_IDLE}
+     *  {@link TelephonyManager#CALL_STATE_RINGING}
+     *  {@link TelephonyManager#CALL_STATE_OFFHOOK}
+     * @param showIfCapable indicates whether the button should be shown if emergency calls are
+     *                      possible on the device
      */
-    public void updateEmergencyCallButtonState(Button button) {
-        int newState = TelephonyManager.getDefault().getCallState();
+    public void updateEmergencyCallButtonState(Button button, int  phoneState,
+            boolean showIfCapable) {
+        if (isEmergencyCallCapable() && showIfCapable) {
+            button.setVisibility(View.VISIBLE);
+        } else {
+            button.setVisibility(View.GONE);
+            return;
+        }
+
         int textId;
-        if (newState == TelephonyManager.CALL_STATE_OFFHOOK) {
+        if (phoneState == TelephonyManager.CALL_STATE_OFFHOOK) {
             // show "return to call" text and show phone icon
             textId = R.string.lockscreen_return_to_call;
             int phoneCallIcon = R.drawable.stat_sys_phone_call;

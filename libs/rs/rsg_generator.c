@@ -2,10 +2,9 @@
 #include "spec.h"
 #include <stdio.h>
 
-void printFileHeader(FILE *f)
-{
+void printFileHeader(FILE *f) {
     fprintf(f, "/*\n");
-    fprintf(f, " * Copyright (C) 2010 The Android Open Source Project\n");
+    fprintf(f, " * Copyright (C) 2011 The Android Open Source Project\n");
     fprintf(f, " *\n");
     fprintf(f, " * Licensed under the Apache License, Version 2.0 (the \"License\");\n");
     fprintf(f, " * you may not use this file except in compliance with the License.\n");
@@ -21,14 +20,13 @@ void printFileHeader(FILE *f)
     fprintf(f, " */\n\n");
 }
 
-void printVarType(FILE *f, const VarType *vt)
-{
+void printVarType(FILE *f, const VarType *vt) {
     int ct;
     if (vt->isConst) {
         fprintf(f, "const ");
     }
 
-    switch(vt->type) {
+    switch (vt->type) {
     case 0:
         fprintf(f, "void");
         break;
@@ -49,87 +47,140 @@ void printVarType(FILE *f, const VarType *vt)
         break;
     }
 
-    if(vt->ptrLevel) {
+    if (vt->ptrLevel) {
         fprintf(f, " ");
-        for(ct=0; ct < vt->ptrLevel; ct++) {
+        for (ct=0; ct < vt->ptrLevel; ct++) {
             fprintf(f, "*");
         }
     }
+}
 
-    if(vt->name[0]) {
+void printVarTypeAndName(FILE *f, const VarType *vt) {
+    printVarType(f, vt);
+
+    if (vt->name[0]) {
         fprintf(f, " %s", vt->name);
     }
 }
 
-void printArgList(FILE *f, const ApiEntry * api, int assumePrevious)
-{
+void printArgList(FILE *f, const ApiEntry * api, int assumePrevious) {
     int ct;
-    for(ct=0; ct < api->paramCount; ct++) {
+    for (ct=0; ct < api->paramCount; ct++) {
         if (ct || assumePrevious) {
             fprintf(f, ", ");
         }
-        printVarType(f, &api->params[ct]);
+        printVarTypeAndName(f, &api->params[ct]);
     }
 }
 
-void printStructures(FILE *f)
-{
+void printStructures(FILE *f) {
     int ct;
     int ct2;
 
-    for(ct=0; ct < apiCount; ct++) {
+    for (ct=0; ct < apiCount; ct++) {
         fprintf(f, "typedef struct RS_CMD_%s_rec RS_CMD_%s;\n", apis[ct].name, apis[ct].name);
     }
     fprintf(f, "\n");
 
-    for(ct=0; ct < apiCount; ct++) {
+    for (ct=0; ct < apiCount; ct++) {
         const ApiEntry * api = &apis[ct];
         fprintf(f, "#define RS_CMD_ID_%s %i\n", api->name, ct+1);
         fprintf(f, "struct RS_CMD_%s_rec {\n", api->name);
         //fprintf(f, "    RsCommandHeader _hdr;\n");
 
-        for(ct2=0; ct2 < api->paramCount; ct2++) {
+        for (ct2=0; ct2 < api->paramCount; ct2++) {
             fprintf(f, "    ");
-            printVarType(f, &api->params[ct2]);
+            printVarTypeAndName(f, &api->params[ct2]);
             fprintf(f, ";\n");
         }
         fprintf(f, "};\n\n");
     }
 }
 
-void printFuncDecl(FILE *f, const ApiEntry *api, const char *prefix, int addContext)
-{
-    printVarType(f, &api->ret);
-    fprintf(f, " %s%s (", prefix, api->name);
-    if (addContext) {
-        fprintf(f, "Context *");
+void printFuncDecl(FILE *f, const ApiEntry *api, const char *prefix, int addContext, int isFnPtr) {
+    printVarTypeAndName(f, &api->ret);
+    if (isFnPtr) {
+        char t[1024];
+        strcpy(t, api->name);
+        if (strlen(prefix) == 0) {
+            if (t[0] > 'A' && t[0] < 'Z') {
+                t[0] -= 'A' - 'a';
+            }
+        }
+        fprintf(f, " (* %s%s) (", prefix, api->name);
     } else {
-        fprintf(f, "RsContext rsc");
+        fprintf(f, " %s%s (", prefix, api->name);
     }
-    printArgList(f, api, 1);
+    if (!api->nocontext) {
+        if (addContext) {
+            fprintf(f, "Context *");
+        } else {
+            fprintf(f, "RsContext rsc");
+        }
+    }
+    printArgList(f, api, !api->nocontext);
     fprintf(f, ")");
 }
 
-void printFuncDecls(FILE *f, const char *prefix, int addContext)
-{
+void printFuncDecls(FILE *f, const char *prefix, int addContext) {
     int ct;
-    for(ct=0; ct < apiCount; ct++) {
-        printFuncDecl(f, &apis[ct], prefix, addContext);
+    for (ct=0; ct < apiCount; ct++) {
+        printFuncDecl(f, &apis[ct], prefix, addContext, 0);
         fprintf(f, ";\n");
     }
     fprintf(f, "\n\n");
 }
 
-void printPlaybackFuncs(FILE *f, const char *prefix)
-{
+void printFuncPointers(FILE *f, int addContext) {
+    fprintf(f, "\n");
+    fprintf(f, "typedef struct RsApiEntrypoints {\n");
     int ct;
-    for(ct=0; ct < apiCount; ct++) {
+    for (ct=0; ct < apiCount; ct++) {
+        fprintf(f, "    ");
+        printFuncDecl(f, &apis[ct], "", addContext, 1);
+        fprintf(f, ";\n");
+    }
+    fprintf(f, "} RsApiEntrypoints_t;\n\n");
+}
+
+void printPlaybackFuncs(FILE *f, const char *prefix) {
+    int ct;
+    for (ct=0; ct < apiCount; ct++) {
+        if (apis[ct].direct) {
+            continue;
+        }
+
         fprintf(f, "void %s%s (Context *, const void *);\n", prefix, apis[ct].name);
     }
 }
 
-void printApiCpp(FILE *f)
-{
+static int hasInlineDataPointers(const ApiEntry * api) {
+    int ret = 0;
+    int ct;
+    if (api->sync || api->ret.typeName[0]) {
+        return 0;
+    }
+    for (ct=0; ct < api->paramCount; ct++) {
+        const VarType *vt = &api->params[ct];
+
+        if (!vt->isConst && vt->ptrLevel) {
+            // Non-const pointers cannot be inlined.
+            return 0;
+        }
+        if (vt->ptrLevel > 1) {
+            // not handled yet.
+            return 0;
+        }
+
+        if (vt->isConst && vt->ptrLevel) {
+            // Non-const pointers cannot be inlined.
+            ret = 1;
+        }
+    }
+    return ret;
+}
+
+void printApiCpp(FILE *f) {
     int ct;
     int ct2;
 
@@ -138,58 +189,236 @@ void printApiCpp(FILE *f)
     fprintf(f, "#include \"rsThreadIO.h\"\n");
     //fprintf(f, "#include \"rsgApiStructs.h\"\n");
     fprintf(f, "#include \"rsgApiFuncDecl.h\"\n");
+    fprintf(f, "#include \"rsFifo.h\"\n");
     fprintf(f, "\n");
     fprintf(f, "using namespace android;\n");
     fprintf(f, "using namespace android::renderscript;\n");
-    fprintf(f, "#include \"rsHandcode.h\"\n");
     fprintf(f, "\n");
 
-    for(ct=0; ct < apiCount; ct++) {
+    printFuncPointers(f, 0);
+
+    // Generate RS funcs for local fifo
+    for (ct=0; ct < apiCount; ct++) {
         int needFlush = 0;
         const ApiEntry * api = &apis[ct];
 
-        printFuncDecl(f, api, "rs", 0);
+        fprintf(f, "static ");
+        printFuncDecl(f, api, "LF_", 0, 0);
         fprintf(f, "\n{\n");
-        if (api->handcodeApi) {
-            fprintf(f, "    rsHCAPI_%s(rsc", api->name);
-            for(ct2=0; ct2 < api->paramCount; ct2++) {
+        if (api->direct) {
+            fprintf(f, "    ");
+            if (api->ret.typeName[0]) {
+                fprintf(f, "return ");
+            }
+            fprintf(f, "rsi_%s(", api->name);
+            if (!api->nocontext) {
+                fprintf(f, "(Context *)rsc");
+            }
+            for (ct2=0; ct2 < api->paramCount; ct2++) {
                 const VarType *vt = &api->params[ct2];
-                fprintf(f, ", %s", vt->name);
+                if (ct2 > 0 || !api->nocontext) {
+                    fprintf(f, ", ");
+                }
+                fprintf(f, "%s", vt->name);
             }
             fprintf(f, ");\n");
         } else {
             fprintf(f, "    ThreadIO *io = &((Context *)rsc)->mIO;\n");
-            //fprintf(f, "    LOGE(\"add command %s\\n\");\n", api->name);
-            fprintf(f, "    RS_CMD_%s *cmd = static_cast<RS_CMD_%s *>(io->mToCore.reserve(sizeof(RS_CMD_%s)));\n", api->name, api->name, api->name);
-            fprintf(f, "    uint32_t size = sizeof(RS_CMD_%s);\n", api->name);
+            fprintf(f, "    const uint32_t size = sizeof(RS_CMD_%s);\n", api->name);
+            if (hasInlineDataPointers(api)) {
+                fprintf(f, "    uint32_t dataSize = 0;\n");
+                for (ct2=0; ct2 < api->paramCount; ct2++) {
+                    const VarType *vt = &api->params[ct2];
+                    if (vt->isConst && vt->ptrLevel) {
+                        fprintf(f, "    dataSize += %s_length;\n", vt->name);
+                    }
+                }
+            }
 
-            for(ct2=0; ct2 < api->paramCount; ct2++) {
+            //fprintf(f, "    LOGE(\"add command %s\\n\");\n", api->name);
+            if (hasInlineDataPointers(api)) {
+                fprintf(f, "    RS_CMD_%s *cmd = NULL;\n", api->name);
+                fprintf(f, "    if (dataSize < 1024) {;\n");
+                fprintf(f, "        cmd = static_cast<RS_CMD_%s *>(io->coreHeader(RS_CMD_ID_%s, dataSize + size));\n", api->name, api->name);
+                fprintf(f, "    } else {\n");
+                fprintf(f, "        cmd = static_cast<RS_CMD_%s *>(io->coreHeader(RS_CMD_ID_%s, size));\n", api->name, api->name);
+                fprintf(f, "    }\n");
+                fprintf(f, "    uint8_t *payload = (uint8_t *)&cmd[1];\n");
+            } else {
+                fprintf(f, "    RS_CMD_%s *cmd = static_cast<RS_CMD_%s *>(io->coreHeader(RS_CMD_ID_%s, size));\n", api->name, api->name, api->name);
+            }
+
+            for (ct2=0; ct2 < api->paramCount; ct2++) {
                 const VarType *vt = &api->params[ct2];
                 needFlush += vt->ptrLevel;
-                fprintf(f, "    cmd->%s = %s;\n", vt->name, vt->name);
+                if (vt->ptrLevel && hasInlineDataPointers(api)) {
+                    fprintf(f, "    if (dataSize < 1024) {\n");
+                    fprintf(f, "        memcpy(payload, %s, %s_length);\n", vt->name, vt->name);
+                    fprintf(f, "        cmd->%s = (", vt->name);
+                    printVarType(f, vt);
+                    fprintf(f, ")payload;\n");
+                    fprintf(f, "        payload += %s_length;\n", vt->name);
+                    fprintf(f, "    } else {\n");
+                    fprintf(f, "        cmd->%s = %s;\n", vt->name, vt->name);
+                    fprintf(f, "    }\n");
+
+                } else {
+                    fprintf(f, "    cmd->%s = %s;\n", vt->name, vt->name);
+                }
             }
-            if (api->ret.typeName[0]) {
+            if (api->ret.typeName[0] || api->sync) {
                 needFlush = 1;
             }
 
-            fprintf(f, "    io->mToCore.commit");
-            if (needFlush) {
-                fprintf(f, "Sync");
+            if (hasInlineDataPointers(api)) {
+                fprintf(f, "    if (dataSize < 1024) {\n");
+                fprintf(f, "        io->coreCommit();\n");
+                fprintf(f, "    } else {\n");
+                fprintf(f, "        io->coreCommitSync();\n");
+                fprintf(f, "    }\n");
+            } else {
+                fprintf(f, "    io->coreCommit");
+                if (needFlush) {
+                    fprintf(f, "Sync");
+                }
+                fprintf(f, "();\n");
             }
-            fprintf(f, "(RS_CMD_ID_%s, size);\n", api->name);
 
             if (api->ret.typeName[0]) {
-                fprintf(f, "    return reinterpret_cast<");
+                fprintf(f, "\n    ");
                 printVarType(f, &api->ret);
-                fprintf(f, ">(io->mToCoreRet);\n");
+                fprintf(f, " ret;\n");
+                fprintf(f, "    io->coreGetReturn(&ret, sizeof(ret));\n");
+                fprintf(f, "    return ret;\n");
             }
         }
         fprintf(f, "};\n\n");
+
+
+        fprintf(f, "static ");
+        printFuncDecl(f, api, "RF_", 0, 0);
+        fprintf(f, "\n{\n");
+        fprintf(f, "    Fifo *f = NULL;\n");
+        fprintf(f, "    RS_CMD_%s cmd;\n", api->name);
+        fprintf(f, "    const uint32_t cmdSize = sizeof(cmd);\n");
+        fprintf(f, "    const uint32_t cmdID = RS_CMD_ID_%s;\n", api->name);
+        fprintf(f, "    f->writeAsync(&cmdID, sizeof(cmdID));\n");
+        fprintf(f, "    intptr_t offset = cmdSize;\n");
+        fprintf(f, "    uint32_t dataSize = 0;\n");
+        for (ct2=0; ct2 < api->paramCount; ct2++) {
+            const VarType *vt = &api->params[ct2];
+            if (vt->isConst && vt->ptrLevel) {
+                switch(vt->ptrLevel) {
+                case 1:
+                    fprintf(f, "    dataSize += %s_length;\n", vt->name);
+                    break;
+                case 2:
+                    fprintf(f, "    for (size_t ct = 0; ct < (%s_length_length / sizeof(%s_length)); ct++) {\n", vt->name, vt->name);
+                    fprintf(f, "        dataSize += %s_length[ct];\n", vt->name);
+                    fprintf(f, "    }\n");
+                    break;
+                default:
+                    printf("pointer level not handled!!");
+                }
+            }
+        }
+        fprintf(f, "\n");
+
+        for (ct2=0; ct2 < api->paramCount; ct2++) {
+            const VarType *vt = &api->params[ct2];
+            switch(vt->ptrLevel) {
+            case 0:
+                fprintf(f, "    cmd.%s = %s;\n", vt->name, vt->name);
+                break;
+            case 1:
+                fprintf(f, "    cmd.%s = (", vt->name);
+                printVarType(f, vt);
+                fprintf(f, ")offset;\n");
+                fprintf(f, "    offset += %s_length;\n", vt->name);
+                break;
+            case 2:
+                fprintf(f, "    cmd.%s = (", vt->name);
+                printVarType(f, vt);
+                fprintf(f, ")offset;\n");
+                fprintf(f, "    for (size_t ct = 0; ct < (%s_length_length / sizeof(%s_length)); ct++) {\n", vt->name, vt->name);
+                fprintf(f, "        offset += %s_length[ct];\n", vt->name);
+                fprintf(f, "    }\n");
+                break;
+            default:
+                fprintf(stderr, "pointer level not handled!!");
+            }
+        }
+        fprintf(f, "\n");
+
+        fprintf(f, "    f->writeAsync(&cmd, cmdSize);\n");
+        for (ct2=0; ct2 < api->paramCount; ct2++) {
+            const VarType *vt = &api->params[ct2];
+            if (vt->ptrLevel == 1) {
+                fprintf(f, "    f->writeAsync(%s, %s_length);\n", vt->name, vt->name);
+            }
+            if (vt->ptrLevel == 2) {
+                fprintf(f, "    for (size_t ct = 0; ct < (%s_length_length / sizeof(%s_length)); ct++) {\n", vt->name, vt->name);
+                fprintf(f, "        f->writeAsync(%s, %s_length[ct]);\n", vt->name, vt->name);
+                fprintf(f, "        offset += %s_length[ct];\n", vt->name);
+                fprintf(f, "    }\n");
+            }
+        }
+
+        if (api->ret.typeName[0]) {
+            fprintf(f, "    ");
+            printVarType(f, &api->ret);
+            fprintf(f, " retValue;\n");
+            fprintf(f, "    f->writeWaitReturn(&retValue, sizeof(retValue));\n");
+            fprintf(f, "    return retValue;\n");
+        }
+        fprintf(f, "}\n\n");
     }
+
+    fprintf(f, "\n");
+    fprintf(f, "static RsApiEntrypoints_t s_LocalTable = {\n");
+    for (ct=0; ct < apiCount; ct++) {
+        fprintf(f, "    LF_%s,\n", apis[ct].name);
+    }
+    fprintf(f, "};\n");
+
+    fprintf(f, "\n");
+    fprintf(f, "static RsApiEntrypoints_t s_RemoteTable = {\n");
+    for (ct=0; ct < apiCount; ct++) {
+        fprintf(f, "    RF_%s,\n", apis[ct].name);
+    }
+    fprintf(f, "};\n");
+
+    fprintf(f, "static RsApiEntrypoints_t *s_CurrentTable = &s_LocalTable;\n\n");
+    for (ct=0; ct < apiCount; ct++) {
+        int needFlush = 0;
+        const ApiEntry * api = &apis[ct];
+
+        printFuncDecl(f, api, "rs", 0, 0);
+        fprintf(f, "\n{\n");
+        fprintf(f, "    ");
+        if (api->ret.typeName[0]) {
+            fprintf(f, "return ");
+        }
+        fprintf(f, "s_CurrentTable->%s(", api->name);
+
+        if (!api->nocontext) {
+            fprintf(f, "(Context *)rsc");
+        }
+
+        for (ct2=0; ct2 < api->paramCount; ct2++) {
+            const VarType *vt = &api->params[ct2];
+            if (ct2 > 0 || !api->nocontext) {
+                fprintf(f, ", ");
+            }
+            fprintf(f, "%s", vt->name);
+        }
+        fprintf(f, ");\n");
+        fprintf(f, "}\n\n");
+    }
+
 }
 
-void printPlaybackCpp(FILE *f)
-{
+void printPlaybackCpp(FILE *f) {
     int ct;
     int ct2;
 
@@ -201,37 +430,111 @@ void printPlaybackCpp(FILE *f)
     fprintf(f, "\n");
     fprintf(f, "namespace android {\n");
     fprintf(f, "namespace renderscript {\n");
-    fprintf(f, "#include \"rsHandcode.h\"\n");
     fprintf(f, "\n");
 
-    for(ct=0; ct < apiCount; ct++) {
+    for (ct=0; ct < apiCount; ct++) {
         const ApiEntry * api = &apis[ct];
 
-        fprintf(f, "void rsp_%s(Context *con, const void *vp)\n", api->name);
-        fprintf(f, "{\n");
-        if (api->handcodePlay) {
-            fprintf(f, "    rsHCPLAY_%s(con, vp);\n", api->name);
-        } else {
-            //fprintf(f, "    LOGE(\"play command %s\\n\");\n", api->name);
-            fprintf(f, "    const RS_CMD_%s *cmd = static_cast<const RS_CMD_%s *>(vp);\n", api->name, api->name);
-            fprintf(f, "    ");
-            if (api->ret.typeName[0]) {
-                fprintf(f, "con->mIO.mToCoreRet = (intptr_t)");
-            }
-            fprintf(f, "rsi_%s(con", api->name);
-            for(ct2=0; ct2 < api->paramCount; ct2++) {
-                const VarType *vt = &api->params[ct2];
-                fprintf(f, ",\n           cmd->%s", vt->name);
-            }
-            fprintf(f, ");\n");
+        if (api->direct) {
+            continue;
         }
+
+        fprintf(f, "void rsp_%s(Context *con, const void *vp, size_t cmdSizeBytes) {\n", api->name);
+
+        //fprintf(f, "    LOGE(\"play command %s\\n\");\n", api->name);
+        fprintf(f, "    const RS_CMD_%s *cmd = static_cast<const RS_CMD_%s *>(vp);\n", api->name, api->name);
+
+        fprintf(f, "    ");
+        if (api->ret.typeName[0]) {
+            fprintf(f, "\n    ");
+            printVarType(f, &api->ret);
+            fprintf(f, " ret = ");
+        }
+        fprintf(f, "rsi_%s(con", api->name);
+        for (ct2=0; ct2 < api->paramCount; ct2++) {
+            const VarType *vt = &api->params[ct2];
+            fprintf(f, ",\n           cmd->%s", vt->name);
+        }
+        fprintf(f, ");\n");
+
+        if (api->ret.typeName[0]) {
+            fprintf(f, "    con->mIO.coreSetReturn(&ret, sizeof(ret));\n");
+        }
+
         fprintf(f, "};\n\n");
     }
 
-    fprintf(f, "RsPlaybackFunc gPlaybackFuncs[] = {\n");
+    for (ct=0; ct < apiCount; ct++) {
+        const ApiEntry * api = &apis[ct];
+
+        fprintf(f, "void rspr_%s(Context *con, Fifo *f, uint8_t *scratch, size_t scratchSize) {\n", api->name);
+
+        //fprintf(f, "    LOGE(\"play command %s\\n\");\n", api->name);
+        fprintf(f, "    RS_CMD_%s cmd;\n", api->name);
+        fprintf(f, "    f->read(&cmd, sizeof(cmd));\n");
+
+        for (ct2=0; ct2 < api->paramCount; ct2++) {
+            const VarType *vt = &api->params[ct2];
+            if (vt->ptrLevel == 1) {
+                fprintf(f, "    cmd.%s = (", vt->name);
+                printVarType(f, vt);
+                fprintf(f, ")scratch;\n");
+                fprintf(f, "    f->read(scratch, cmd.%s_length);\n", vt->name);
+                fprintf(f, "    scratch += cmd.%s_length;\n", vt->name);
+            }
+            if (vt->ptrLevel == 2) {
+                fprintf(f, "    size_t sum_%s = 0;\n", vt->name);
+                fprintf(f, "    for (size_t ct = 0; ct < (cmd.%s_length_length / sizeof(cmd.%s_length)); ct++) {\n", vt->name, vt->name);
+                fprintf(f, "        ((size_t *)scratch)[ct] = cmd.%s_length[ct];\n", vt->name);
+                fprintf(f, "        sum_%s += cmd.%s_length[ct];\n", vt->name, vt->name);
+                fprintf(f, "    }\n");
+                fprintf(f, "    f->read(scratch, sum_%s);\n", vt->name);
+                fprintf(f, "    scratch += sum_%s;\n", vt->name);
+            }
+        }
+        fprintf(f, "\n");
+
+        if (api->ret.typeName[0]) {
+            fprintf(f, "    ");
+            printVarType(f, &api->ret);
+            fprintf(f, " ret =\n");
+        }
+
+        fprintf(f, "    rsi_%s(", api->name);
+        if (!api->nocontext) {
+            fprintf(f, "con");
+        }
+        for (ct2=0; ct2 < api->paramCount; ct2++) {
+            const VarType *vt = &api->params[ct2];
+            if (ct2 > 0 || !api->nocontext) {
+                fprintf(f, ",\n");
+            }
+            fprintf(f, "           cmd.%s", vt->name);
+        }
+        fprintf(f, ");\n");
+
+        if (api->ret.typeName[0]) {
+            fprintf(f, "    f->readReturn(&ret, sizeof(ret));\n");
+        }
+
+        fprintf(f, "};\n\n");
+    }
+
+    fprintf(f, "RsPlaybackLocalFunc gPlaybackFuncs[%i] = {\n", apiCount + 1);
     fprintf(f, "    NULL,\n");
-    for(ct=0; ct < apiCount; ct++) {
-        fprintf(f, "    %s%s,\n", "rsp_", apis[ct].name);
+    for (ct=0; ct < apiCount; ct++) {
+        if (apis[ct].direct) {
+            fprintf(f, "    NULL,\n");
+        } else {
+            fprintf(f, "    %s%s,\n", "rsp_", apis[ct].name);
+        }
+    }
+    fprintf(f, "};\n");
+
+    fprintf(f, "RsPlaybackRemoteFunc gPlaybackRemoteFuncs[%i] = {\n", apiCount + 1);
+    fprintf(f, "    NULL,\n");
+    for (ct=0; ct < apiCount; ct++) {
+        fprintf(f, "    %s%s,\n", "rspr_", apis[ct].name);
     }
     fprintf(f, "};\n");
 
@@ -239,8 +542,9 @@ void printPlaybackCpp(FILE *f)
     fprintf(f, "};\n");
 }
 
-int main(int argc, char **argv)
-{
+void yylex();
+
+int main(int argc, char **argv) {
     if (argc != 3) {
         fprintf(stderr, "usage: %s commandFile outFile\n", argv[0]);
         return 1;
@@ -263,19 +567,26 @@ int main(int argc, char **argv)
     FILE *f = fopen(outFile, "w");
 
     printFileHeader(f);
-    switch(choice) {
+    switch (choice) {
         case '0': // rsgApiStructs.h
         {
             fprintf(f, "\n");
             fprintf(f, "#include \"rsContext.h\"\n");
+            fprintf(f, "#include \"rsFifo.h\"\n");
             fprintf(f, "\n");
             fprintf(f, "namespace android {\n");
             fprintf(f, "namespace renderscript {\n");
             printStructures(f);
             printFuncDecls(f, "rsi_", 1);
             printPlaybackFuncs(f, "rsp_");
-            fprintf(f, "\n\ntypedef void (*RsPlaybackFunc)(Context *, const void *);\n");
-            fprintf(f, "extern RsPlaybackFunc gPlaybackFuncs[];\n");
+            fprintf(f, "\n\ntypedef struct RsPlaybackRemoteHeaderRec {\n");
+            fprintf(f, "    uint32_t command;\n");
+            fprintf(f, "    uint32_t size;\n");
+            fprintf(f, "} RsPlaybackRemoteHeader;\n\n");
+            fprintf(f, "typedef void (*RsPlaybackLocalFunc)(Context *, const void *, size_t sizeBytes);\n");
+            fprintf(f, "typedef void (*RsPlaybackRemoteFunc)(Context *, Fifo *, uint8_t *scratch, size_t scratchSize);\n");
+            fprintf(f, "extern RsPlaybackLocalFunc gPlaybackFuncs[%i];\n", apiCount + 1);
+            fprintf(f, "extern RsPlaybackRemoteFunc gPlaybackRemoteFuncs[%i];\n", apiCount + 1);
 
             fprintf(f, "}\n");
             fprintf(f, "}\n");
@@ -295,6 +606,19 @@ int main(int argc, char **argv)
         break;
 
         case '3': // rsgApiReplay.cpp
+        {
+            printFileHeader(f);
+            printPlaybackCpp(f);
+        }
+        break;
+
+        case '4': // rsgApiStream.cpp
+        {
+            printFileHeader(f);
+            printPlaybackCpp(f);
+        }
+
+        case '5': // rsgApiStreamReplay.cpp
         {
             printFileHeader(f);
             printPlaybackCpp(f);

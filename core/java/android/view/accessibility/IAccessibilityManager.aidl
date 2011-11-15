@@ -17,9 +17,14 @@
 
 package android.view.accessibility;
 
+import android.accessibilityservice.AccessibilityServiceInfo;
+import android.accessibilityservice.IAccessibilityServiceConnection;
+import android.accessibilityservice.IEventListener;
 import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.IAccessibilityInteractionConnection;
 import android.view.accessibility.IAccessibilityManagerClient;
-import android.content.pm.ServiceInfo;
+import android.view.IWindow;
 
 /**
  * Interface implemented by the AccessibilityManagerService called by
@@ -29,11 +34,20 @@ import android.content.pm.ServiceInfo;
  */
 interface IAccessibilityManager {
 
-    void addClient(IAccessibilityManagerClient client);
+    int addClient(IAccessibilityManagerClient client);
 
     boolean sendAccessibilityEvent(in AccessibilityEvent uiEvent);
 
-    List<ServiceInfo> getAccessibilityServiceList();
+    List<AccessibilityServiceInfo> getInstalledAccessibilityServiceList();
+
+    List<AccessibilityServiceInfo> getEnabledAccessibilityServiceList(int feedbackType);
 
     void interrupt();
+
+    int addAccessibilityInteractionConnection(IWindow windowToken,
+        in IAccessibilityInteractionConnection connection);
+
+    void removeAccessibilityInteractionConnection(IWindow windowToken);
+
+    IAccessibilityServiceConnection registerEventListener(IEventListener client);
 }

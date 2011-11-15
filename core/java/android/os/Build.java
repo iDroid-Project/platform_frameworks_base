@@ -16,6 +16,8 @@
 
 package android.os;
 
+import com.android.internal.telephony.TelephonyProperties;
+
 /**
  * Information about the current build, extracted from system properties.
  */
@@ -56,8 +58,16 @@ public class Build {
     /** The system bootloader version number. */
     public static final String BOOTLOADER = getString("ro.bootloader");
 
-    /** The radio firmware version number. */
-    public static final String RADIO = getString("gsm.version.baseband");
+    /**
+     * The radio firmware version number.
+     *
+     * @deprecated The radio firmware version is frequently not
+     * available when this class is initialized, leading to a blank or
+     * "unknown" value for this string.  Use
+     * {@link #getRadioVersion} instead.
+     */
+    @Deprecated
+    public static final String RADIO = getString(TelephonyProperties.PROPERTY_BASEBAND_VERSION);
 
     /** The name of the hardware (from the kernel command line or /proc). */
     public static final String HARDWARE = getString("ro.hardware");
@@ -100,6 +110,15 @@ public class Build {
          * a release build.
          */
         public static final String CODENAME = getString("ro.build.version.codename");
+
+        /**
+         * The SDK version to use when accessing resources.
+         * Use the current SDK version code.  If we are a development build,
+         * also allow the previous SDK version + 1.
+         * @hide
+         */
+        public static final int RESOURCES_SDK_INT = SDK_INT
+                + ("REL".equals(CODENAME) ? 0 : 1);
     }
 
     /**
@@ -193,9 +212,103 @@ public class Build {
         public static final int GINGERBREAD = 9;
         
         /**
-         * Newest version of Android, version 2.3.3.
+         * February 2011: Android 2.3.3.
          */
         public static final int GINGERBREAD_MR1 = 10;
+
+        /**
+         * February 2011: Android 3.0.
+         *
+         * <p>Applications targeting this or a later release will get these
+         * new changes in behavior:</p>
+         * <ul>
+         * <li> The default theme for applications is now dark holographic:
+         *      {@link android.R.style#Theme_Holo}.
+         * <li> The activity lifecycle has changed slightly as per
+         * {@link android.app.Activity}.
+         * <li> When an application requires a permission to access one of
+         * its components (activity, receiver, service, provider), this
+         * permission is no longer enforced when the application wants to
+         * access its own component.  This means it can require a permission
+         * on a component that it does not itself hold and still access that
+         * component.
+         * </ul>
+         */
+        public static final int HONEYCOMB = 11;
+        
+        /**
+         * May 2011: Android 3.1.
+         */
+        public static final int HONEYCOMB_MR1 = 12;
+        
+        /**
+         * June 2011: Android 3.2.
+         *
+         * <p>Update to Honeycomb MR1 to support 7 inch tablets, improve
+         * screen compatibility mode, etc.</p>
+         *
+         * <p>As of this version, applications that don't say whether they
+         * support XLARGE screens will be assumed to do so only if they target
+         * {@link #HONEYCOMB} or later; it had been {@link #GINGERBREAD} or
+         * later.  Applications that don't support a screen size at least as
+         * large as the current screen will provide the user with a UI to
+         * switch them in to screen size compatibility mode.</p>
+         *
+         * <p>This version introduces new screen size resource qualifiers
+         * based on the screen size in dp: see
+         * {@link android.content.res.Configuration#screenWidthDp},
+         * {@link android.content.res.Configuration#screenHeightDp}, and
+         * {@link android.content.res.Configuration#smallestScreenWidthDp}.
+         * Supplying these in &lt;supports-screens&gt; as per
+         * {@link android.content.pm.ApplicationInfo#requiresSmallestWidthDp},
+         * {@link android.content.pm.ApplicationInfo#compatibleWidthLimitDp}, and
+         * {@link android.content.pm.ApplicationInfo#largestWidthLimitDp} is
+         * preferred over the older screen size buckets and for older devices
+         * the appropriate buckets will be inferred from them.</p>
+         *
+         * <p>New {@link android.content.pm.PackageManager#FEATURE_SCREEN_PORTRAIT}
+         * and {@link android.content.pm.PackageManager#FEATURE_SCREEN_LANDSCAPE}
+         * features are introduced in this release.  Applications that target
+         * previous platform versions are assumed to require both portrait and
+         * landscape support in the device; when targeting Honeycomb MR1 or
+         * greater the application is responsible for specifying any specific
+         * orientation it requires.</p>
+         */
+        public static final int HONEYCOMB_MR2 = 13;
+
+        /**
+         * Android 4.0.
+         *
+         * <p>Applications targeting this or a later release will get these
+         * new changes in behavior:</p>
+         * <ul>
+         * <li> For devices without a dedicated menu key, the software compatibility
+         * menu key will not be shown even on phones.  By targeting Ice Cream Sandwich
+         * or later, your UI must always have its own menu UI affordance if needed,
+         * on both tablets and phones.  The ActionBar will take care of this for you.
+         * <li> 2d drawing hardware acceleration is now turned on by default.
+         * You can use
+         * {@link android.R.attr#hardwareAccelerated android:hardwareAccelerated}
+         * to turn it off if needed, although this is strongly discouraged since
+         * it will result in poor performance on larger screen devices.
+         * <li> The default theme for applications is now the "device default" theme:
+         *      {@link android.R.style#Theme_DeviceDefault}. This may be the
+         *      holo dark theme or a different dark theme defined by the specific device.
+         *      The {@link android.R.style#Theme_Holo} family must not be modified
+         *      for a device to be considered compatible. Applications that explicitly
+         *      request a theme from the Holo family will be guaranteed that these themes
+         *      will not change character within the same platform version. Applications
+         *      that wish to blend in with the device should use a theme from the
+         *      {@link android.R.style#Theme_DeviceDefault} family.
+         * <li> Managed cursors can now throw an exception if you directly close
+         * the cursor yourself without stopping the management of it; previously failures
+         * would be silently ignored.
+         * <li> The fadingEdge attribute on views will be ignored (fading edges is no
+         * longer a standard part of the UI).  A new requiresFadingEdge attribute allows
+         * applications to still force fading edges on for special cases.
+         * </ul>
+         */
+        public static final int ICE_CREAM_SANDWICH = 14;
     }
     
     /** The type of build, like "user" or "eng". */
@@ -211,6 +324,21 @@ public class Build {
     public static final long TIME = getLong("ro.build.date.utc") * 1000;
     public static final String USER = getString("ro.build.user");
     public static final String HOST = getString("ro.build.host");
+
+    /**
+     * Returns true if we are running a debug build such as "user-debug" or "eng".
+     * @hide
+     */
+    public static final boolean IS_DEBUGGABLE =
+            SystemProperties.getInt("ro.debuggable", 0) == 1;
+
+    /**
+     * Returns the version string for the radio firmware.  May return
+     * null (if, for instance, the radio is not currently on).
+     */
+    public static String getRadioVersion() {
+        return SystemProperties.get(TelephonyProperties.PROPERTY_BASEBAND_VERSION, null);
+    }
 
     private static String getString(String property) {
         return SystemProperties.get(property, UNKNOWN);

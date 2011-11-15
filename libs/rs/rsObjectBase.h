@@ -19,18 +19,20 @@
 
 #include "rsUtils.h"
 
+#define RS_OBJECT_DEBUG 0
+
+#include <utils/CallStack.h>
 
 namespace android {
 namespace renderscript {
 
 class Context;
+class OStream;
 
 // An element is a group of Components that occupies one cell in a structure.
-class ObjectBase
-{
+class ObjectBase {
 public:
     ObjectBase(Context *rsc);
-    virtual ~ObjectBase();
 
     void incSysRef() const;
     bool decSysRef() const;
@@ -39,42 +41,61 @@ public:
     bool decUserRef() const;
     bool zeroUserRef() const;
 
+    static bool checkDelete(const ObjectBase *);
+
     const char * getName() const {
-        return mName;
+        return mName.string();
     }
     void setName(const char *);
     void setName(const char *, uint32_t len);
 
     Context * getContext() const {return mRSC;}
-    void setContext(Context *);
+    virtual bool freeChildren();
 
     static void zeroAllUserRef(Context *rsc);
+    static void freeAllChildren(Context *rsc);
     static void dumpAll(Context *rsc);
 
     virtual void dumpLOGV(const char *prefix) const;
+    virtual void serialize(OStream *stream) const = 0;
+    virtual RsA3DClassID getClassId() const = 0;
+
+    static bool isValid(const Context *rsc, const ObjectBase *obj);
+
+    // The async lock is taken during object creation in non-rs threads
+    // and object deletion in the rs thread.
+    static void asyncLock();
+    static void asyncUnlock();
 
 protected:
-    const char *mAllocFile;
-    uint32_t mAllocLine;
+    // Called inside the async lock for any object list management that is
+    // necessary in derived classes.
+    virtual void preDestroy() const;
+
     Context *mRSC;
+    virtual ~ObjectBase();
 
 private:
+    static pthread_mutex_t gObjectInitMutex;
+
     void add() const;
     void remove() const;
 
-    bool checkDelete() const;
-
-    char * mName;
+    String8 mName;
     mutable int32_t mSysRefCount;
     mutable int32_t mUserRefCount;
 
     mutable const ObjectBase * mPrev;
     mutable const ObjectBase * mNext;
+
+#if RS_OBJECT_DEBUG
+    CallStack mStack;
+#endif
+
 };
 
 template<class T>
-class ObjectBaseRef
-{
+class ObjectBaseRef {
 public:
     ObjectBaseRef() {
         mRef = NULL;
@@ -92,6 +113,13 @@ public:
         if (mRef) {
             ref->incSysRef();
         }
+    }
+
+    ObjectBaseRef & operator= (const ObjectBaseRef &ref) {
+        if (&ref != this) {
+            set(ref);
+        }
+        return *this;
     }
 
     ~ObjectBaseRef() {
@@ -129,9 +157,7 @@ public:
 
 protected:
     T * mRef;
-
 };
-
 
 }
 }

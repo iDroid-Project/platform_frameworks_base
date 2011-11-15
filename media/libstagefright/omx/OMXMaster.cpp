@@ -20,23 +20,18 @@
 
 #include "OMXMaster.h"
 
+#include "SoftOMXPlugin.h"
+
 #include <dlfcn.h>
 
 #include <media/stagefright/MediaDebug.h>
-
-#ifndef NO_OPENCORE
-#include "OMXPVCodecsPlugin.h"
-#endif
 
 namespace android {
 
 OMXMaster::OMXMaster()
     : mVendorLibHandle(NULL) {
     addVendorPlugin();
-
-#ifndef NO_OPENCORE
-    addPlugin(new OMXPVCodecsPlugin);
-#endif
+    addPlugin(new SoftOMXPlugin);
 }
 
 OMXMaster::~OMXMaster() {
@@ -49,7 +44,11 @@ OMXMaster::~OMXMaster() {
 }
 
 void OMXMaster::addVendorPlugin() {
-    mVendorLibHandle = dlopen("libstagefrighthw.so", RTLD_NOW);
+    addPlugin("libstagefrighthw.so");
+}
+
+void OMXMaster::addPlugin(const char *libname) {
+    mVendorLibHandle = dlopen(libname, RTLD_NOW);
 
     if (mVendorLibHandle == NULL) {
         return;
@@ -58,6 +57,9 @@ void OMXMaster::addVendorPlugin() {
     typedef OMXPluginBase *(*CreateOMXPluginFunc)();
     CreateOMXPluginFunc createOMXPlugin =
         (CreateOMXPluginFunc)dlsym(
+                mVendorLibHandle, "createOMXPlugin");
+    if (!createOMXPlugin)
+        createOMXPlugin = (CreateOMXPluginFunc)dlsym(
                 mVendorLibHandle, "_ZN7android15createOMXPluginEv");
 
     if (createOMXPlugin) {
@@ -87,17 +89,29 @@ void OMXMaster::addPlugin(OMXPluginBase *plugin) {
 
         mPluginByComponentName.add(name8, plugin);
     }
-    CHECK_EQ(err, OMX_ErrorNoMore);
+
+    if (err != OMX_ErrorNoMore) {
+        LOGE("OMX plugin failed w/ error 0x%08x after registering %d "
+             "components", err, mPluginByComponentName.size());
+    }
 }
 
 void OMXMaster::clearPlugins() {
     Mutex::Autolock autoLock(mLock);
 
+    typedef void (*DestroyOMXPluginFunc)(OMXPluginBase*);
+    DestroyOMXPluginFunc destroyOMXPlugin =
+        (DestroyOMXPluginFunc)dlsym(
+                mVendorLibHandle, "destroyOMXPlugin");
+
     mPluginByComponentName.clear();
 
     for (List<OMXPluginBase *>::iterator it = mPlugins.begin();
-         it != mPlugins.end(); ++it) {
-        delete *it;
+            it != mPlugins.end(); ++it) {
+        if (destroyOMXPlugin)
+            destroyOMXPlugin(*it);
+        else
+            delete *it;
         *it = NULL;
     }
 

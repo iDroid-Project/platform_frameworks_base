@@ -16,39 +16,38 @@
 
 package android.widget;
 
+import com.android.internal.R;
+
 import android.content.AsyncQueryHandler;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.TypedArray;
 import android.database.Cursor;
+import android.graphics.Canvas;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
+import android.provider.ContactsContract.CommonDataKinds.Email;
 import android.provider.ContactsContract.Contacts;
 import android.provider.ContactsContract.Intents;
 import android.provider.ContactsContract.PhoneLookup;
 import android.provider.ContactsContract.QuickContact;
 import android.provider.ContactsContract.RawContacts;
-import android.provider.ContactsContract.CommonDataKinds.Email;
 import android.util.AttributeSet;
 import android.view.View;
 import android.view.View.OnClickListener;
-import com.android.internal.R;
 
 /**
  * Widget used to show an image with the standard QuickContact badge
  * and on-click behavior.
  */
 public class QuickContactBadge extends ImageView implements OnClickListener {
-
     private Uri mContactUri;
     private String mContactEmail;
     private String mContactPhone;
-    private int mMode;
+    private Drawable mOverlay;
     private QueryHandler mQueryHandler;
-    private Drawable mBadgeBackground;
-    private Drawable mNoBadgeBackground;
-    private int mSelectedContactsAppTabIndex = -1;
+    private Drawable mDefaultAvatar;
 
     protected String[] mExcludeMimes = null;
 
@@ -56,7 +55,6 @@ public class QuickContactBadge extends ImageView implements OnClickListener {
     static final private int TOKEN_PHONE_LOOKUP = 1;
     static final private int TOKEN_EMAIL_LOOKUP_AND_TRIGGER = 2;
     static final private int TOKEN_PHONE_LOOKUP_AND_TRIGGER = 3;
-    static final private int TOKEN_CONTACT_LOOKUP_AND_TRIGGER = 4;
 
     static final String[] EMAIL_LOOKUP_PROJECTION = new String[] {
         RawContacts.CONTACT_ID,
@@ -72,14 +70,6 @@ public class QuickContactBadge extends ImageView implements OnClickListener {
     static final int PHONE_ID_COLUMN_INDEX = 0;
     static final int PHONE_LOOKUP_STRING_COLUMN_INDEX = 1;
 
-    static final String[] CONTACT_LOOKUP_PROJECTION = new String[] {
-        Contacts._ID,
-        Contacts.LOOKUP_KEY,
-    };
-    static final int CONTACT_ID_COLUMN_INDEX = 0;
-    static final int CONTACT_LOOKUPKEY_COLUMN_INDEX = 1;
-
-
     public QuickContactBadge(Context context) {
         this(context, null);
     }
@@ -91,38 +81,77 @@ public class QuickContactBadge extends ImageView implements OnClickListener {
     public QuickContactBadge(Context context, AttributeSet attrs, int defStyle) {
         super(context, attrs, defStyle);
 
-        TypedArray a =
-            context.obtainStyledAttributes(attrs,
-                    com.android.internal.R.styleable.QuickContactBadge, defStyle, 0);
+        TypedArray styledAttributes = mContext.obtainStyledAttributes(R.styleable.Theme);
+        mOverlay = styledAttributes.getDrawable(
+                com.android.internal.R.styleable.Theme_quickContactBadgeOverlay);
+        styledAttributes.recycle();
 
-        mMode = a.getInt(com.android.internal.R.styleable.QuickContactBadge_quickContactWindowSize,
-                QuickContact.MODE_MEDIUM);
-
-        a.recycle();
-
-        init();
-
-        mBadgeBackground = getBackground();
-    }
-
-    private void init() {
         mQueryHandler = new QueryHandler(mContext.getContentResolver());
         setOnClickListener(this);
     }
 
-    /**
-     * Set the QuickContact window mode. Options are {@link QuickContact#MODE_SMALL},
-     * {@link QuickContact#MODE_MEDIUM}, {@link QuickContact#MODE_LARGE}.
-     * @param size
-     */
+    @Override
+    protected void drawableStateChanged() {
+        super.drawableStateChanged();
+        if (mOverlay != null && mOverlay.isStateful()) {
+            mOverlay.setState(getDrawableState());
+            invalidate();
+        }
+    }
+
+    /** This call has no effect anymore, as there is only one QuickContact mode */
+    @SuppressWarnings("unused")
     public void setMode(int size) {
-        mMode = size;
+    }
+
+    @Override
+    protected void onDraw(Canvas canvas) {
+        super.onDraw(canvas);
+
+        if (!isEnabled()) {
+            // not clickable? don't show triangle
+            return;
+        }
+
+        if (mOverlay == null || mOverlay.getIntrinsicWidth() == 0 ||
+                mOverlay.getIntrinsicHeight() == 0) {
+            // nothing to draw
+            return;
+        }
+
+        mOverlay.setBounds(0, 0, getWidth(), getHeight());
+
+        if (mPaddingTop == 0 && mPaddingLeft == 0) {
+            mOverlay.draw(canvas);
+        } else {
+            int saveCount = canvas.getSaveCount();
+            canvas.save();
+            canvas.translate(mPaddingLeft, mPaddingTop);
+            mOverlay.draw(canvas);
+            canvas.restoreToCount(saveCount);
+        }
+    }
+
+    /** True if a contact, an email address or a phone number has been assigned */
+    private boolean isAssigned() {
+        return mContactUri != null || mContactEmail != null || mContactPhone != null;
+    }
+
+    /**
+     * Resets the contact photo to the default state.
+     */
+    public void setImageToDefault() {
+        if (mDefaultAvatar == null) {
+            mDefaultAvatar = getResources().getDrawable(R.drawable.ic_contact_picture);
+        }
+        setImageDrawable(mDefaultAvatar);
     }
 
     /**
      * Assign the contact uri that this QuickContactBadge should be associated
      * with. Note that this is only used for displaying the QuickContact window and
-     * won't bind the contact's photo for you.
+     * won't bind the contact's photo for you. Call {@link #setImageDrawable(Drawable)} to set the
+     * photo.
      *
      * @param contactUri Either a {@link Contacts#CONTENT_URI} or
      *            {@link Contacts#CONTENT_LOOKUP_URI} style URI.
@@ -132,26 +161,6 @@ public class QuickContactBadge extends ImageView implements OnClickListener {
         mContactEmail = null;
         mContactPhone = null;
         onContactUriChanged();
-    }
-
-    /**
-     * Sets the currently selected tab of the Contacts application. If not set, this is -1
-     * and therefore does not save a tab selection when a phone call is being made
-     * @hide
-     */
-    public void setSelectedContactsAppTabIndex(int value) {
-        mSelectedContactsAppTabIndex = value;
-    }
-
-    private void onContactUriChanged() {
-        if (mContactUri == null && mContactEmail == null && mContactPhone == null) {
-            if (mNoBadgeBackground == null) {
-                mNoBadgeBackground = getResources().getDrawable(R.drawable.quickcontact_nobadge);
-            }
-            setBackgroundDrawable(mNoBadgeBackground);
-        } else {
-            setBackgroundDrawable(mBadgeBackground);
-        }
     }
 
     /**
@@ -196,11 +205,15 @@ public class QuickContactBadge extends ImageView implements OnClickListener {
         }
     }
 
+    private void onContactUriChanged() {
+        setEnabled(isAssigned());
+    }
+
+    @Override
     public void onClick(View v) {
         if (mContactUri != null) {
-            mQueryHandler.startQuery(TOKEN_CONTACT_LOOKUP_AND_TRIGGER, null,
-                    mContactUri,
-                    CONTACT_LOOKUP_PROJECTION, null, null, null);
+            QuickContact.showQuickContact(getContext(), QuickContactBadge.this, mContactUri,
+                    QuickContact.MODE_LARGE, mExcludeMimes);
         } else if (mContactEmail != null) {
             mQueryHandler.startQuery(TOKEN_EMAIL_LOOKUP_AND_TRIGGER, mContactEmail,
                     Uri.withAppendedPath(Email.CONTENT_LOOKUP_URI, Uri.encode(mContactEmail)),
@@ -222,16 +235,6 @@ public class QuickContactBadge extends ImageView implements OnClickListener {
      */
     public void setExcludeMimes(String[] excludeMimes) {
         mExcludeMimes = excludeMimes;
-    }
-
-    private void trigger(Uri lookupUri) {
-        final Intent intent = QuickContact.getQuickContactIntent(getContext(), this, lookupUri,
-                mMode, mExcludeMimes);
-        if (mSelectedContactsAppTabIndex != -1) {
-            intent.putExtra(QuickContact.EXTRA_SELECTED_CONTACTS_APP_TAB_INDEX,
-                    mSelectedContactsAppTabIndex);
-        }
-        getContext().startActivity(intent);
     }
 
     private class QueryHandler extends AsyncQueryHandler {
@@ -275,17 +278,6 @@ public class QuickContactBadge extends ImageView implements OnClickListener {
                         }
                         break;
                     }
-
-                    case TOKEN_CONTACT_LOOKUP_AND_TRIGGER: {
-                        if (cursor != null && cursor.moveToFirst()) {
-                            long contactId = cursor.getLong(CONTACT_ID_COLUMN_INDEX);
-                            String lookupKey = cursor.getString(CONTACT_LOOKUPKEY_COLUMN_INDEX);
-                            lookupUri = Contacts.getLookupUri(contactId, lookupKey);
-                            trigger = true;
-                        }
-
-                        break;
-                    }
                 }
             } finally {
                 if (cursor != null) {
@@ -297,8 +289,9 @@ public class QuickContactBadge extends ImageView implements OnClickListener {
             onContactUriChanged();
 
             if (trigger && lookupUri != null) {
-                // Found contact, so trigger track
-                trigger(lookupUri);
+                // Found contact, so trigger QuickContact
+                QuickContact.showQuickContact(getContext(), QuickContactBadge.this, lookupUri,
+                        QuickContact.MODE_LARGE, mExcludeMimes);
             } else if (createUri != null) {
                 // Prompt user to add this person to contacts
                 final Intent intent = new Intent(Intents.SHOW_OR_CREATE_CONTACT, createUri);

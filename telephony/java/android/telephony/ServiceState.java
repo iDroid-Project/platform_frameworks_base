@@ -91,6 +91,12 @@ public class ServiceState implements Parcelable {
     public static final int RADIO_TECHNOLOGY_HSPA = 11;
     /** @hide */
     public static final int RADIO_TECHNOLOGY_EVDO_B = 12;
+    /** @hide */
+    public static final int RADIO_TECHNOLOGY_EHRPD = 13;
+    /** @hide */
+    public static final int RADIO_TECHNOLOGY_LTE = 14;
+    /** @hide */
+    public static final int RADIO_TECHNOLOGY_HSPAP = 15;
 
     /**
      * Available registration states for GSM, UMTS and CDMA.
@@ -381,53 +387,77 @@ public class ServiceState implements Parcelable {
                 && mIsEmergencyOnly == s.mIsEmergencyOnly);
     }
 
+    /**
+     * Convert radio technology to String
+     *
+     * @param radioTechnology
+     * @return String representation of the RAT
+     *
+     * @hide
+     */
+    public static String radioTechnologyToString(int rt) {
+        String rtString;
+
+        switch(rt) {
+            case 0:
+                rtString = "Unknown";
+                break;
+            case 1:
+                rtString = "GPRS";
+                break;
+            case 2:
+                rtString = "EDGE";
+                break;
+            case 3:
+                rtString = "UMTS";
+                break;
+            case 4:
+                rtString = "CDMA-IS95A";
+                break;
+            case 5:
+                rtString = "CDMA-IS95B";
+                break;
+            case 6:
+                rtString = "1xRTT";
+                break;
+            case 7:
+                rtString = "EvDo-rev.0";
+                break;
+            case 8:
+                rtString = "EvDo-rev.A";
+                break;
+            case 9:
+                rtString = "HSDPA";
+                break;
+            case 10:
+                rtString = "HSUPA";
+                break;
+            case 11:
+                rtString = "HSPA";
+                break;
+            case 12:
+                rtString = "EvDo-rev.B";
+                break;
+            case 13:
+                rtString = "eHRPD";
+                break;
+            case 14:
+                rtString = "LTE";
+                break;
+            case 15:
+                rtString = "HSPAP";
+                break;
+            default:
+                rtString = "Unexpected";
+                Log.w(LOG_TAG, "Unexpected radioTechnology=" + rt);
+                break;
+        }
+        return rtString + ":" + rt;
+    }
+
     @Override
     public String toString() {
-        String radioTechnology = new String("Error in radioTechnology");
-        switch(this.mRadioTechnology) {
-        case 0:
-            radioTechnology = "Unknown";
-            break;
-        case 1:
-            radioTechnology = "GPRS";
-            break;
-        case 2:
-            radioTechnology = "EDGE";
-            break;
-        case 3:
-            radioTechnology = "UMTS";
-            break;
-        case 4:
-            radioTechnology = "IS95A";
-            break;
-        case 5:
-            radioTechnology = "IS95B";
-            break;
-        case 6:
-            radioTechnology = "1xRTT";
-            break;
-        case 7:
-            radioTechnology = "EvDo rev. 0";
-            break;
-        case 8:
-            radioTechnology = "EvDo rev. A";
-            break;
-        case 9:
-            radioTechnology = "HSDPA";
-            break;
-        case 10:
-            radioTechnology = "HSUPA";
-            break;
-        case 11:
-            radioTechnology = "HSPA";
-            break;
-        case 12:
-            radioTechnology = "EvDo rev. B";
-            break;
-        default:
-            Log.w(LOG_TAG, "mRadioTechnology variable out of range.");
-        break;
-        }
+        String radioTechnology = radioTechnologyToString(mRadioTechnology);
 
         return (mState + " " + (mRoaming ? "roaming" : "home")
                 + " " + mOperatorAlphaLong
@@ -438,46 +468,35 @@ public class ServiceState implements Parcelable {
                 + " " + (mCssIndicator ? "CSS supported" : "CSS not supported")
                 + " " + mNetworkId
                 + " " + mSystemId
-                + "RoamInd: " + mCdmaRoamingIndicator
-                + "DefRoamInd: " + mCdmaDefaultRoamingIndicator
-                + "EmergOnly: " + mIsEmergencyOnly);
+                + " RoamInd=" + mCdmaRoamingIndicator
+                + " DefRoamInd=" + mCdmaDefaultRoamingIndicator
+                + " EmergOnly=" + mIsEmergencyOnly);
+    }
+
+    private void setNullState(int state) {
+        mState = state;
+        mRoaming = false;
+        mOperatorAlphaLong = null;
+        mOperatorAlphaShort = null;
+        mOperatorNumeric = null;
+        mIsManualNetworkSelection = false;
+        mRadioTechnology = 0;
+        mCssIndicator = false;
+        mNetworkId = -1;
+        mSystemId = -1;
+        mCdmaRoamingIndicator = -1;
+        mCdmaDefaultRoamingIndicator = -1;
+        mCdmaEriIconIndex = -1;
+        mCdmaEriIconMode = -1;
+        mIsEmergencyOnly = false;
     }
 
     public void setStateOutOfService() {
-        mState = STATE_OUT_OF_SERVICE;
-        mRoaming = false;
-        mOperatorAlphaLong = null;
-        mOperatorAlphaShort = null;
-        mOperatorNumeric = null;
-        mIsManualNetworkSelection = false;
-        mRadioTechnology = 0;
-        mCssIndicator = false;
-        mNetworkId = -1;
-        mSystemId = -1;
-        mCdmaRoamingIndicator = -1;
-        mCdmaDefaultRoamingIndicator = -1;
-        mCdmaEriIconIndex = -1;
-        mCdmaEriIconMode = -1;
-        mIsEmergencyOnly = false;
+        setNullState(STATE_OUT_OF_SERVICE);
     }
 
-    // TODO - can't this be combined with the above method?
     public void setStateOff() {
-        mState = STATE_POWER_OFF;
-        mRoaming = false;
-        mOperatorAlphaLong = null;
-        mOperatorAlphaShort = null;
-        mOperatorNumeric = null;
-        mIsManualNetworkSelection = false;
-        mRadioTechnology = 0;
-        mCssIndicator = false;
-        mNetworkId = -1;
-        mSystemId = -1;
-        mCdmaRoamingIndicator = -1;
-        mCdmaDefaultRoamingIndicator = -1;
-        mCdmaEriIconIndex = -1;
-        mCdmaEriIconMode = -1;
-        mIsEmergencyOnly = false;
+        setNullState(STATE_POWER_OFF);
     }
 
     public void setState(int state) {
@@ -536,7 +555,7 @@ public class ServiceState implements Parcelable {
      *
      * @hide
      */
-    public void setCdmaEriText(String longName) {
+    public void setOperatorAlphaLong(String longName) {
         mOperatorAlphaLong = longName;
     }
 

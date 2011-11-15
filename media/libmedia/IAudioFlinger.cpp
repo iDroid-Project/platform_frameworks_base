@@ -1,4 +1,4 @@
-/* //device/extlibs/pv/android/IAudioflinger.cpp
+/*
 **
 ** Copyright 2007, The Android Open Source Project
 **
@@ -47,7 +47,6 @@ enum {
     SET_MODE,
     SET_MIC_MUTE,
     GET_MIC_MUTE,
-    IS_STREAM_ACTIVE,
     SET_PARAMETERS,
     GET_PARAMETERS,
     REGISTER_CLIENT,
@@ -64,8 +63,8 @@ enum {
     GET_RENDER_POSITION,
     GET_INPUT_FRAMES_LOST,
     NEW_AUDIO_SESSION_ID,
-    LOAD_EFFECT_LIBRARY,
-    UNLOAD_EFFECT_LIBRARY,
+    ACQUIRE_AUDIO_SESSION_ID,
+    RELEASE_AUDIO_SESSION_ID,
     QUERY_NUM_EFFECTS,
     QUERY_EFFECT,
     GET_EFFECT_DESCRIPTOR,
@@ -85,8 +84,8 @@ public:
                                 pid_t pid,
                                 int streamType,
                                 uint32_t sampleRate,
-                                int format,
-                                int channelCount,
+                                uint32_t format,
+                                uint32_t channelMask,
                                 int frameCount,
                                 uint32_t flags,
                                 const sp<IMemory>& sharedBuffer,
@@ -101,7 +100,7 @@ public:
         data.writeInt32(streamType);
         data.writeInt32(sampleRate);
         data.writeInt32(format);
-        data.writeInt32(channelCount);
+        data.writeInt32(channelMask);
         data.writeInt32(frameCount);
         data.writeInt32(flags);
         data.writeStrongBinder(sharedBuffer->asBinder());
@@ -132,8 +131,8 @@ public:
                                 pid_t pid,
                                 int input,
                                 uint32_t sampleRate,
-                                int format,
-                                int channelCount,
+                                uint32_t format,
+                                uint32_t channelMask,
                                 int frameCount,
                                 uint32_t flags,
                                 int *sessionId,
@@ -146,7 +145,7 @@ public:
         data.writeInt32(input);
         data.writeInt32(sampleRate);
         data.writeInt32(format);
-        data.writeInt32(channelCount);
+        data.writeInt32(channelMask);
         data.writeInt32(frameCount);
         data.writeInt32(flags);
         int lSessionId = 0;
@@ -189,7 +188,7 @@ public:
         return reply.readInt32();
     }
 
-    virtual int format(int output) const
+    virtual uint32_t format(int output) const
     {
         Parcel data, reply;
         data.writeInterfaceToken(IAudioFlinger::getInterfaceDescriptor());
@@ -313,15 +312,6 @@ public:
         Parcel data, reply;
         data.writeInterfaceToken(IAudioFlinger::getInterfaceDescriptor());
         remote()->transact(GET_MIC_MUTE, data, &reply);
-        return reply.readInt32();
-    }
-
-    virtual bool isStreamActive(int stream) const
-    {
-        Parcel data, reply;
-        data.writeInterfaceToken(IAudioFlinger::getInterfaceDescriptor());
-        data.writeInt32(stream);
-        remote()->transact(IS_STREAM_ACTIVE, data, &reply);
         return reply.readInt32();
     }
 
@@ -538,35 +528,20 @@ public:
         return id;
     }
 
-    virtual status_t loadEffectLibrary(const char *libPath, int *handle)
+    virtual void acquireAudioSessionId(int audioSession)
     {
-        if (libPath == NULL || handle == NULL) {
-            return BAD_VALUE;
-        }
-        *handle = 0;
         Parcel data, reply;
         data.writeInterfaceToken(IAudioFlinger::getInterfaceDescriptor());
-        data.writeCString(libPath);
-        status_t status = remote()->transact(LOAD_EFFECT_LIBRARY, data, &reply);
-        if (status == NO_ERROR) {
-            status = reply.readInt32();
-            if (status == NO_ERROR) {
-                *handle = reply.readInt32();
-            }
-        }
-        return status;
+        data.writeInt32(audioSession);
+        remote()->transact(ACQUIRE_AUDIO_SESSION_ID, data, &reply);
     }
 
-    virtual status_t unloadEffectLibrary(int handle)
+    virtual void releaseAudioSessionId(int audioSession)
     {
         Parcel data, reply;
         data.writeInterfaceToken(IAudioFlinger::getInterfaceDescriptor());
-        data.writeInt32(handle);
-        status_t status = remote()->transact(UNLOAD_EFFECT_LIBRARY, data, &reply);
-        if (status == NO_ERROR) {
-            status = reply.readInt32();
-        }
-        return status;
+        data.writeInt32(audioSession);
+        remote()->transact(RELEASE_AUDIO_SESSION_ID, data, &reply);
     }
 
     virtual status_t queryNumberEffects(uint32_t *numEffects)
@@ -826,12 +801,6 @@ status_t BnAudioFlinger::onTransact(
             reply->writeInt32( getMicMute() );
             return NO_ERROR;
         } break;
-        case IS_STREAM_ACTIVE: {
-            CHECK_INTERFACE(IAudioFlinger, data, reply);
-            int stream = data.readInt32();
-            reply->writeInt32( isStreamActive(stream) );
-            return NO_ERROR;
-        } break;
         case SET_PARAMETERS: {
             CHECK_INTERFACE(IAudioFlinger, data, reply);
             int ioHandle = data.readInt32();
@@ -968,21 +937,18 @@ status_t BnAudioFlinger::onTransact(
             reply->writeInt32(newAudioSessionId());
             return NO_ERROR;
         } break;
-        case LOAD_EFFECT_LIBRARY: {
+        case ACQUIRE_AUDIO_SESSION_ID: {
             CHECK_INTERFACE(IAudioFlinger, data, reply);
-            int handle;
-            status_t status = loadEffectLibrary(data.readCString(), &handle);
-            reply->writeInt32(status);
-            if (status == NO_ERROR) {
-                reply->writeInt32(handle);
-            }
+            int audioSession = data.readInt32();
+            acquireAudioSessionId(audioSession);
             return NO_ERROR;
-        }
-        case UNLOAD_EFFECT_LIBRARY: {
+        } break;
+        case RELEASE_AUDIO_SESSION_ID: {
             CHECK_INTERFACE(IAudioFlinger, data, reply);
-            reply->writeInt32(unloadEffectLibrary(data.readInt32()));
+            int audioSession = data.readInt32();
+            releaseAudioSessionId(audioSession);
             return NO_ERROR;
-        }
+        } break;
         case QUERY_NUM_EFFECTS: {
             CHECK_INTERFACE(IAudioFlinger, data, reply);
             uint32_t numEffects;

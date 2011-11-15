@@ -18,11 +18,12 @@ package android.content.res;
 
 import android.content.pm.ApplicationInfo;
 import android.graphics.Canvas;
+import android.graphics.PointF;
 import android.graphics.Rect;
 import android.graphics.Region;
+import android.os.Parcel;
+import android.os.Parcelable;
 import android.util.DisplayMetrics;
-import android.util.Log;
-import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.WindowManager;
 import android.view.WindowManager.LayoutParams;
@@ -33,32 +34,27 @@ import android.view.WindowManager.LayoutParams;
  * 
  *  {@hide} 
  */
-public class CompatibilityInfo {
-    private static final boolean DBG = false;
-    private static final String TAG = "CompatibilityInfo";
-    
+public class CompatibilityInfo implements Parcelable {
     /** default compatibility info object for compatible applications */
     public static final CompatibilityInfo DEFAULT_COMPATIBILITY_INFO = new CompatibilityInfo() {
-        @Override
-        public void setExpandable(boolean expandable) {
-            throw new UnsupportedOperationException("trying to change default compatibility info");
-        }
     };
 
     /**
-     * The default width of the screen in portrait mode. 
+     * This is the number of pixels we would like to have along the
+     * short axis of an app that needs to run on a normal size screen.
      */
-    public static final int DEFAULT_PORTRAIT_WIDTH = 320;
+    public static final int DEFAULT_NORMAL_SHORT_DIMENSION = 320;
 
     /**
-     * The default height of the screen in portrait mode. 
-     */    
-    public static final int DEFAULT_PORTRAIT_HEIGHT = 480;
+     * This is the maximum aspect ratio we will allow while keeping
+     * applications in a compatible screen size.
+     */
+    public static final float MAXIMUM_ASPECT_RATIO = (854f/480f);
 
     /**
      *  A compatibility flags
      */
-    private int mCompatibilityFlags;
+    private final int mCompatibilityFlags;
     
     /**
      * A flag mask to tell if the application needs scaling (when mApplicationScale != 1.0f)
@@ -67,54 +63,19 @@ public class CompatibilityInfo {
     private static final int SCALING_REQUIRED = 1; 
 
     /**
-     * A flag mask to indicates that the application can expand over the original size.
-     * The flag is set to true if
-     * 1) Application declares its expandable in manifest file using <supports-screens> or
-     * 2) Configuration.SCREENLAYOUT_COMPAT_NEEDED is not set
-     * {@see compatibilityFlag}
+     * Application must always run in compatibility mode?
      */
-    private static final int EXPANDABLE = 2;
-    
-    /**
-     * A flag mask to tell if the application is configured to be expandable. This differs
-     * from EXPANDABLE in that the application that is not expandable will be 
-     * marked as expandable if Configuration.SCREENLAYOUT_COMPAT_NEEDED is not set.
-     */
-    private static final int CONFIGURED_EXPANDABLE = 4; 
+    private static final int ALWAYS_NEEDS_COMPAT = 2;
 
     /**
-     * A flag mask to indicates that the application supports large screens.
-     * The flag is set to true if
-     * 1) Application declares it supports large screens in manifest file using <supports-screens> or
-     * 2) The screen size is not large
-     * {@see compatibilityFlag}
+     * Application never should run in compatibility mode?
      */
-    private static final int LARGE_SCREENS = 8;
-    
-    /**
-     * A flag mask to tell if the application supports large screens. This differs
-     * from LARGE_SCREENS in that the application that does not support large
-     * screens will be marked as supporting them if the current screen is not
-     * large.
-     */
-    private static final int CONFIGURED_LARGE_SCREENS = 16; 
+    private static final int NEVER_NEEDS_COMPAT = 4;
 
     /**
-     * A flag mask to indicates that the application supports xlarge screens.
-     * The flag is set to true if
-     * 1) Application declares it supports xlarge screens in manifest file using <supports-screens> or
-     * 2) The screen size is not xlarge
-     * {@see compatibilityFlag}
+     * Set if the application needs to run in screen size compatibility mode.
      */
-    private static final int XLARGE_SCREENS = 32;
-    
-    /**
-     * A flag mask to tell if the application supports xlarge screens. This differs
-     * from XLARGE_SCREENS in that the application that does not support xlarge
-     * screens will be marked as supporting them if the current screen is not
-     * xlarge.
-     */
-    private static final int CONFIGURED_XLARGE_SCREENS = 64;
+    private static final int NEEDS_SCREEN_COMPAT = 8;
 
     /**
      * The effective screen density we have selected for this application.
@@ -131,46 +92,157 @@ public class CompatibilityInfo {
      */
     public final float applicationInvertedScale;
 
-    /**
-     * The flags from ApplicationInfo.
-     */
-    public final int appFlags;
-    
-    public CompatibilityInfo(ApplicationInfo appInfo) {
-        appFlags = appInfo.flags;
-        
-        if ((appInfo.flags & ApplicationInfo.FLAG_SUPPORTS_LARGE_SCREENS) != 0) {
-            // Saying you support large screens also implies you support xlarge
-            // screens; there is no compatibility mode for a large app on an
-            // xlarge screen.
-            mCompatibilityFlags |= LARGE_SCREENS | CONFIGURED_LARGE_SCREENS
-                    | XLARGE_SCREENS | CONFIGURED_XLARGE_SCREENS
-                    | EXPANDABLE | CONFIGURED_EXPANDABLE;
-        }
-        if ((appInfo.flags & ApplicationInfo.FLAG_SUPPORTS_XLARGE_SCREENS) != 0) {
-            mCompatibilityFlags |= XLARGE_SCREENS | CONFIGURED_XLARGE_SCREENS
-                    | EXPANDABLE | CONFIGURED_EXPANDABLE;
-        }
-        if ((appInfo.flags & ApplicationInfo.FLAG_RESIZEABLE_FOR_SCREENS) != 0) {
-            mCompatibilityFlags |= EXPANDABLE | CONFIGURED_EXPANDABLE;
-        }
-        
-        if ((appInfo.flags & ApplicationInfo.FLAG_SUPPORTS_SCREEN_DENSITIES) != 0) {
+    public CompatibilityInfo(ApplicationInfo appInfo, int screenLayout, int sw,
+            boolean forceCompat) {
+        int compatFlags = 0;
+
+        if (appInfo.requiresSmallestWidthDp != 0 || appInfo.compatibleWidthLimitDp != 0
+                || appInfo.largestWidthLimitDp != 0) {
+            // New style screen requirements spec.
+            int required = appInfo.requiresSmallestWidthDp != 0
+                    ? appInfo.requiresSmallestWidthDp
+                    : appInfo.compatibleWidthLimitDp;
+            if (required == 0) {
+                required = appInfo.largestWidthLimitDp;
+            }
+            int compat = appInfo.compatibleWidthLimitDp != 0
+                    ? appInfo.compatibleWidthLimitDp : required;
+            if (compat < required)  {
+                compat = required;
+            }
+            int largest = appInfo.largestWidthLimitDp;
+
+            if (required > DEFAULT_NORMAL_SHORT_DIMENSION) {
+                // For now -- if they require a size larger than the only
+                // size we can do in compatibility mode, then don't ever
+                // allow the app to go in to compat mode.  Trying to run
+                // it at a smaller size it can handle will make it far more
+                // broken than running at a larger size than it wants or
+                // thinks it can handle.
+                compatFlags |= NEVER_NEEDS_COMPAT;
+            } else if (largest != 0 && sw > largest) {
+                // If the screen size is larger than the largest size the
+                // app thinks it can work with, then always force it in to
+                // compatibility mode.
+                compatFlags |= NEEDS_SCREEN_COMPAT | ALWAYS_NEEDS_COMPAT;
+            } else if (compat >= sw) {
+                // The screen size is something the app says it was designed
+                // for, so never do compatibility mode.
+                compatFlags |= NEVER_NEEDS_COMPAT;
+            } else if (forceCompat) {
+                // The app may work better with or without compatibility mode.
+                // Let the user decide.
+                compatFlags |= NEEDS_SCREEN_COMPAT;
+            }
+
+            // Modern apps always support densities.
             applicationDensity = DisplayMetrics.DENSITY_DEVICE;
             applicationScale = 1.0f;
             applicationInvertedScale = 1.0f;
+
         } else {
-            applicationDensity = DisplayMetrics.DENSITY_DEFAULT;
-            applicationScale = DisplayMetrics.DENSITY_DEVICE
-                    / (float) DisplayMetrics.DENSITY_DEFAULT;
-            applicationInvertedScale = 1.0f / applicationScale;
-            mCompatibilityFlags |= SCALING_REQUIRED;
+            /**
+             * Has the application said that its UI is expandable?  Based on the
+             * <supports-screen> android:expandible in the manifest.
+             */
+            final int EXPANDABLE = 2;
+
+            /**
+             * Has the application said that its UI supports large screens?  Based on the
+             * <supports-screen> android:largeScreens in the manifest.
+             */
+            final int LARGE_SCREENS = 8;
+
+            /**
+             * Has the application said that its UI supports xlarge screens?  Based on the
+             * <supports-screen> android:xlargeScreens in the manifest.
+             */
+            final int XLARGE_SCREENS = 32;
+
+            int sizeInfo = 0;
+
+            // We can't rely on the application always setting
+            // FLAG_RESIZEABLE_FOR_SCREENS so will compute it based on various input.
+            boolean anyResizeable = false;
+
+            if ((appInfo.flags & ApplicationInfo.FLAG_SUPPORTS_LARGE_SCREENS) != 0) {
+                sizeInfo |= LARGE_SCREENS;
+                anyResizeable = true;
+                if (!forceCompat) {
+                    // If we aren't forcing the app into compatibility mode, then
+                    // assume if it supports large screens that we should allow it
+                    // to use the full space of an xlarge screen as well.
+                    sizeInfo |= XLARGE_SCREENS | EXPANDABLE;
+                }
+            }
+            if ((appInfo.flags & ApplicationInfo.FLAG_SUPPORTS_XLARGE_SCREENS) != 0) {
+                anyResizeable = true;
+                if (!forceCompat) {
+                    sizeInfo |= XLARGE_SCREENS | EXPANDABLE;
+                }
+            }
+            if ((appInfo.flags & ApplicationInfo.FLAG_RESIZEABLE_FOR_SCREENS) != 0) {
+                anyResizeable = true;
+                sizeInfo |= EXPANDABLE;
+            }
+
+            if (forceCompat) {
+                // If we are forcing compatibility mode, then ignore an app that
+                // just says it is resizable for screens.  We'll only have it fill
+                // the screen if it explicitly says it supports the screen size we
+                // are running in.
+                sizeInfo &= ~EXPANDABLE;
+            }
+
+            compatFlags |= NEEDS_SCREEN_COMPAT;
+            switch (screenLayout&Configuration.SCREENLAYOUT_SIZE_MASK) {
+                case Configuration.SCREENLAYOUT_SIZE_XLARGE:
+                    if ((sizeInfo&XLARGE_SCREENS) != 0) {
+                        compatFlags &= ~NEEDS_SCREEN_COMPAT;
+                    }
+                    if ((appInfo.flags & ApplicationInfo.FLAG_SUPPORTS_XLARGE_SCREENS) != 0) {
+                        compatFlags |= NEVER_NEEDS_COMPAT;
+                    }
+                    break;
+                case Configuration.SCREENLAYOUT_SIZE_LARGE:
+                    if ((sizeInfo&LARGE_SCREENS) != 0) {
+                        compatFlags &= ~NEEDS_SCREEN_COMPAT;
+                    }
+                    if ((appInfo.flags & ApplicationInfo.FLAG_SUPPORTS_LARGE_SCREENS) != 0) {
+                        compatFlags |= NEVER_NEEDS_COMPAT;
+                    }
+                    break;
+            }
+
+            if ((screenLayout&Configuration.SCREENLAYOUT_COMPAT_NEEDED) != 0) {
+                if ((sizeInfo&EXPANDABLE) != 0) {
+                    compatFlags &= ~NEEDS_SCREEN_COMPAT;
+                } else if (!anyResizeable) {
+                    compatFlags |= ALWAYS_NEEDS_COMPAT;
+                }
+            } else {
+                compatFlags &= ~NEEDS_SCREEN_COMPAT;
+                compatFlags |= NEVER_NEEDS_COMPAT;
+            }
+
+            if ((appInfo.flags & ApplicationInfo.FLAG_SUPPORTS_SCREEN_DENSITIES) != 0) {
+                applicationDensity = DisplayMetrics.DENSITY_DEVICE;
+                applicationScale = 1.0f;
+                applicationInvertedScale = 1.0f;
+            } else {
+                applicationDensity = DisplayMetrics.DENSITY_DEFAULT;
+                applicationScale = DisplayMetrics.DENSITY_DEVICE
+                        / (float) DisplayMetrics.DENSITY_DEFAULT;
+                applicationInvertedScale = 1.0f / applicationScale;
+                compatFlags |= SCALING_REQUIRED;
+            }
         }
+
+        mCompatibilityFlags = compatFlags;
     }
 
-    private CompatibilityInfo(int appFlags, int compFlags,
+    private CompatibilityInfo(int compFlags,
             int dens, float scale, float invertedScale) {
-        this.appFlags = appFlags;
         mCompatibilityFlags = compFlags;
         applicationDensity = dens;
         applicationScale = scale;
@@ -178,96 +250,28 @@ public class CompatibilityInfo {
     }
 
     private CompatibilityInfo() {
-        this(ApplicationInfo.FLAG_SUPPORTS_SMALL_SCREENS
-                | ApplicationInfo.FLAG_SUPPORTS_NORMAL_SCREENS
-                | ApplicationInfo.FLAG_SUPPORTS_LARGE_SCREENS
-                | ApplicationInfo.FLAG_SUPPORTS_XLARGE_SCREENS
-                | ApplicationInfo.FLAG_RESIZEABLE_FOR_SCREENS,
-                EXPANDABLE | CONFIGURED_EXPANDABLE,
-                DisplayMetrics.DENSITY_DEVICE,
+        this(NEVER_NEEDS_COMPAT, DisplayMetrics.DENSITY_DEVICE,
                 1.0f,
                 1.0f);
-    }
-
-    /**
-     * Returns the copy of this instance.
-     */
-    public CompatibilityInfo copy() {
-        CompatibilityInfo info = new CompatibilityInfo(appFlags, mCompatibilityFlags,
-                applicationDensity, applicationScale, applicationInvertedScale);
-        return info;
-    }
- 
-    /**
-     * Sets expandable bit in the compatibility flag.
-     */
-    public void setExpandable(boolean expandable) {
-        if (expandable) {
-            mCompatibilityFlags |= CompatibilityInfo.EXPANDABLE;
-        } else {
-            mCompatibilityFlags &= ~CompatibilityInfo.EXPANDABLE;
-        }
-    }
-
-    /**
-     * Sets large screen bit in the compatibility flag.
-     */
-    public void setLargeScreens(boolean expandable) {
-        if (expandable) {
-            mCompatibilityFlags |= CompatibilityInfo.LARGE_SCREENS;
-        } else {
-            mCompatibilityFlags &= ~CompatibilityInfo.LARGE_SCREENS;
-        }
-    }
-
-    /**
-     * Sets large screen bit in the compatibility flag.
-     */
-    public void setXLargeScreens(boolean expandable) {
-        if (expandable) {
-            mCompatibilityFlags |= CompatibilityInfo.XLARGE_SCREENS;
-        } else {
-            mCompatibilityFlags &= ~CompatibilityInfo.XLARGE_SCREENS;
-        }
-    }
-
-    /**
-     * @return true if the application is configured to be expandable.
-     */
-    public boolean isConfiguredExpandable() {
-        return (mCompatibilityFlags & CompatibilityInfo.CONFIGURED_EXPANDABLE) != 0;
-    }
-
-    /**
-     * @return true if the application is configured to be expandable.
-     */
-    public boolean isConfiguredLargeScreens() {
-        return (mCompatibilityFlags & CompatibilityInfo.CONFIGURED_LARGE_SCREENS) != 0;
-    }
-
-    /**
-     * @return true if the application is configured to be expandable.
-     */
-    public boolean isConfiguredXLargeScreens() {
-        return (mCompatibilityFlags & CompatibilityInfo.CONFIGURED_XLARGE_SCREENS) != 0;
     }
 
     /**
      * @return true if the scaling is required
      */
     public boolean isScalingRequired() {
-        return (mCompatibilityFlags & SCALING_REQUIRED) != 0;
+        return (mCompatibilityFlags&SCALING_REQUIRED) != 0;
     }
     
     public boolean supportsScreen() {
-        return (mCompatibilityFlags & (EXPANDABLE|LARGE_SCREENS))
-                == (EXPANDABLE|LARGE_SCREENS);
+        return (mCompatibilityFlags&NEEDS_SCREEN_COMPAT) == 0;
     }
     
-    @Override
-    public String toString() {
-        return "CompatibilityInfo{scale=" + applicationScale +
-                ", supports screen=" + supportsScreen() + "}";
+    public boolean neverSupportsScreen() {
+        return (mCompatibilityFlags&ALWAYS_NEEDS_COMPAT) != 0;
+    }
+
+    public boolean alwaysSupportsScreen() {
+        return (mCompatibilityFlags&NEVER_NEEDS_COMPAT) != 0;
     }
 
     /**
@@ -288,6 +292,7 @@ public class CompatibilityInfo {
         
         private Rect mContentInsetsBuffer = null;
         private Rect mVisibleInsetsBuffer = null;
+        private Region mTouchableAreaBuffer = null;
         
         Translator(float applicationScale, float applicationInvertedScale) {
             this.applicationScale = applicationScale;
@@ -369,6 +374,17 @@ public class CompatibilityInfo {
         }
 
         /**
+         * Translate a Point in screen coordinates into the app window's coordinates.
+         */
+        public void translatePointInScreenToAppWindow(PointF point) {
+            final float scale = applicationInvertedScale;
+            if (scale != 1.0f) {
+                point.x *= scale;
+                point.y *= scale;
+            }
+        }
+
+        /**
          * Translate the location of the sub window.
          * @param params
          */
@@ -389,34 +405,188 @@ public class CompatibilityInfo {
 
         /**
          * Translate the visible insets in application window to Screen. This uses
-         * the internal buffer for content insets to avoid extra object allocation.
+         * the internal buffer for visible insets to avoid extra object allocation.
          */
-        public Rect getTranslatedVisbileInsets(Rect visibleInsets) {
+        public Rect getTranslatedVisibleInsets(Rect visibleInsets) {
             if (mVisibleInsetsBuffer == null) mVisibleInsetsBuffer = new Rect();
             mVisibleInsetsBuffer.set(visibleInsets);
             translateRectInAppWindowToScreen(mVisibleInsetsBuffer);
             return mVisibleInsetsBuffer;
         }
+
+        /**
+         * Translate the touchable area in application window to Screen. This uses
+         * the internal buffer for touchable area to avoid extra object allocation.
+         */
+        public Region getTranslatedTouchableArea(Region touchableArea) {
+            if (mTouchableAreaBuffer == null) mTouchableAreaBuffer = new Region();
+            mTouchableAreaBuffer.set(touchableArea);
+            mTouchableAreaBuffer.scale(applicationScale);
+            return mTouchableAreaBuffer;
+        }
+    }
+
+    public void applyToDisplayMetrics(DisplayMetrics inoutDm) {
+        if (!supportsScreen()) {
+            // This is a larger screen device and the app is not
+            // compatible with large screens, so diddle it.
+            CompatibilityInfo.computeCompatibleScaling(inoutDm, inoutDm);
+        } else {
+            inoutDm.widthPixels = inoutDm.noncompatWidthPixels;
+            inoutDm.heightPixels = inoutDm.noncompatHeightPixels;
+        }
+
+        if (isScalingRequired()) {
+            float invertedRatio = applicationInvertedScale;
+            inoutDm.density = inoutDm.noncompatDensity * invertedRatio;
+            inoutDm.densityDpi = (int)((inoutDm.density*DisplayMetrics.DENSITY_DEFAULT)+.5f);
+            inoutDm.scaledDensity = inoutDm.noncompatScaledDensity * invertedRatio;
+            inoutDm.xdpi = inoutDm.noncompatXdpi * invertedRatio;
+            inoutDm.ydpi = inoutDm.noncompatYdpi * invertedRatio;
+            inoutDm.widthPixels = (int) (inoutDm.widthPixels * invertedRatio + 0.5f);
+            inoutDm.heightPixels = (int) (inoutDm.heightPixels * invertedRatio + 0.5f);
+        }
+    }
+
+    public void applyToConfiguration(Configuration inoutConfig) {
+        if (!supportsScreen()) {
+            // This is a larger screen device and the app is not
+            // compatible with large screens, so we are forcing it to
+            // run as if the screen is normal size.
+            inoutConfig.screenLayout =
+                    (inoutConfig.screenLayout&~Configuration.SCREENLAYOUT_SIZE_MASK)
+                    | Configuration.SCREENLAYOUT_SIZE_NORMAL;
+            inoutConfig.screenWidthDp = inoutConfig.compatScreenWidthDp;
+            inoutConfig.screenHeightDp = inoutConfig.compatScreenHeightDp;
+            inoutConfig.smallestScreenWidthDp = inoutConfig.compatSmallestScreenWidthDp;
+        }
     }
 
     /**
-     * Returns the frame Rect for applications runs under compatibility mode.
+     * Compute the frame Rect for applications runs under compatibility mode.
      *
      * @param dm the display metrics used to compute the frame size.
      * @param orientation the orientation of the screen.
      * @param outRect the output parameter which will contain the result.
+     * @return Returns the scaling factor for the window.
      */
-    public static void updateCompatibleScreenFrame(DisplayMetrics dm, int orientation,
-            Rect outRect) {
-        int width = dm.widthPixels;
-        int portraitHeight = (int) (DEFAULT_PORTRAIT_HEIGHT * dm.density + 0.5f);
-        int portraitWidth = (int) (DEFAULT_PORTRAIT_WIDTH * dm.density + 0.5f);
-        if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
-            int xOffset = (width - portraitHeight) / 2 ;
-            outRect.set(xOffset, 0, xOffset + portraitHeight, portraitWidth);
+    public static float computeCompatibleScaling(DisplayMetrics dm, DisplayMetrics outDm) {
+        final int width = dm.noncompatWidthPixels;
+        final int height = dm.noncompatHeightPixels;
+        int shortSize, longSize;
+        if (width < height) {
+            shortSize = width;
+            longSize = height;
         } else {
-            int xOffset = (width - portraitWidth) / 2 ;
-            outRect.set(xOffset, 0, xOffset + portraitWidth, portraitHeight);
+            shortSize = height;
+            longSize = width;
         }
+        int newShortSize = (int)(DEFAULT_NORMAL_SHORT_DIMENSION * dm.density + 0.5f);
+        float aspect = ((float)longSize) / shortSize;
+        if (aspect > MAXIMUM_ASPECT_RATIO) {
+            aspect = MAXIMUM_ASPECT_RATIO;
+        }
+        int newLongSize = (int)(newShortSize * aspect + 0.5f);
+        int newWidth, newHeight;
+        if (width < height) {
+            newWidth = newShortSize;
+            newHeight = newLongSize;
+        } else {
+            newWidth = newLongSize;
+            newHeight = newShortSize;
+        }
+
+        float sw = width/(float)newWidth;
+        float sh = height/(float)newHeight;
+        float scale = sw < sh ? sw : sh;
+        if (scale < 1) {
+            scale = 1;
+        }
+
+        if (outDm != null) {
+            outDm.widthPixels = newWidth;
+            outDm.heightPixels = newHeight;
+        }
+
+        return scale;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        try {
+            CompatibilityInfo oc = (CompatibilityInfo)o;
+            if (mCompatibilityFlags != oc.mCompatibilityFlags) return false;
+            if (applicationDensity != oc.applicationDensity) return false;
+            if (applicationScale != oc.applicationScale) return false;
+            if (applicationInvertedScale != oc.applicationInvertedScale) return false;
+            return true;
+        } catch (ClassCastException e) {
+            return false;
+        }
+    }
+
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder(128);
+        sb.append("{");
+        sb.append(applicationDensity);
+        sb.append("dpi");
+        if (isScalingRequired()) {
+            sb.append(" ");
+            sb.append(applicationScale);
+            sb.append("x");
+        }
+        if (!supportsScreen()) {
+            sb.append(" resizing");
+        }
+        if (neverSupportsScreen()) {
+            sb.append(" never-compat");
+        }
+        if (alwaysSupportsScreen()) {
+            sb.append(" always-compat");
+        }
+        sb.append("}");
+        return sb.toString();
+    }
+
+    @Override
+    public int hashCode() {
+        int result = 17;
+        result = 31 * result + mCompatibilityFlags;
+        result = 31 * result + applicationDensity;
+        result = 31 * result + Float.floatToIntBits(applicationScale);
+        result = 31 * result + Float.floatToIntBits(applicationInvertedScale);
+        return result;
+    }
+
+    @Override
+    public int describeContents() {
+        return 0;
+    }
+
+    @Override
+    public void writeToParcel(Parcel dest, int flags) {
+        dest.writeInt(mCompatibilityFlags);
+        dest.writeInt(applicationDensity);
+        dest.writeFloat(applicationScale);
+        dest.writeFloat(applicationInvertedScale);
+    }
+
+    public static final Parcelable.Creator<CompatibilityInfo> CREATOR
+            = new Parcelable.Creator<CompatibilityInfo>() {
+        public CompatibilityInfo createFromParcel(Parcel source) {
+            return new CompatibilityInfo(source);
+        }
+
+        public CompatibilityInfo[] newArray(int size) {
+            return new CompatibilityInfo[size];
+        }
+    };
+
+    private CompatibilityInfo(Parcel source) {
+        mCompatibilityFlags = source.readInt();
+        applicationDensity = source.readInt();
+        applicationScale = source.readFloat();
+        applicationInvertedScale = source.readFloat();
     }
 }

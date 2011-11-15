@@ -23,24 +23,33 @@
 #include <utils/Errors.h>
 #include <pthread.h>
 
+struct dirent;
+
 namespace android {
 
 class MediaScannerClient;
 class StringArray;
 
+enum MediaScanResult {
+    // This file or directory was scanned successfully.
+    MEDIA_SCAN_RESULT_OK,
+    // This file or directory was skipped because it was not found, could
+    // not be opened, was of an unsupported type, or was malfored in some way.
+    MEDIA_SCAN_RESULT_SKIPPED,
+    // The scan should be aborted due to a fatal error such as out of memory
+    // or an exception.
+    MEDIA_SCAN_RESULT_ERROR,
+};
+
 struct MediaScanner {
     MediaScanner();
     virtual ~MediaScanner();
 
-    virtual status_t processFile(
-            const char *path, const char *mimeType,
-            MediaScannerClient &client) = 0;
+    virtual MediaScanResult processFile(
+            const char *path, const char *mimeType, MediaScannerClient &client) = 0;
 
-    typedef bool (*ExceptionCheck)(void* env);
-    virtual status_t processDirectory(
-            const char *path, const char *extensions,
-            MediaScannerClient &client,
-            ExceptionCheck exceptionCheck, void *exceptionEnv);
+    virtual MediaScanResult processDirectory(
+            const char *path, MediaScannerClient &client);
 
     void setLocale(const char *locale);
 
@@ -53,11 +62,17 @@ protected:
 private:
     // current locale (like "ja_JP"), created/destroyed with strdup()/free()
     char *mLocale;
+    char *mSkipList;
+    int *mSkipIndex;
 
-    status_t doProcessDirectory(
-            char *path, int pathRemaining, const char *extensions,
-            MediaScannerClient &client, ExceptionCheck exceptionCheck,
-            void *exceptionEnv);
+    MediaScanResult doProcessDirectory(
+            char *path, int pathRemaining, MediaScannerClient &client, bool noMedia);
+    MediaScanResult doProcessDirectoryEntry(
+            char *path, int pathRemaining, MediaScannerClient &client, bool noMedia,
+            struct dirent* entry, char* fileSpot);
+    void loadSkipList();
+    bool shouldSkipDirectory(char *path);
+
 
     MediaScanner(const MediaScanner &);
     MediaScanner &operator=(const MediaScanner &);
@@ -70,13 +85,13 @@ public:
     virtual ~MediaScannerClient();
     void setLocale(const char* locale);
     void beginFile();
-    bool addStringTag(const char* name, const char* value);
+    status_t addStringTag(const char* name, const char* value);
     void endFile();
 
-    virtual bool scanFile(const char* path, long long lastModified, long long fileSize) = 0;
-    virtual bool handleStringTag(const char* name, const char* value) = 0;
-    virtual bool setMimeType(const char* mimeType) = 0;
-    virtual bool addNoMediaFolder(const char* path) = 0;
+    virtual status_t scanFile(const char* path, long long lastModified,
+            long long fileSize, bool isDirectory, bool noMedia) = 0;
+    virtual status_t handleStringTag(const char* name, const char* value) = 0;
+    virtual status_t setMimeType(const char* mimeType) = 0;
 
 protected:
     void convertValues(uint32_t encoding);
@@ -93,4 +108,3 @@ protected:
 }; // namespace android
 
 #endif // MEDIASCANNER_H
-

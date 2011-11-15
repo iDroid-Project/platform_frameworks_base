@@ -27,9 +27,9 @@
 
 #include <EGL/egl.h>
 
+#include "egldefs.h"
+#include "glesv2dbg.h"
 #include "hooks.h"
-#include "egl_impl.h"
-
 #include "Loader.h"
 
 // ----------------------------------------------------------------------------
@@ -157,6 +157,7 @@ Loader::Loader()
 
 Loader::~Loader()
 {
+    StopDebugServer();
 }
 
 const char* Loader::getTag(int dpy, int impl)
@@ -220,7 +221,8 @@ void Loader::init_api(void* dso,
         __eglMustCastToProperFunctionPointerType* curr, 
         getProcAddressType getProcAddress) 
 {
-    char scrap[256];
+    const size_t SIZE = 256;
+    char scrap[SIZE];
     while (*api) {
         char const * name = *api;
         __eglMustCastToProperFunctionPointerType f = 
@@ -232,7 +234,7 @@ void Loader::init_api(void* dso,
         if (f == NULL) {
             // Try without the OES postfix
             ssize_t index = ssize_t(strlen(name)) - 3;
-            if ((index>0 && (index<255)) && (!strcmp(name+index, "OES"))) {
+            if ((index>0 && (index<SIZE-1)) && (!strcmp(name+index, "OES"))) {
                 strncpy(scrap, name, index);
                 scrap[index] = 0;
                 f = (__eglMustCastToProperFunctionPointerType)dlsym(dso, scrap);
@@ -242,10 +244,8 @@ void Loader::init_api(void* dso,
         if (f == NULL) {
             // Try with the OES postfix
             ssize_t index = ssize_t(strlen(name)) - 3;
-            if ((index>0 && (index<252)) && (strcmp(name+index, "OES"))) {
-                strncpy(scrap, name, index);
-                scrap[index] = 0;
-                strcat(scrap, "OES");
+            if (index>0 && strcmp(name+index, "OES")) {
+                snprintf(scrap, SIZE, "%sOES", name);
                 f = (__eglMustCastToProperFunctionPointerType)dlsym(dso, scrap);
                 //LOGD_IF(f, "found <%s> instead", scrap);
             }

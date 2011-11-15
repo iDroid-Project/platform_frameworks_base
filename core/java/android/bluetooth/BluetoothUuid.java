@@ -20,6 +20,7 @@ import android.os.ParcelUuid;
 
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.UUID;
 
 /**
 * Static helper methods and constants to decode the ParcelUuid of remote devices.
@@ -41,18 +42,32 @@ public final class BluetoothUuid {
             ParcelUuid.fromString("0000110D-0000-1000-8000-00805F9B34FB");
     public static final ParcelUuid HSP =
             ParcelUuid.fromString("00001108-0000-1000-8000-00805F9B34FB");
+    public static final ParcelUuid HSP_AG =
+            ParcelUuid.fromString("00001112-0000-1000-8000-00805F9B34FB");
     public static final ParcelUuid Handsfree =
             ParcelUuid.fromString("0000111E-0000-1000-8000-00805F9B34FB");
+    public static final ParcelUuid Handsfree_AG =
+            ParcelUuid.fromString("0000111F-0000-1000-8000-00805F9B34FB");
     public static final ParcelUuid AvrcpController =
             ParcelUuid.fromString("0000110E-0000-1000-8000-00805F9B34FB");
     public static final ParcelUuid AvrcpTarget =
             ParcelUuid.fromString("0000110C-0000-1000-8000-00805F9B34FB");
     public static final ParcelUuid ObexObjectPush =
             ParcelUuid.fromString("00001105-0000-1000-8000-00805f9b34fb");
+    public static final ParcelUuid Hid =
+            ParcelUuid.fromString("00001124-0000-1000-8000-00805f9b34fb");
+    public static final ParcelUuid PANU =
+            ParcelUuid.fromString("00001115-0000-1000-8000-00805F9B34FB");
+    public static final ParcelUuid NAP =
+            ParcelUuid.fromString("00001116-0000-1000-8000-00805F9B34FB");
+    public static final ParcelUuid BNEP =
+            ParcelUuid.fromString("0000000f-0000-1000-8000-00805F9B34FB");
+    public static final ParcelUuid PBAP_PSE =
+            ParcelUuid.fromString("0000112f-0000-1000-8000-00805F9B34FB");
 
     public static final ParcelUuid[] RESERVED_UUIDS = {
         AudioSink, AudioSource, AdvAudioDist, HSP, Handsfree, AvrcpController, AvrcpTarget,
-        ObexObjectPush};
+        ObexObjectPush, PANU, NAP};
 
     public static boolean isAudioSource(ParcelUuid uuid) {
         return uuid.equals(AudioSource);
@@ -82,6 +97,21 @@ public final class BluetoothUuid {
         return uuid.equals(AvrcpTarget);
     }
 
+    public static boolean isInputDevice(ParcelUuid uuid) {
+        return uuid.equals(Hid);
+    }
+
+    public static boolean isPanu(ParcelUuid uuid) {
+        return uuid.equals(PANU);
+    }
+
+    public static boolean isNap(ParcelUuid uuid) {
+        return uuid.equals(NAP);
+    }
+
+    public static boolean isBnep(ParcelUuid uuid) {
+        return uuid.equals(BNEP);
+    }
     /**
      * Returns true if ParcelUuid is present in uuidArray
      *
@@ -150,4 +180,16 @@ public final class BluetoothUuid {
         return true;
     }
 
+    /**
+     * Extract the Service Identifier or the actual uuid from the Parcel Uuid.
+     * For example, if 0000110B-0000-1000-8000-00805F9B34FB is the parcel Uuid,
+     * this function will return 110B
+     * @param parcelUuid
+     * @return the service identifier.
+     */
+    public static int getServiceIdentifierFromParcelUuid(ParcelUuid parcelUuid) {
+        UUID uuid = parcelUuid.getUuid();
+        long value = (uuid.getMostSignificantBits() & 0x0000FFFF00000000L) >>> 32;
+        return (int)value;
+    }
 }

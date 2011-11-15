@@ -54,6 +54,7 @@ public final class Bundle implements Parcelable, Cloneable {
 
     private boolean mHasFds = false;
     private boolean mFdsKnown = true;
+    private boolean mAllowFds = true;
 
     /**
      * The ClassLoader used when unparcelling data from mParcelledData.
@@ -178,6 +179,20 @@ public final class Bundle implements Parcelable, Cloneable {
      */
     public void setClassLoader(ClassLoader loader) {
         mClassLoader = loader;
+    }
+
+    /**
+     * Return the ClassLoader currently associated with this Bundle.
+     */
+    public ClassLoader getClassLoader() {
+        return mClassLoader;
+    }
+
+    /** @hide */
+    public boolean setAllowFds(boolean allowFds) {
+        boolean orig = mAllowFds;
+        mAllowFds = allowFds;
+        return orig;
     }
 
     /**
@@ -1021,7 +1036,6 @@ public final class Bundle implements Parcelable, Cloneable {
         }
     }
 
-
     /**
      * Returns the value associated with the given key, or null if
      * no mapping of the desired type exists for the given key or a null
@@ -1045,6 +1059,28 @@ public final class Bundle implements Parcelable, Cloneable {
     }
 
     /**
+     * Returns the value associated with the given key, or defaultValue if
+     * no mapping of the desired type exists for the given key.
+     *
+     * @param key a String, or null
+     * @param defaultValue Value to return if key does not exist
+     * @return a String value, or null
+     */
+    public String getString(String key, String defaultValue) {
+        unparcel();
+        Object o = mMap.get(key);
+        if (o == null) {
+            return defaultValue;
+        }
+        try {
+            return (String) o;
+        } catch (ClassCastException e) {
+            typeWarning(key, o, "String", e);
+            return defaultValue;
+        }
+    }
+
+    /**
      * Returns the value associated with the given key, or null if
      * no mapping of the desired type exists for the given key or a null
      * value is explicitly associated with the key.
@@ -1063,6 +1099,28 @@ public final class Bundle implements Parcelable, Cloneable {
         } catch (ClassCastException e) {
             typeWarning(key, o, "CharSequence", e);
             return null;
+        }
+    }
+
+    /**
+     * Returns the value associated with the given key, or defaultValue if
+     * no mapping of the desired type exists for the given key.
+     *
+     * @param key a String, or null
+     * @param defaultValue Value to return if key does not exist
+     * @return a CharSequence value, or null
+     */
+    public CharSequence getCharSequence(String key, CharSequence defaultValue) {
+        unparcel();
+        Object o = mMap.get(key);
+        if (o == null) {
+            return defaultValue;
+        }
+        try {
+            return (CharSequence) o;
+        } catch (ClassCastException e) {
+            typeWarning(key, o, "CharSequence", e);
+            return defaultValue;
         }
     }
 
@@ -1539,24 +1597,29 @@ public final class Bundle implements Parcelable, Cloneable {
      * @param parcel The parcel to copy this bundle to.
      */
     public void writeToParcel(Parcel parcel, int flags) {
-        if (mParcelledData != null) {
-            int length = mParcelledData.dataSize();
-            parcel.writeInt(length);
-            parcel.writeInt(0x4C444E42); // 'B' 'N' 'D' 'L'
-            parcel.appendFrom(mParcelledData, 0, length);
-        } else {
-            parcel.writeInt(-1); // dummy, will hold length
-            parcel.writeInt(0x4C444E42); // 'B' 'N' 'D' 'L'
-
-            int oldPos = parcel.dataPosition();
-            parcel.writeMapInternal(mMap);
-            int newPos = parcel.dataPosition();
-
-            // Backpatch length
-            parcel.setDataPosition(oldPos - 8);
-            int length = newPos - oldPos;
-            parcel.writeInt(length);
-            parcel.setDataPosition(newPos);
+        final boolean oldAllowFds = parcel.pushAllowFds(mAllowFds);
+        try {
+            if (mParcelledData != null) {
+                int length = mParcelledData.dataSize();
+                parcel.writeInt(length);
+                parcel.writeInt(0x4C444E42); // 'B' 'N' 'D' 'L'
+                parcel.appendFrom(mParcelledData, 0, length);
+            } else {
+                parcel.writeInt(-1); // dummy, will hold length
+                parcel.writeInt(0x4C444E42); // 'B' 'N' 'D' 'L'
+    
+                int oldPos = parcel.dataPosition();
+                parcel.writeMapInternal(mMap);
+                int newPos = parcel.dataPosition();
+    
+                // Backpatch length
+                parcel.setDataPosition(oldPos - 8);
+                int length = newPos - oldPos;
+                parcel.writeInt(length);
+                parcel.setDataPosition(newPos);
+            }
+        } finally {
+            parcel.restoreAllowFds(oldAllowFds);
         }
     }
 

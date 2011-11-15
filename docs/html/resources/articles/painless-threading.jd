@@ -1,4 +1,6 @@
 page.title=Painless Threading
+parent.title=Articles
+parent.link=../browser.html?tag=article
 @jd:body
 
 <p>This article discusses the threading model used by Android applications and how applications can ensure best UI performance by spawning worker threads to handle long-running operations, rather than handling them in the main thread. The article also explains the API that your application can use to interact with Android UI toolkit components running on the main thread and spawn managed worker threads.  </p>
@@ -108,7 +110,7 @@ you. Our previous example can easily be rewritten with
   new DownloadImageTask().execute("http://example.com/image.png");
 }
 
-private class DownloadImageTask extends AsyncTask&lt;string, void,="" bitmap=""&gt; {
+private class DownloadImageTask extends AsyncTask&lt;String, Void, Bitmap&gt; {
      protected Bitmap doInBackground(String... urls) {
          return loadImageFromNetwork(urls[0]);
      }

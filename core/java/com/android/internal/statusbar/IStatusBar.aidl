@@ -30,5 +30,10 @@ oneway interface IStatusBar
     void disable(int state);
     void animateExpand();
     void animateCollapse();
+    void setSystemUiVisibility(int vis);
+    void topAppWindowChanged(boolean menuVisible);
+    void setImeWindowStatus(in IBinder token, int vis, int backDisposition);
+    void setHardKeyboardStatus(boolean available, boolean enabled);
+    void toggleRecentApps();
 }
 

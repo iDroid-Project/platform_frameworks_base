@@ -35,8 +35,10 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Process;
 import android.os.RemoteException;
+import android.os.StrictMode;
 import android.util.AndroidRuntimeException;
 import android.util.Slog;
+import android.view.CompatibilityInfoHolder;
 
 import java.io.File;
 import java.io.IOException;
@@ -63,7 +65,7 @@ final class ServiceConnectionLeaked extends AndroidRuntimeException {
  * Local state maintained about a currently loaded .apk.
  * @hide
  */
-final class LoadedApk {
+public final class LoadedApk {
 
     private final ActivityThread mActivityThread;
     private final ApplicationInfo mApplicationInfo;
@@ -77,10 +79,10 @@ final class LoadedApk {
     private final ClassLoader mBaseClassLoader;
     private final boolean mSecurityViolation;
     private final boolean mIncludeCode;
+    public final CompatibilityInfoHolder mCompatibilityInfo = new CompatibilityInfoHolder();
     Resources mResources;
     private ClassLoader mClassLoader;
     private Application mApplication;
-    CompatibilityInfo mCompatibilityInfo;
 
     private final HashMap<Context, HashMap<BroadcastReceiver, LoadedApk.ReceiverDispatcher>> mReceivers
         = new HashMap<Context, HashMap<BroadcastReceiver, LoadedApk.ReceiverDispatcher>>();
@@ -97,7 +99,14 @@ final class LoadedApk {
         return mApplication;
     }
 
+    /**
+     * Create information about a new .apk
+     *
+     * NOTE: This constructor is called with ActivityThread's lock held,
+     * so MUST NOT call back out to the activity manager.
+     */
     public LoadedApk(ActivityThread activityThread, ApplicationInfo aInfo,
+            CompatibilityInfo compatInfo,
             ActivityThread mainThread, ClassLoader baseLoader,
             boolean securityViolation, boolean includeCode) {
         mActivityThread = activityThread;
@@ -113,7 +122,7 @@ final class LoadedApk {
         mBaseClassLoader = baseLoader;
         mSecurityViolation = securityViolation;
         mIncludeCode = includeCode;
-        mCompatibilityInfo = new CompatibilityInfo(aInfo);
+        mCompatibilityInfo.set(compatInfo);
 
         if (mAppDir == null) {
             if (ActivityThread.mSystemContext == null) {
@@ -121,7 +130,8 @@ final class LoadedApk {
                     ContextImpl.createSystemContext(mainThread);
                 ActivityThread.mSystemContext.getResources().updateConfiguration(
                          mainThread.getConfiguration(),
-                         mainThread.getDisplayMetricsLocked(false));
+                         mainThread.getDisplayMetricsLocked(compatInfo, false),
+                         compatInfo);
                 //Slog.i(TAG, "Created system resources "
                 //        + mSystemContext.getResources() + ": "
                 //        + mSystemContext.getResources().getConfiguration());
@@ -132,7 +142,7 @@ final class LoadedApk {
     }
 
     public LoadedApk(ActivityThread activityThread, String name,
-            Context systemContext, ApplicationInfo info) {
+            Context systemContext, ApplicationInfo info, CompatibilityInfo compatInfo) {
         mActivityThread = activityThread;
         mApplicationInfo = info != null ? info : new ApplicationInfo();
         mApplicationInfo.packageName = name;
@@ -148,7 +158,7 @@ final class LoadedApk {
         mIncludeCode = true;
         mClassLoader = systemContext.getClassLoader();
         mResources = systemContext.getResources();
-        mCompatibilityInfo = new CompatibilityInfo(mApplicationInfo);
+        mCompatibilityInfo.set(compatInfo);
     }
 
     public String getPackageName() {
@@ -285,10 +295,16 @@ final class LoadedApk {
                 if (ActivityThread.localLOGV)
                     Slog.v(ActivityThread.TAG, "Class path: " + zip + ", JNI path: " + mLibDir);
 
+                // Temporarily disable logging of disk reads on the Looper thread
+                // as this is early and necessary.
+                StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskReads();
+
                 mClassLoader =
                     ApplicationLoaders.getDefault().getClassLoader(
                         zip, mLibDir, mBaseClassLoader);
                 initializeJavaContextClassLoader();
+
+                StrictMode.setThreadPolicy(oldPolicy);
             } else {
                 if (mBaseClassLoader == null) {
                     mClassLoader = ClassLoader.getSystemClassLoader();
@@ -560,6 +576,7 @@ final class LoadedApk {
             } else {
                 rd.validate(context, handler);
             }
+            rd.mForgotten = false;
             return rd.getIIntentReceiver();
         }
     }
@@ -589,6 +606,7 @@ final class LoadedApk {
                         rd.setUnregisterLocation(ex);
                         holder.put(r, rd);
                     }
+                    rd.mForgotten = true;
                     return rd.getIIntentReceiver();
                 }
             }
@@ -643,6 +661,9 @@ final class LoadedApk {
                             "Finishing broadcast to unregistered receiver");
                     IActivityManager mgr = ActivityManagerNative.getDefault();
                     try {
+                        if (extras != null) {
+                            extras.setAllowFds(false);
+                        }
                         mgr.finishReceiver(this, resultCode, data, extras, false);
                     } catch (RemoteException e) {
                         Slog.w(ActivityThread.TAG, "Couldn't finish broadcast to unregistered receiver");
@@ -659,38 +680,42 @@ final class LoadedApk {
         final boolean mRegistered;
         final IntentReceiverLeaked mLocation;
         RuntimeException mUnregisterLocation;
+        boolean mForgotten;
 
-        final class Args implements Runnable {
+        final class Args extends BroadcastReceiver.PendingResult implements Runnable {
             private Intent mCurIntent;
-            private int mCurCode;
-            private String mCurData;
-            private Bundle mCurMap;
-            private boolean mCurOrdered;
-            private boolean mCurSticky;
+            private final boolean mOrdered;
 
+            public Args(Intent intent, int resultCode, String resultData, Bundle resultExtras,
+                    boolean ordered, boolean sticky) {
+                super(resultCode, resultData, resultExtras,
+                        mRegistered ? TYPE_REGISTERED : TYPE_UNREGISTERED,
+                        ordered, sticky, mIIntentReceiver.asBinder());
+                mCurIntent = intent;
+                mOrdered = ordered;
+            }
+            
             public void run() {
-                BroadcastReceiver receiver = mReceiver;
+                final BroadcastReceiver receiver = mReceiver;
+                final boolean ordered = mOrdered;
+                
                 if (ActivityThread.DEBUG_BROADCAST) {
                     int seq = mCurIntent.getIntExtra("seq", -1);
                     Slog.i(ActivityThread.TAG, "Dispatching broadcast " + mCurIntent.getAction()
                             + " seq=" + seq + " to " + mReceiver);
                     Slog.i(ActivityThread.TAG, "  mRegistered=" + mRegistered
-                            + " mCurOrdered=" + mCurOrdered);
+                            + " mOrderedHint=" + ordered);
                 }
                 
-                IActivityManager mgr = ActivityManagerNative.getDefault();
-                Intent intent = mCurIntent;
+                final IActivityManager mgr = ActivityManagerNative.getDefault();
+                final Intent intent = mCurIntent;
                 mCurIntent = null;
                 
-                if (receiver == null) {
-                    if (mRegistered && mCurOrdered) {
-                        try {
-                            if (ActivityThread.DEBUG_BROADCAST) Slog.i(ActivityThread.TAG,
-                                    "Finishing null broadcast to " + mReceiver);
-                            mgr.finishReceiver(mIIntentReceiver,
-                                    mCurCode, mCurData, mCurMap, false);
-                        } catch (RemoteException ex) {
-                        }
+                if (receiver == null || mForgotten) {
+                    if (mRegistered && ordered) {
+                        if (ActivityThread.DEBUG_BROADCAST) Slog.i(ActivityThread.TAG,
+                                "Finishing null broadcast to " + mReceiver);
+                        sendFinished(mgr);
                     }
                     return;
                 }
@@ -698,24 +723,14 @@ final class LoadedApk {
                 try {
                     ClassLoader cl =  mReceiver.getClass().getClassLoader();
                     intent.setExtrasClassLoader(cl);
-                    if (mCurMap != null) {
-                        mCurMap.setClassLoader(cl);
-                    }
-                    receiver.setOrderedHint(true);
-                    receiver.setResult(mCurCode, mCurData, mCurMap);
-                    receiver.clearAbortBroadcast();
-                    receiver.setOrderedHint(mCurOrdered);
-                    receiver.setInitialStickyHint(mCurSticky);
+                    setExtrasClassLoader(cl);
+                    receiver.setPendingResult(this);
                     receiver.onReceive(mContext, intent);
                 } catch (Exception e) {
-                    if (mRegistered && mCurOrdered) {
-                        try {
-                            if (ActivityThread.DEBUG_BROADCAST) Slog.i(ActivityThread.TAG,
-                                    "Finishing failed broadcast to " + mReceiver);
-                            mgr.finishReceiver(mIIntentReceiver,
-                                    mCurCode, mCurData, mCurMap, false);
-                        } catch (RemoteException ex) {
-                        }
+                    if (mRegistered && ordered) {
+                        if (ActivityThread.DEBUG_BROADCAST) Slog.i(ActivityThread.TAG,
+                                "Finishing failed broadcast to " + mReceiver);
+                        sendFinished(mgr);
                     }
                     if (mInstrumentation == null ||
                             !mInstrumentation.onException(mReceiver, e)) {
@@ -724,17 +739,9 @@ final class LoadedApk {
                             + " in " + mReceiver, e);
                     }
                 }
-                if (mRegistered && mCurOrdered) {
-                    try {
-                        if (ActivityThread.DEBUG_BROADCAST) Slog.i(ActivityThread.TAG,
-                                "Finishing broadcast to " + mReceiver);
-                        mgr.finishReceiver(mIIntentReceiver,
-                                receiver.getResultCode(),
-                                receiver.getResultData(),
-                                receiver.getResultExtras(false),
-                                receiver.getAbortBroadcast());
-                    } catch (RemoteException ex) {
-                    }
+                
+                if (receiver.getPendingResult() != null) {
+                    finish();
                 }
             }
         }
@@ -798,23 +805,13 @@ final class LoadedApk {
                 Slog.i(ActivityThread.TAG, "Enqueueing broadcast " + intent.getAction() + " seq=" + seq
                         + " to " + mReceiver);
             }
-            Args args = new Args();
-            args.mCurIntent = intent;
-            args.mCurCode = resultCode;
-            args.mCurData = data;
-            args.mCurMap = extras;
-            args.mCurOrdered = ordered;
-            args.mCurSticky = sticky;
+            Args args = new Args(intent, resultCode, data, extras, ordered, sticky);
             if (!mActivityThread.post(args)) {
                 if (mRegistered && ordered) {
                     IActivityManager mgr = ActivityManagerNative.getDefault();
-                    try {
-                        if (ActivityThread.DEBUG_BROADCAST) Slog.i(ActivityThread.TAG,
-                                "Finishing sync broadcast to " + mReceiver);
-                        mgr.finishReceiver(mIIntentReceiver, args.mCurCode,
-                                args.mCurData, args.mCurMap, false);
-                    } catch (RemoteException ex) {
-                    }
+                    if (ActivityThread.DEBUG_BROADCAST) Slog.i(ActivityThread.TAG,
+                            "Finishing sync broadcast to " + mReceiver);
+                    args.sendFinished(mgr);
                 }
             }
         }

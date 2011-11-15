@@ -25,6 +25,7 @@ import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.hardware.usb.IUsbManager;
+import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbAccessory;
 import android.hardware.usb.UsbManager;
 import android.os.Bundle;
@@ -50,6 +51,7 @@ public class UsbPermissionActivity extends AlertActivity
 
     private CheckBox mAlwaysUse;
     private TextView mClearDefaultHint;
+    private UsbDevice mDevice;
     private UsbAccessory mAccessory;
     private PendingIntent mPendingIntent;
     private String mPackageName;
@@ -61,9 +63,9 @@ public class UsbPermissionActivity extends AlertActivity
     public void onCreate(Bundle icicle) {
         super.onCreate(icicle);
 
-        Intent intent = getIntent();
+       Intent intent = getIntent();
+        mDevice = (UsbDevice)intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
         mAccessory = (UsbAccessory)intent.getParcelableExtra(UsbManager.EXTRA_ACCESSORY);
-        mDisconnectedReceiver = new UsbDisconnectedReceiver(this, mAccessory);
         mPendingIntent = (PendingIntent)intent.getParcelableExtra(Intent.EXTRA_INTENT);
         mUid = intent.getIntExtra("uid", 0);
         mPackageName = intent.getStringExtra("package");
@@ -82,7 +84,13 @@ public class UsbPermissionActivity extends AlertActivity
         final AlertController.AlertParams ap = mAlertParams;
         ap.mIcon = aInfo.loadIcon(packageManager);
         ap.mTitle = appName;
-        ap.mMessage = getString(R.string.usb_accessory_permission_prompt, appName);
+        if (mDevice == null) {
+            ap.mMessage = getString(R.string.usb_accessory_permission_prompt, appName);
+            mDisconnectedReceiver = new UsbDisconnectedReceiver(this, mAccessory);
+        } else {
+            ap.mMessage = getString(R.string.usb_device_permission_prompt, appName);
+            mDisconnectedReceiver = new UsbDisconnectedReceiver(this, mDevice);
+        }
         ap.mPositiveButtonText = getString(android.R.string.ok);
         ap.mNegativeButtonText = getString(android.R.string.cancel);
         ap.mPositiveButtonListener = this;
@@ -93,7 +101,11 @@ public class UsbPermissionActivity extends AlertActivity
                 Context.LAYOUT_INFLATER_SERVICE);
         ap.mView = inflater.inflate(com.android.internal.R.layout.always_use_checkbox, null);
         mAlwaysUse = (CheckBox)ap.mView.findViewById(com.android.internal.R.id.alwaysUse);
-        mAlwaysUse.setText(R.string.always_use_accessory);
+        if (mDevice == null) {
+            mAlwaysUse.setText(R.string.always_use_accessory);
+        } else {
+            mAlwaysUse.setText(R.string.always_use_device);
+        }
         mAlwaysUse.setOnCheckedChangeListener(this);
         mClearDefaultHint = (TextView)ap.mView.findViewById(
                                                     com.android.internal.R.id.clearDefaultHint);
@@ -111,6 +123,15 @@ public class UsbPermissionActivity extends AlertActivity
         // send response via pending intent
         Intent intent = new Intent();
         try {
+            if (mDevice != null) {
+                intent.putExtra(UsbManager.EXTRA_DEVICE, mDevice);
+                if (mPermissionGranted) {
+                    service.grantDevicePermission(mDevice, mUid);
+                    if (mAlwaysUse.isChecked()) {
+                        service.setDevicePackage(mDevice, mPackageName);
+                    }
+                }
+            }
             if (mAccessory != null) {
                 intent.putExtra(UsbManager.EXTRA_ACCESSORY, mAccessory);
                 if (mPermissionGranted) {

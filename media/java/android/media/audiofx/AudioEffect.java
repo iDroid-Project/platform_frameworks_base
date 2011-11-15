@@ -40,13 +40,11 @@ import java.util.UUID;
  *   <li> {@link android.media.audiofx.PresetReverb}</li>
  *   <li> {@link android.media.audiofx.EnvironmentalReverb}</li>
  * </ul>
- * <p>If the audio effect is to be applied to a specific AudioTrack or MediaPlayer instance,
+ * <p>To apply the audio effect to a specific AudioTrack or MediaPlayer instance,
  * the application must specify the audio session ID of that instance when creating the AudioEffect.
  * (see {@link android.media.MediaPlayer#getAudioSessionId()} for details on audio sessions).
- * To apply an effect to the global audio output mix, session 0 must be specified when creating the
- * AudioEffect.
- * <p>Creating an effect on the output mix (audio session 0) requires permission
- * {@link android.Manifest.permission#MODIFY_AUDIO_SETTINGS}
+ * <p>NOTE: attaching insert effects (equalizer, bass boost, virtualizer) to the global audio output
+ * mix by use of session 0 is deprecated.
  * <p>Creating an AudioEffect object will create the corresponding effect engine in the audio
  * framework if no instance of the same effect type exists in the specified audio session.
  * If one exists, this instance will be used.
@@ -65,6 +63,8 @@ public class AudioEffect {
     }
 
     private final static String TAG = "AudioEffect-JAVA";
+
+    // effect type UUIDs are taken from hardware/libhardware/include/hardware/audio_effect.h
 
     /**
      * The following UUIDs define effect types corresponding to standard audio
@@ -103,6 +103,27 @@ public class AudioEffect {
      */
     public static final UUID EFFECT_TYPE_VIRTUALIZER = UUID
             .fromString("37cc2c00-dddd-11db-8577-0002a5d5c51b");
+
+    /**
+     * UUID for Automatic Gain Control (AGC) audio pre-processing
+     * @hide
+     */
+    public static final UUID EFFECT_TYPE_AGC = UUID
+            .fromString("0a8abfe0-654c-11e0-ba26-0002a5d5c51b");
+
+    /**
+     * UUID for Acoustic Echo Canceler (AEC) audio pre-processing
+     * @hide
+     */
+    public static final UUID EFFECT_TYPE_AEC = UUID
+            .fromString("7b491460-8d4d-11e0-bd61-0002a5d5c51b");
+
+    /**
+     * UUID for Noise Suppressor (NS) audio pre-processing
+     * @hide
+     */
+    public static final UUID EFFECT_TYPE_NS = UUID
+            .fromString("58b4b260-8e06-11e0-aa8e-0002a5d5c51b");
 
     /**
      * Null effect UUID. Used when the UUID for effect type of
@@ -150,7 +171,7 @@ public class AudioEffect {
      */
     public static final int ERROR = -1;
     /**
-     * Internal opreation status. Not returned by any method.
+     * Internal operation status. Not returned by any method.
      */
     public static final int ALREADY_EXISTS = -2;
     /**
@@ -180,7 +201,8 @@ public class AudioEffect {
      * <ul>
      *  <li>type: UUID corresponding to the OpenSL ES interface implemented by this effect</li>
      *  <li>uuid: UUID for this particular implementation</li>
-     *  <li>connectMode: {@link #EFFECT_INSERT} or {@link #EFFECT_AUXILIARY}</li>
+     *  <li>connectMode: {@link #EFFECT_INSERT}, {@link #EFFECT_AUXILIARY} or
+     *  {at_link #EFFECT_PRE_PROCESSING}</li>
      *  <li>name: human readable effect name</li>
      *  <li>implementor: human readable effect implementor name</li>
      * </ul>
@@ -212,11 +234,13 @@ public class AudioEffect {
          */
         public UUID uuid;
         /**
-         *  Indicates if the effect is of insert category {@link #EFFECT_INSERT} or auxiliary
-         *  category {@link #EFFECT_AUXILIARY}. Insert effects (Typically an Equalizer) are applied
+         *  Indicates if the effect is of insert category {@link #EFFECT_INSERT}, auxiliary
+         *  category {@link #EFFECT_AUXILIARY} or pre processing category
+         *  {at_link #EFFECT_PRE_PROCESSING}. Insert effects (Typically an Equalizer) are applied
          *  to the entire audio source and usually not shared by several sources. Auxiliary effects
          *  (typically a reverberator) are applied to part of the signal (wet) and the effect output
          *  is added to the original signal (dry).
+         *  Audio pre processing are applied to audio captured on a particular AudioRecord.
          */
         public String connectMode;
         /**
@@ -243,6 +267,12 @@ public class AudioEffect {
      * attaching it to the MediaPlayer or AudioTrack.
      */
     public static final String EFFECT_AUXILIARY = "Auxiliary";
+    /**
+     * Effect connection mode is pre processing.
+     * The audio pre processing effects are attached to an audio input (AudioRecord).
+     * @hide
+     */
+    public static final String EFFECT_PRE_PROCESSING = "Pre Processing";
 
     // --------------------------------------------------------------------------
     // Member variables
@@ -324,10 +354,9 @@ public class AudioEffect {
      *            how much the requesting application needs control of effect
      *            parameters. The normal priority is 0, above normal is a
      *            positive number, below normal a negative number.
-     * @param audioSession system wide unique audio session identifier. If audioSession
-     *            is not 0, the effect will be attached to the MediaPlayer or
-     *            AudioTrack in the same audio session. Otherwise, the effect
-     *            will apply to the output mix.
+     * @param audioSession system wide unique audio session identifier.
+     *            The effect will be attached to the MediaPlayer or AudioTrack in
+     *            the same audio session.
      *
      * @throws java.lang.IllegalArgumentException
      * @throws java.lang.UnsupportedOperationException
@@ -408,6 +437,19 @@ public class AudioEffect {
 
     static public Descriptor[] queryEffects() {
         return (Descriptor[]) native_query_effects();
+    }
+
+    /**
+     * Query all audio pre processing effects applied to the AudioRecord with the supplied
+     * audio session ID. Returns an array of {@link android.media.audiofx.AudioEffect.Descriptor}
+     * objects.
+     * @param audioSession system wide unique audio session identifier.
+     * @throws IllegalStateException
+     * @hide
+     */
+
+    static public Descriptor[] queryPreProcessings(int audioSession) {
+        return (Descriptor[]) native_query_pre_processing(audioSession);
     }
 
     // --------------------------------------------------------------------------
@@ -573,27 +615,16 @@ public class AudioEffect {
      *
      * @param param the identifier of the parameter to set
      * @param value the new value for the specified parameter
-     * @return {@link #SUCCESS} in case of success, {@link #ERROR_BAD_VALUE},
-     *         {@link #ERROR_NO_MEMORY}, {@link #ERROR_INVALID_OPERATION} or
-     *         {@link #ERROR_DEAD_OBJECT} in case of failure When called, value.length
-     *         indicates the maximum size of the returned parameters value. When
-     *         returning, value.length is updated with the actual size of the
-     *         returned value.
+     * @return the number of meaningful bytes in value array in case of success or
+     *  {@link #ERROR_BAD_VALUE}, {@link #ERROR_NO_MEMORY}, {@link #ERROR_INVALID_OPERATION}
+     *  or {@link #ERROR_DEAD_OBJECT} in case of failure.
      * @throws IllegalStateException
      * @hide
      */
     public int getParameter(byte[] param, byte[] value)
             throws IllegalStateException {
         checkState("getParameter()");
-        int[] vSize = new int[1];
-        vSize[0] = value.length;
-        int status = native_getParameter(param.length, param, vSize, value);
-        if (value.length > vSize[0]) {
-            byte[] resizedValue = new byte[vSize[0]];
-            System.arraycopy(value, 0, resizedValue, 0, vSize[0]);
-            value = resizedValue;
-        }
-        return status;
+        return native_getParameter(param.length, param, value.length, value);
     }
 
     /**
@@ -615,6 +646,7 @@ public class AudioEffect {
      * array of 1 or 2 integers
      *
      * @see #getParameter(byte[], byte[])
+     * In case of success, returns the number of meaningful integers in value array.
      * @hide
      */
     public int getParameter(int param, int[] value)
@@ -628,9 +660,14 @@ public class AudioEffect {
 
         int status = getParameter(p, v);
 
-        value[0] = byteArrayToInt(v);
-        if (v.length > 4) {
-            value[1] = byteArrayToInt(v, 4);
+        if (status == 4 || status == 8) {
+            value[0] = byteArrayToInt(v);
+            if (status == 8) {
+                value[1] = byteArrayToInt(v, 4);
+            }
+            status /= 4;
+        } else {
+            status = ERROR;
         }
         return status;
     }
@@ -640,6 +677,7 @@ public class AudioEffect {
      * array of 1 or 2 short integers
      *
      * @see #getParameter(byte[], byte[])
+     * In case of success, returns the number of meaningful short integers in value array.
      * @hide
      */
     public int getParameter(int param, short[] value)
@@ -653,9 +691,14 @@ public class AudioEffect {
 
         int status = getParameter(p, v);
 
-        value[0] = byteArrayToShort(v);
-        if (v.length > 2) {
-            value[1] = byteArrayToShort(v, 2);
+        if (status == 2 || status == 4) {
+            value[0] = byteArrayToShort(v);
+            if (status == 4) {
+                value[1] = byteArrayToShort(v, 2);
+            }
+            status /= 2;
+        } else {
+            status = ERROR;
         }
         return status;
     }
@@ -665,6 +708,7 @@ public class AudioEffect {
      * the value is also an array of 1 or 2 integers
      *
      * @see #getParameter(byte[], byte[])
+     * In case of success, the returns the number of meaningful integers in value array.
      * @hide
      */
     public int getParameter(int[] param, int[] value)
@@ -681,9 +725,14 @@ public class AudioEffect {
 
         int status = getParameter(p, v);
 
-        value[0] = byteArrayToInt(v);
-        if (v.length > 4) {
-            value[1] = byteArrayToInt(v, 4);
+        if (status == 4 || status == 8) {
+            value[0] = byteArrayToInt(v);
+            if (status == 8) {
+                value[1] = byteArrayToInt(v, 4);
+            }
+            status /= 4;
+        } else {
+            status = ERROR;
         }
         return status;
     }
@@ -693,6 +742,7 @@ public class AudioEffect {
      * the value is an array of 1 or 2 short integers
      *
      * @see #getParameter(byte[], byte[])
+     * In case of success, returns the number of meaningful short integers in value array.
      * @hide
      */
     public int getParameter(int[] param, short[] value)
@@ -709,9 +759,14 @@ public class AudioEffect {
 
         int status = getParameter(p, v);
 
-        value[0] = byteArrayToShort(v);
-        if (v.length > 2) {
-            value[1] = byteArrayToShort(v, 2);
+        if (status == 2 || status == 4) {
+            value[0] = byteArrayToShort(v);
+            if (status == 4) {
+                value[1] = byteArrayToShort(v, 2);
+            }
+            status /= 2;
+        } else {
+            status = ERROR;
         }
         return status;
     }
@@ -740,24 +795,14 @@ public class AudioEffect {
     /**
      * Send a command to the effect engine. This method is intended to send
      * proprietary commands to a particular effect implementation.
-     *
+     * In case of success, returns the number of meaningful bytes in reply array.
+     * In case of failure, the returned value is negative and implementation specific.
      * @hide
      */
     public int command(int cmdCode, byte[] command, byte[] reply)
             throws IllegalStateException {
         checkState("command()");
-        int[] replySize = new int[1];
-        replySize[0] = reply.length;
-
-        int status = native_command(cmdCode, command.length, command,
-                replySize, reply);
-
-        if (reply.length > replySize[0]) {
-            byte[] resizedReply = new byte[replySize[0]];
-            System.arraycopy(reply, 0, resizedReply, 0, replySize[0]);
-            reply = resizedReply;
-        }
-        return status;
+        return native_command(cmdCode, command.length, command, reply.length, reply);
     }
 
     // --------------------------------------------------------------------------
@@ -1145,12 +1190,14 @@ public class AudioEffect {
             int vsize, byte[] value);
 
     private native final int native_getParameter(int psize, byte[] param,
-            int[] vsize, byte[] value);
+            int vsize, byte[] value);
 
     private native final int native_command(int cmdCode, int cmdSize,
-            byte[] cmdData, int[] repSize, byte[] repData);
+            byte[] cmdData, int repSize, byte[] repData);
 
     private static native Object[] native_query_effects();
+
+    private static native Object[] native_query_pre_processing(int audioSession);
 
     // ---------------------------------------------------------
     // Utility methods
@@ -1172,18 +1219,25 @@ public class AudioEffect {
      * @hide
      */
     public void checkStatus(int status) {
-        switch (status) {
-        case AudioEffect.SUCCESS:
-            break;
-        case AudioEffect.ERROR_BAD_VALUE:
-            throw (new IllegalArgumentException(
-                    "AudioEffect: bad parameter value"));
-        case AudioEffect.ERROR_INVALID_OPERATION:
-            throw (new UnsupportedOperationException(
-                    "AudioEffect: invalid parameter operation"));
-        default:
-            throw (new RuntimeException("AudioEffect: set/get parameter error"));
+        if (isError(status)) {
+            switch (status) {
+            case AudioEffect.ERROR_BAD_VALUE:
+                throw (new IllegalArgumentException(
+                        "AudioEffect: bad parameter value"));
+            case AudioEffect.ERROR_INVALID_OPERATION:
+                throw (new UnsupportedOperationException(
+                        "AudioEffect: invalid parameter operation"));
+            default:
+                throw (new RuntimeException("AudioEffect: set/get parameter error"));
+            }
         }
+    }
+
+    /**
+     * @hide
+     */
+    public static boolean isError(int status) {
+        return (status < 0);
     }
 
     /**

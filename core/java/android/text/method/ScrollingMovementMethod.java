@@ -16,201 +16,81 @@
 
 package android.text.method;
 
-import android.util.Log;
-import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.text.*;
 import android.widget.TextView;
 import android.view.View;
 
-public class
-ScrollingMovementMethod
-implements MovementMethod
-{
-    /**
-     * Scrolls the text to the left if possible.
-     */
+/**
+ * A movement method that interprets movement keys by scrolling the text buffer.
+ */
+public class ScrollingMovementMethod extends BaseMovementMethod implements MovementMethod {
+    @Override
     protected boolean left(TextView widget, Spannable buffer) {
-        Layout layout = widget.getLayout();
-        
-        int scrolly = widget.getScrollY();
-        int scr = widget.getScrollX();
-        int em = Math.round(layout.getPaint().getFontSpacing());
-
-        int padding = widget.getTotalPaddingTop() +
-                      widget.getTotalPaddingBottom();
-        int top = layout.getLineForVertical(scrolly);
-        int bottom = layout.getLineForVertical(scrolly + widget.getHeight() -
-                                               padding);
-        int left = Integer.MAX_VALUE;
-
-        for (int i = top; i <= bottom; i++) {
-            left = (int) Math.min(left, layout.getLineLeft(i));
-        }
-
-        if (scr > left) {
-            int s = Math.max(scr - em, left);
-            widget.scrollTo(s, widget.getScrollY());
-            return true;
-        }
-
-        return false;
+        return scrollLeft(widget, buffer, 1);
     }
 
-    /**
-     * Scrolls the text to the right if possible.
-     */
+    @Override
     protected boolean right(TextView widget, Spannable buffer) {
-        Layout layout = widget.getLayout();
-
-        int scrolly = widget.getScrollY();
-        int scr = widget.getScrollX();
-        int em = Math.round(layout.getPaint().getFontSpacing());
-
-        int padding = widget.getTotalPaddingTop() +
-                      widget.getTotalPaddingBottom();
-        int top = layout.getLineForVertical(scrolly);
-        int bottom = layout.getLineForVertical(scrolly + widget.getHeight() -
-                                               padding);
-        int right = 0;
-
-        for (int i = top; i <= bottom; i++) {
-            right = (int) Math.max(right, layout.getLineRight(i));
-        }
-
-        padding = widget.getTotalPaddingLeft() + widget.getTotalPaddingRight();
-        if (scr < right - (widget.getWidth() - padding)) {
-            int s = Math.min(scr + em, right - (widget.getWidth() - padding));
-            widget.scrollTo(s, widget.getScrollY());
-            return true;
-        }
-
-        return false;
+        return scrollRight(widget, buffer, 1);
     }
 
-    /**
-     * Scrolls the text up if possible.
-     */
+    @Override
     protected boolean up(TextView widget, Spannable buffer) {
-        Layout layout = widget.getLayout();
-
-        int areatop = widget.getScrollY();
-        int line = layout.getLineForVertical(areatop);
-        int linetop = layout.getLineTop(line);
-
-        // If the top line is partially visible, bring it all the way
-        // into view; otherwise, bring the previous line into view.
-        if (areatop == linetop)
-            line--;
-
-        if (line >= 0) {
-            Touch.scrollTo(widget, layout,
-                           widget.getScrollX(), layout.getLineTop(line));
-            return true;
-        }
-
-        return false;
+        return scrollUp(widget, buffer, 1);
     }
 
-    /**
-     * Scrolls the text down if possible.
-     */
+    @Override
     protected boolean down(TextView widget, Spannable buffer) {
-        Layout layout = widget.getLayout();
-
-        int padding = widget.getTotalPaddingTop() +
-                      widget.getTotalPaddingBottom();
-
-        int areabot = widget.getScrollY() + widget.getHeight() - padding;
-        int line = layout.getLineForVertical(areabot);
-
-        if (layout.getLineTop(line+1) < areabot + 1) {
-            // Less than a pixel of this line is out of view,
-            // so we must have tried to make it entirely in view
-            // and now want the next line to be in view instead.
-
-            line++;
-        }
-
-        if (line <= layout.getLineCount() - 1) {
-            widget.scrollTo(widget.getScrollX(), layout.getLineTop(line+1) -
-                            (widget.getHeight() - padding));
-            Touch.scrollTo(widget, layout,
-                                widget.getScrollX(), widget.getScrollY());
-            return true;
-        }
-
-        return false;
+        return scrollDown(widget, buffer, 1);
     }
 
-    public boolean onKeyDown(TextView widget, Spannable buffer, int keyCode, KeyEvent event) {
-        return executeDown(widget, buffer, keyCode);
+    @Override
+    protected boolean pageUp(TextView widget, Spannable buffer) {
+        return scrollPageUp(widget, buffer);
     }
 
-    private boolean executeDown(TextView widget, Spannable buffer, int keyCode) {
-        boolean handled = false;
-
-        switch (keyCode) {
-        case KeyEvent.KEYCODE_DPAD_LEFT:
-            handled |= left(widget, buffer);
-            break;
-
-        case KeyEvent.KEYCODE_DPAD_RIGHT:
-            handled |= right(widget, buffer);
-            break;
-
-        case KeyEvent.KEYCODE_DPAD_UP:
-            handled |= up(widget, buffer);
-            break;
-
-        case KeyEvent.KEYCODE_DPAD_DOWN:
-            handled |= down(widget, buffer);
-            break;
-        }
-
-        return handled;
+    @Override
+    protected boolean pageDown(TextView widget, Spannable buffer) {
+        return scrollPageDown(widget, buffer);
     }
 
-    public boolean onKeyUp(TextView widget, Spannable buffer, int keyCode, KeyEvent event) {
-        return false;
+    @Override
+    protected boolean top(TextView widget, Spannable buffer) {
+        return scrollTop(widget, buffer);
     }
 
-    public boolean onKeyOther(TextView view, Spannable text, KeyEvent event) {
-        int code = event.getKeyCode();
-        if (code != KeyEvent.KEYCODE_UNKNOWN
-                && event.getAction() == KeyEvent.ACTION_MULTIPLE) {
-            int repeat = event.getRepeatCount();
-            boolean first = true;
-            boolean handled = false;
-            while ((--repeat) > 0) {
-                if (first && executeDown(view, text, code)) {
-                    handled = true;
-                    MetaKeyKeyListener.adjustMetaAfterKeypress(text);
-                    MetaKeyKeyListener.resetLockedMeta(text);
-                }
-                first = false;
-            }
-            return handled;
-        }
-        return false;
+    @Override
+    protected boolean bottom(TextView widget, Spannable buffer) {
+        return scrollBottom(widget, buffer);
     }
-    
-    public boolean onTrackballEvent(TextView widget, Spannable text,
-            MotionEvent event) {
-        return false;
+
+    @Override
+    protected boolean lineStart(TextView widget, Spannable buffer) {
+        return scrollLineStart(widget, buffer);
     }
-    
-    public boolean onTouchEvent(TextView widget, Spannable buffer,
-                                 MotionEvent event) {
+
+    @Override
+    protected boolean lineEnd(TextView widget, Spannable buffer) {
+        return scrollLineEnd(widget, buffer);
+    }
+
+    @Override
+    protected boolean home(TextView widget, Spannable buffer) {
+        return top(widget, buffer);
+    }
+
+    @Override
+    protected boolean end(TextView widget, Spannable buffer) {
+        return bottom(widget, buffer);
+    }
+
+    @Override
+    public boolean onTouchEvent(TextView widget, Spannable buffer, MotionEvent event) {
         return Touch.onTouchEvent(widget, buffer, event);
     }
 
-    public void initialize(TextView widget, Spannable text) { }
-
-    public boolean canSelectArbitrarily() {
-        return false;
-    }
-
+    @Override
     public void onTakeFocus(TextView widget, Spannable text, int dir) {
         Layout layout = widget.getLayout();
 

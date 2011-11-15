@@ -137,3 +137,10 @@ option java_package com.android.server
 # [ 8- 3] Detailed state ordinal (as defined by NetworkInfo.DetailedState)
 # [ 2- 0] Network type (as defined by ConnectivityManager)
 50020 connectivity_state_changed (custom|1|5)
+
+
+# ---------------------------
+# NetworkStatsService.java
+# ---------------------------
+51100 netstats_mobile_sample (dev_rx_bytes|2|2),(dev_tx_bytes|2|2),(dev_rx_pkts|2|1),(dev_tx_pkts|2|1),(xt_rx_bytes|2|2),(xt_tx_bytes|2|2),(xt_rx_pkts|2|1),(xt_tx_pkts|2|1),(uid_rx_bytes|2|2),(uid_tx_bytes|2|2),(uid_rx_pkts|2|1),(uid_tx_pkts|2|1),(trusted_time|2|3)
+51101 netstats_wifi_sample (dev_rx_bytes|2|2),(dev_tx_bytes|2|2),(dev_rx_pkts|2|1),(dev_tx_pkts|2|1),(xt_rx_bytes|2|2),(xt_tx_bytes|2|2),(xt_rx_pkts|2|1),(xt_tx_pkts|2|1),(uid_rx_bytes|2|2),(uid_tx_bytes|2|2),(uid_rx_pkts|2|1),(uid_tx_pkts|2|1),(trusted_time|2|3)

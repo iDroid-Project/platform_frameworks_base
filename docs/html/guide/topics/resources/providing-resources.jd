@@ -88,9 +88,18 @@ supported inside project {@code res/} directory.</p>
   </tr>
 
   <tr>
+    <td><code>animator/</code></td>
+    <td>XML files that define <a href="{@docRoot}guide/topics/graphics/animation.html">property
+animations</a>.</td>
+  </tr>
+
+  <tr>
     <td><code>anim/</code></td>
-    <td>XML files that define tween animations. See <a
-href="animation-resource.html">Animation Resources</a>.</td>
+    <td>XML files that define <a
+href="{@docRoot}guide/topics/graphics/view-animation.html#tween-animation">tween
+animations</a>. (Property animations can also be saved in this directory, but
+the {@code animator/} directory is preferred for property animations to distinguish between the two
+types.)</td>
   </tr>
 
   <tr>
@@ -264,8 +273,8 @@ href="#Compatibility">Providing the Best Device Compatibility with Resources</a>
 names.</p>
 <table>
     <tr>
-        <th>Qualifier</th>
-        <th>Values</th>
+        <th>Configuration</th>
+        <th>Qualifier Values</th>
         <th>Description</th>
     </tr>
     <tr id="MccQualifier">
@@ -324,6 +333,121 @@ your application for other languages.</p>
 indicates the current locale.</p>
       </td>
     </tr>
+    <tr id="SmallestScreenWidthQualifier">
+      <td>smallestWidth</td>
+      <td><code>sw&lt;N&gt;dp</code><br/><br/>
+        Examples:<br/>
+        <code>sw320dp</code><br/>
+        <code>sw600dp</code><br/>
+        <code>sw720dp</code><br/>
+        etc.
+      </td>
+      <td>
+        <p>The fundamental size of a screen, as indicated by the shortest dimension of the available
+screen area. Specifically, the device's smallestWidth is the shortest of the screen's available
+height and width (you may also think of it as the "smallest possible width" for the screen). You can
+use this qualifier to ensure that, regardless of the screen's current orientation, your
+application's has at least {@code &lt;N&gt;} dps of width available for it UI.</p>
+        <p>For example, if your layout requires that its smallest dimension of screen area be at
+least 600 dp at all times, then you can use this qualifer to create the layout resources, {@code
+res/layout-sw600dp/}. The system will use these resources only when the smallest dimension of
+available screen is at least 600dp, regardless of whether the 600dp side is the user-perceived
+height or width. The smallestWidth is a fixed screen size characteristic of the device; <strong>the
+device's smallestWidth does not change when the screen's orientation changes</strong>.</p>
+        <p>The smallestWidth of a device takes into account screen decorations and system UI. For
+example, if the device has some persistent UI elements on the screen that account for space along
+the axis of the smallestWidth, the system declares the smallestWidth to be smaller than the actual
+screen size, because those are screen pixels not available for your UI. Thus, the value you use
+should be the actual smallest dimension <em>required by your layout</em> (usually, this value is the
+"smallest width" that your layout supports, regardless of the screen's current orientation).</p>
+        <p>Some values you might use here for common screen sizes:</p>
+        <ul>
+          <li>320, for devices with screen configurations such as:
+            <ul>
+              <li>240x320 ldpi (QVGA handset)</li>
+              <li>320x480 mdpi (handset)</li>
+              <li>480x800 hdpi (high density handset)</li>
+            </ul>
+          </li>
+          <li>480, for screens such as 480x800 mdpi (tablet/handset).</li>
+          <li>600, for screens such as 600x1024 mdpi (7" tablet).</li>
+          <li>720, for screens such as 720x1280 mdpi (10" tablet).</li>
+        </ul>
+        <p>When your application provides multiple resource directories with different values for
+        the smallestWidth qualifier, the system uses the one closest to (without exceeding) the
+device's smallestWidth. </p>
+        <p><em>Added in API level 13.</em></p>
+        <p>Also see the <a
+href="{@docRoot}guide/topics/manifest/supports-screens-element.html#requiresSmallest">{@code
+android:requiresSmallestWidthDp}</a> attribute, which declares the minimum smallestWidth with which
+your application is compatible, and the {@link
+android.content.res.Configuration#smallestScreenWidthDp} configuration field, which holds the
+device's smallestWidth value.</p>
+        <p>For more information about designing for different screens and using this
+qualifier, see the <a href="{@docRoot}guide/practices/screens_support.html">Supporting
+Multiple Screens</a> developer guide.</p>
+      </td>
+    </tr>
+    <tr id="ScreenWidthQualifier">
+      <td>Available width</td>
+      <td><code>w&lt;N&gt;dp</code><br/><br/>
+        Examples:<br/>
+        <code>w720dp</code><br/>
+        <code>w1024dp</code><br/>
+        etc.
+      </td>
+      <td>
+        <p>Specifies a minimum available screen width, in {@code dp} units at which the resource
+          should be used&mdash;defined by the <code>&lt;N&gt;</code> value.  This
+          configuration value will change when the orientation
+          changes between landscape and portrait to match the current actual width.</p>
+        <p>When your application provides multiple resource directories with different values
+          for this configuration, the system uses the one closest to (without exceeding)
+          the device's current screen width.  The
+          value here takes into account screen decorations, so if the device has some
+          persistent UI elements on the left or right edge of the display, it
+          uses a value for the width that is smaller than the real screen size, accounting
+          for these UI elements and reducing the application's available space.</p>
+        <p><em>Added in API level 13.</em></p>
+        <p>Also see the {@link android.content.res.Configuration#screenWidthDp}
+          configuration field, which holds the current screen width.</p>
+        <p>For more information about designing for different screens and using this
+qualifier, see the <a href="{@docRoot}guide/practices/screens_support.html">Supporting
+Multiple Screens</a> developer guide.</p>
+      </td>
+    </tr>
+    <tr id="ScreenHeightQualifier">
+      <td>Available height</td>
+      <td><code>h&lt;N&gt;dp</code><br/><br/>
+        Examples:<br/>
+        <code>h720dp</code><br/>
+        <code>h1024dp</code><br/>
+        etc.
+      </td>
+      <td>
+        <p>Specifies a minimum available screen height, in "dp" units at which the resource
+          should be used&mdash;defined by the <code>&lt;N&gt;</code> value.  This
+          configuration value will change when the orientation
+          changes between landscape and portrait to match the current actual height.</p>
+        <p>When your application provides multiple resource directories with different values
+          for this configuration, the system uses the one closest to (without exceeding)
+          the device's current screen height.  The
+          value here takes into account screen decorations, so if the device has some
+          persistent UI elements on the top or bottom edge of the display, it uses
+          a value for the height that is smaller than the real screen size, accounting
+          for these UI elements and reducing the application's available space.  Screen
+          decorations that are not fixed (such as a phone status bar that can be
+          hidden when full screen) are <em>not</em> accounted for here, nor are
+          window decorations like the title bar or action bar, so applications must be prepared to
+          deal with a somewhat smaller space than they specify.
+        <p><em>Added in API level 13.</em></p>
+        <p>Also see the {@link android.content.res.Configuration#screenHeightDp}
+          configuration field, which holds the current screen width.</p>
+        <p>For more information about designing for different screens and using this
+qualifier, see the <a href="{@docRoot}guide/practices/screens_support.html">Supporting
+Multiple Screens</a> developer guide.</p>
+      </td>
+    </tr>
     <tr id="ScreenSizeQualifier">
       <td>Screen size</td>
       <td>
@@ -334,26 +458,35 @@ indicates the current locale.</p>
       </td>
       <td>
         <ul class="nolist">
-        <li>{@code small}: Screens based on the space available on a
-        low-density QVGA screen.  Considering a portrait HVGA display, this has
-        the same available width but less height&mdash;it is 3:4 vs. HVGA's
-        2:3 aspect ratio.  Examples are QVGA low density and VGA high
+        <li>{@code small}: Screens that are of similar size to a
+        low-density QVGA screen. The minimum layout size for a small screen
+        is approximately 320x426 dp units.  Examples are QVGA low density and VGA high
         density.</li>
-        <li>{@code normal}: Screens based on the traditional
-        medium-density HVGA screen.  A screen is considered to be normal if it is
-        at least this size (independent of density) and not larger.  Examples
+        <li>{@code normal}: Screens that are of similar size to a
+        medium-density HVGA screen. The minimum
+        layout size for a normal screen is approximately 320x470 dp units.  Examples
         of such screens a WQVGA low density, HVGA medium density, WVGA
         high density.</li>
-        <li>{@code large}: Screens based on the space available on a
-        medium-density VGA screen.  Such a screen has significantly more
-        available space in both width and height than an HVGA display.
+        <li>{@code large}: Screens that are of similar size to a
+        medium-density VGA screen.
+        The minimum layout size for a large screen is approximately 480x640 dp units.
         Examples are VGA and WVGA medium density screens.</li>
         <li>{@code xlarge}: Screens that are considerably larger than the traditional
-        medium-density HVGA screen. In most cases, devices with extra large screens would be too
-large to carry in a pocket and would most likely be tablet-style devices. <em>Added in API Level
-9.</em></li>
+        medium-density HVGA screen. The minimum layout size for an xlarge screen
+        is approximately 720x960 dp units.  In most cases, devices with extra large
+        screens would be too large to carry in a pocket and would most likely
+        be tablet-style devices. <em>Added in API level 9.</em></li>
         </ul>
-        <p><em>Added in API Level 4.</em></p>
+        <p class="note"><strong>Note:</strong> Using a size qualifier does not imply that the
+resources are <em>only</em> for screens of that size. If you do not provide alternative
+resources with qualifiers that better match the current device configuration, the system may use
+whichever resources are the <a href="#BestMatch">best match</a>.</p>
+        <p class="caution"><strong>Caution:</strong> If all your resources use a size qualifier that
+is <em>larger</em> than the current screen, the system will <strong>not</strong> use them and your
+application will crash at runtime (for example, if all layout resources are tagged with the {@code
+xlarge} qualifier, but the device is a normal-size screen).</p>
+        <p><em>Added in API level 4.</em></p>
+        
         <p>See <a href="{@docRoot}guide/practices/screens_support.html">Supporting Multiple
 Screens</a> for more information.</p>
         <p>Also see the {@link android.content.res.Configuration#screenLayout} configuration field,
@@ -372,7 +505,7 @@ or large.</p>
           <li>{@code long}: Long screens, such as WQVGA, WVGA, FWVGA</li>
           <li>{@code notlong}: Not long screens, such as QVGA, HVGA, and VGA</li>
         </ul>
-        <p><em>Added in API Level 4.</em></p>
+        <p><em>Added in API level 4.</em></p>
         <p>This is based purely on the aspect ratio of the screen (a "long" screen is wider). This
 is not related to the screen orientation.</p>
         <p>Also see the {@link android.content.res.Configuration#screenLayout} configuration field,
@@ -410,7 +543,7 @@ which indicates the current device orientation.</p>
           <li>{@code car}: Device is in a car dock</li>
           <li>{@code desk}: Device is in a desk dock</li>
         </ul>
-        <p><em>Added in API Level 8.</em></p>
+        <p><em>Added in API level 8.</em></p>
         <p>This can change during the life of your application if the user places the device in a
 dock. You can enable or disable this mode using {@link
 android.app.UiModeManager}. See <a href="runtime-changes.html">Handling Runtime Changes</a> for
@@ -428,7 +561,7 @@ information about how this affects your application during runtime.</p>
           <li>{@code night}: Night time</li>
           <li>{@code notnight}: Day time</li>
         </ul>
-        <p><em>Added in API Level 8.</em></p>
+        <p><em>Added in API level 8.</em></p>
         <p>This can change during the life of your application if night mode is left in
 auto mode (default), in which case the mode changes based on the time of day.  You can enable
 or disable this mode using {@link android.app.UiModeManager}. See <a
@@ -443,7 +576,8 @@ application during runtime.</p>
         <code>mdpi</code><br/>
         <code>hdpi</code><br/>
         <code>xhdpi</code><br/>
-        <code>nodpi</code>
+        <code>nodpi</code><br/>
+        <code>tvdpi</code>
       </td>
       <td>
         <ul class="nolist">
@@ -455,21 +589,23 @@ application during runtime.</p>
 Level 8</em></li>
           <li>{@code nodpi}: This can be used for bitmap resources that you do not want to be scaled
 to match the device density.</li>
+          <li>{@code tvdpi}: Screens somewhere between mdpi and hdpi; approximately 213dpi. This is
+not considered a "primary" density group. It is mostly intended for televisions and most
+apps shouldn't need it&mdash;providing mdpi and hdpi resources is sufficient for most apps and
+the system will scale them as appropriate. This qualifier was introduced with API level 13.</li>
         </ul>
-        <p><em>Added in API Level 4.</em></p>
-        <p>There is thus a 3:4:6 scaling ratio between the three densities, so a 9x9 bitmap
-         in ldpi is 12x12 in mdpi and 18x18 in hdpi.</p>
-        <p>When Android selects which resource files to use,
-         it handles screen density differently than the other qualifiers.
-         In step 1 of <a href="#BestMatch">How Android finds the best
-         matching directory</a> (below), screen density is always considered to
-         be a match. In step 4, if the qualifier being considered is screen
-         density, Android selects the best final match at that point,
-         without any need to move on to step 5.
-         </p>
+        <p>There is a 3:4:6:8 scaling ratio between the four primary densities (ignoring the
+tvdpi density). So, a 9x9 bitmap in ldpi is 12x12 in mdpi, 18x18 in hdpi and 24x24 in xhdpi.</p>
+        <p>If you decide that your image resources don't look good enough on a television or
+other certain devices and want to try tvdpi resources, the scaling factor is 1.33*mdpi. For
+example, a 100px x 100px image for mdpi screens should be 133px x 133px for tvdpi.</p>
+        <p class="note"><strong>Note:</strong> Using a density qualifier does not imply that the
+resources are <em>only</em> for screens of that density. If you do not provide alternative
+resources with qualifiers that better match the current device configuration, the system may use
+whichever resources are the <a href="#BestMatch">best match</a>.</p>
         <p>See <a href="{@docRoot}guide/practices/screens_support.html">Supporting Multiple
-Screens</a> for more information about how to handle screen sizes and how Android might scale
-your bitmaps.</p>
+Screens</a> for more information about how to handle different screen densities and how Android
+might scale your bitmaps to fit the current density.</p>
        </td>
     </tr>
     <tr id="TouchscreenQualifier">
@@ -494,6 +630,7 @@ which indicates the type of touchscreen on the device.</p>
       <td>Keyboard availability</td>
       <td>
         <code>keysexposed</code><br/>
+        <code>keyshidden</code><br/>
         <code>keyssoft</code>
       </td>
       <td>
@@ -595,20 +732,20 @@ orientation" described above.</p>
     </tr>
 -->
     <tr id="VersionQualifier">
-      <td>System Version (API Level)</td>
+      <td>Platform Version (API level)</td>
       <td>Examples:<br/>
         <code>v3</code><br/>
         <code>v4</code><br/>
         <code>v7</code><br/>
         etc.</td>
       <td>
-        <p>The API Level supported by the device. For example, <code>v1</code> for API Level
-1 (devices with Android 1.0 or higher) and <code>v4</code> for API Level 4 (devices with Android
+        <p>The API level supported by the device. For example, <code>v1</code> for API level
+1 (devices with Android 1.0 or higher) and <code>v4</code> for API level 4 (devices with Android
 1.6 or higher). See the <a
-href="{@docRoot}guide/appendix/api-levels.html">Android API Levels</a> document for more information
+href="{@docRoot}guide/appendix/api-levels.html">Android API levels</a> document for more information
 about these values.</p>
         <p class="caution"><strong>Caution:</strong> Android 1.5 and 1.6 only match resources
-with this qualifier when it exactly matches the system version. See the section below about <a
+with this qualifier when it exactly matches the platform version. See the section below about <a
 href="#KnownIssues">Known Issues</a> for more information.</p>
       </td>
     </tr>
@@ -769,7 +906,7 @@ cannot use the resources named with the new qualifier. For example, if your <a
 href="{@docRoot}guide/topics/manifest/uses-sdk-element.html#min">{@code
 minSdkVersion}</a> is set to 4, and you qualify all of your drawable resources using <a
 href="#NightQualifier">night mode</a> ({@code night} or {@code notnight}, which were added in API
-Level 8), then an API Level 4 device cannot access your drawable resources and will crash. In this
+Level 8), then an API level 4 device cannot access your drawable resources and will crash. In this
 case, you probably want {@code notnight} to be your default resources, so you should exclude that
 qualifier so your drawable resources are in either {@code drawable/} or {@code drawable-night/}.</p>
 
@@ -802,7 +939,7 @@ compatibility for these versions.</p>
     <dd>{@code long} and {@code notlong}</dd>
 </dl>
 
-<p>These configuration qualifiers were introduced in Android 1.6, so Android 1.5 (API Level 3) and
+<p>These configuration qualifiers were introduced in Android 1.6, so Android 1.5 (API level 3) and
 lower does not support them. If you use these configuration qualifiers and do not provide
 corresponding default resources, then an Android 1.5 device might use any one of the resource
 directories named with the above screen configuration qualifiers, because it ignores these
@@ -832,9 +969,9 @@ is r6 or greater.
     <p>You need SDK Tools, Revision 6 (or greater), because it includes a new packaging tool that
 automatically applies an appropriate <a href="#VersionQualifier">version qualifier</a> to any
 resource directory named with a qualifier that does not exist in Android 1.0. For example, because
-the density qualifier was introduced in Android 1.6 (API Level 4), when the packaging tool
+the density qualifier was introduced in Android 1.6 (API level 4), when the packaging tool
 encounters a resource directory using the density qualifier, it adds {@code v4} to the directory
-name to ensure that older versions do not use those resources (only API Level 4 and higher support
+name to ensure that older versions do not use those resources (only API level 4 and higher support
 that qualifier). Thus, by putting your medium-density resources in a directory <em>without</em> the
 {@code mdpi} qualifier, they are still accessible by Android 1.5, and any device that supports the
 density qualifer and has a medium-density screen also uses the default resources (which are mdpi)
@@ -843,7 +980,7 @@ resources).</p>
 </li>
 </ol>
 
-<p class="note"><strong>Note:</strong> Later versions of Android, such as API Level 8,
+<p class="note"><strong>Note:</strong> Later versions of Android, such as API level 8,
 introduce other configuration qualifiers that older version do not support. To provide the best
 compatibility, you should always include a set of default resources for each type of resource
 that your application uses, as discussed above to provide the best device compatibility.</p>
@@ -878,7 +1015,10 @@ Primary text input method = <code>12key</code>
 </p>
 
 <p>By comparing the device configuration to the available alternative resources, Android selects
-drawables from {@code drawable-en-port}. It arrives at this decision using the following logic:</p>
+drawables from {@code drawable-en-port}.</p>
+
+<p>The system arrives at its decision for which resources to use with the following
+logic:</p>
 
 
 <div class="figure" style="width:280px">
@@ -954,6 +1094,14 @@ language is English ("en"), then any resource directory that has a language qual
 something other than English is never included in the pool of resources checked (though a
 resource directory <em>without</em> the language qualifier is still included).</p>
 
+<p>When selecting resources based on the screen size qualifiers, the system will use resources
+designed for a screen smaller than the current screen if there are no resources that better match
+(for example, a large-size screen will use normal-size screen resources if necessary). However, if
+the only available resources are <em>larger</em> than the current screen, the system will
+<strong>not</strong> use them and your application will crash if no other resources match the device
+configuration (for example, if all layout resources are tagged with the {@code xlarge} qualifier,
+but the device is a normal-size screen).</p>
+
 <p class="note"><strong>Note:</strong> The <em>precedence</em> of the qualifier (in <a
 href="#table2">table 2</a>) is more important
 than the number of qualifiers that exactly match the device. For example, in step 4 above, the last
@@ -974,7 +1122,7 @@ href="accessing-resources.html">Accessing Resources</a>.</p>
 
 <p>The correct behavior is for the system to match resources marked with a <a
 href="#VersionQualifier">version qualifier</a> equal
-to or less than the system version on the device, but on Android 1.5 and 1.6, (API Level 3 and 4),
+to or less than the platform version on the device, but on Android 1.5 and 1.6, (API level 3 and 4),
 there is a bug that causes the system to match resources marked with the version qualifier
 only when it exactly matches the version on the device.</p>
 

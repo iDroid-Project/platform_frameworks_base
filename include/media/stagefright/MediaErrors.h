@@ -40,6 +40,30 @@ enum {
     // Not technically an error.
     INFO_FORMAT_CHANGED    = MEDIA_ERROR_BASE - 12,
     INFO_DISCONTINUITY     = MEDIA_ERROR_BASE - 13,
+
+    // The following constant values should be in sync with
+    // drm/drm_framework_common.h
+    DRM_ERROR_BASE = -2000,
+
+    ERROR_DRM_UNKNOWN                       = DRM_ERROR_BASE,
+    ERROR_DRM_NO_LICENSE                    = DRM_ERROR_BASE - 1,
+    ERROR_DRM_LICENSE_EXPIRED               = DRM_ERROR_BASE - 2,
+    ERROR_DRM_SESSION_NOT_OPENED            = DRM_ERROR_BASE - 3,
+    ERROR_DRM_DECRYPT_UNIT_NOT_INITIALIZED  = DRM_ERROR_BASE - 4,
+    ERROR_DRM_DECRYPT                       = DRM_ERROR_BASE - 5,
+    ERROR_DRM_CANNOT_HANDLE                 = DRM_ERROR_BASE - 6,
+    ERROR_DRM_TAMPER_DETECTED               = DRM_ERROR_BASE - 7,
+
+    // Heartbeat Error Codes
+    HEARTBEAT_ERROR_BASE = -3000,
+
+    ERROR_HEARTBEAT_AUTHENTICATION_FAILURE                  = HEARTBEAT_ERROR_BASE,
+    ERROR_HEARTBEAT_NO_ACTIVE_PURCHASE_AGREEMENT            = HEARTBEAT_ERROR_BASE - 1,
+    ERROR_HEARTBEAT_CONCURRENT_PLAYBACK                     = HEARTBEAT_ERROR_BASE - 2,
+    ERROR_HEARTBEAT_UNUSUAL_ACTIVITY                        = HEARTBEAT_ERROR_BASE - 3,
+    ERROR_HEARTBEAT_STREAMING_UNAVAILABLE                   = HEARTBEAT_ERROR_BASE - 4,
+    ERROR_HEARTBEAT_CANNOT_ACTIVATE_RENTAL                  = HEARTBEAT_ERROR_BASE - 5,
+    ERROR_HEARTBEAT_TERMINATE_REQUESTED                     = HEARTBEAT_ERROR_BASE - 6,
 };
 
 }  // namespace android

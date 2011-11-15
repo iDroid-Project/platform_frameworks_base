@@ -21,6 +21,7 @@ import android.annotation.SdkConstant.SdkConstantType;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.ContentUris;
+import android.content.Context;
 import android.database.Cursor;
 import android.database.DatabaseUtils;
 import android.database.sqlite.SQLiteException;
@@ -52,6 +53,15 @@ public final class MediaStore {
     public static final String AUTHORITY = "media";
 
     private static final String CONTENT_AUTHORITY_SLASH = "content://" + AUTHORITY + "/";
+
+   /**
+     * Broadcast Action:  A broadcast to indicate the end of an MTP session with the host.
+     * This broadcast is only sent if MTP activity has modified the media database during the
+     * most recent MTP session.
+     *
+     * @hide
+     */
+    public static final String ACTION_MTP_SESSION_END = "android.provider.action.MTP_SESSION_END";
 
     /**
      * Activity Action: Launch a music player.
@@ -156,7 +166,6 @@ public final class MediaStore {
      * If the EXTRA_OUTPUT is present, then the full-sized image will be written to the Uri
      * value of EXTRA_OUTPUT.
      * @see #EXTRA_OUTPUT
-     * @see #EXTRA_VIDEO_QUALITY
      */
     public final static String ACTION_IMAGE_CAPTURE = "android.media.action.IMAGE_CAPTURE";
 
@@ -171,6 +180,9 @@ public final class MediaStore {
      * written to the standard location for videos, and the Uri of that location will be
      * returned in the data field of the Uri.
      * @see #EXTRA_OUTPUT
+     * @see #EXTRA_VIDEO_QUALITY
+     * @see #EXTRA_SIZE_LIMIT
+     * @see #EXTRA_DURATION_LIMIT
      */
     public final static String ACTION_VIDEO_CAPTURE = "android.media.action.VIDEO_CAPTURE";
 
@@ -253,7 +265,171 @@ public final class MediaStore {
          * <P>Type: TEXT</P>
          */
         public static final String MIME_TYPE = "mime_type";
+
+        /**
+         * The MTP object handle of a newly transfered file.
+         * Used to pass the new file's object handle through the media scanner
+         * from MTP to the media provider
+         * For internal use only by MTP, media scanner and media provider.
+         * <P>Type: INTEGER</P>
+         * @hide
+         */
+        public static final String MEDIA_SCANNER_NEW_OBJECT_ID = "media_scanner_new_object_id";
+
+        /**
+         * Non-zero if the media file is drm-protected
+         * <P>Type: INTEGER (boolean)</P>
+         * @hide
+         */
+        public static final String IS_DRM = "is_drm";
+
+        /**
+         * The width of the image/video in pixels.
+         * @hide
+         */
+        public static final String WIDTH = "width";
+
+        /**
+         * The height of the image/video in pixels.
+         * @hide
+         */
+        public static final String HEIGHT = "height";
      }
+
+    /**
+     * Media provider table containing an index of all files in the media storage,
+     * including non-media files.  This should be used by applications that work with
+     * non-media file types (text, HTML, PDF, etc) as well as applications that need to
+     * work with multiple media file types in a single query.
+     */
+    public static final class Files {
+
+        /**
+         * Get the content:// style URI for the files table on the
+         * given volume.
+         *
+         * @param volumeName the name of the volume to get the URI for
+         * @return the URI to the files table on the given volume
+         */
+        public static Uri getContentUri(String volumeName) {
+            return Uri.parse(CONTENT_AUTHORITY_SLASH + volumeName +
+                    "/file");
+        }
+
+        /**
+         * Get the content:// style URI for a single row in the files table on the
+         * given volume.
+         *
+         * @param volumeName the name of the volume to get the URI for
+         * @param rowId the file to get the URI for
+         * @return the URI to the files table on the given volume
+         */
+        public static final Uri getContentUri(String volumeName,
+                long rowId) {
+            return Uri.parse(CONTENT_AUTHORITY_SLASH + volumeName
+                    + "/file/" + rowId);
+        }
+
+        /**
+         * For use only by the MTP implementation.
+         * @hide
+         */
+        public static Uri getMtpObjectsUri(String volumeName) {
+            return Uri.parse(CONTENT_AUTHORITY_SLASH + volumeName +
+                    "/object");
+        }
+
+        /**
+         * For use only by the MTP implementation.
+         * @hide
+         */
+        public static final Uri getMtpObjectsUri(String volumeName,
+                long fileId) {
+            return Uri.parse(CONTENT_AUTHORITY_SLASH + volumeName
+                    + "/object/" + fileId);
+        }
+
+        /**
+         * Used to implement the MTP GetObjectReferences and SetObjectReferences commands.
+         * @hide
+         */
+        public static final Uri getMtpReferencesUri(String volumeName,
+                long fileId) {
+            return Uri.parse(CONTENT_AUTHORITY_SLASH + volumeName
+                    + "/object/" + fileId + "/references");
+        }
+
+        /**
+         * Fields for master table for all media files.
+         * Table also contains MediaColumns._ID, DATA, SIZE and DATE_MODIFIED.
+         */
+        public interface FileColumns extends MediaColumns {
+            /**
+             * The MTP storage ID of the file
+             * <P>Type: INTEGER</P>
+             * @hide
+             */
+            public static final String STORAGE_ID = "storage_id";
+
+            /**
+             * The MTP format code of the file
+             * <P>Type: INTEGER</P>
+             * @hide
+             */
+            public static final String FORMAT = "format";
+
+            /**
+             * The index of the parent directory of the file
+             * <P>Type: INTEGER</P>
+             */
+            public static final String PARENT = "parent";
+
+            /**
+             * The MIME type of the file
+             * <P>Type: TEXT</P>
+             */
+            public static final String MIME_TYPE = "mime_type";
+
+            /**
+             * The title of the content
+             * <P>Type: TEXT</P>
+             */
+            public static final String TITLE = "title";
+
+            /**
+             * The media type (audio, video, image or playlist)
+             * of the file, or 0 for not a media file
+             * <P>Type: TEXT</P>
+             */
+            public static final String MEDIA_TYPE = "media_type";
+
+            /**
+             * Constant for the {@link #MEDIA_TYPE} column indicating that file
+             * is not an audio, image, video or playlist file.
+             */
+            public static final int MEDIA_TYPE_NONE = 0;
+
+            /**
+             * Constant for the {@link #MEDIA_TYPE} column indicating that file is an image file.
+             */
+            public static final int MEDIA_TYPE_IMAGE = 1;
+
+            /**
+             * Constant for the {@link #MEDIA_TYPE} column indicating that file is an audio file.
+             */
+            public static final int MEDIA_TYPE_AUDIO = 2;
+
+            /**
+             * Constant for the {@link #MEDIA_TYPE} column indicating that file is an video file.
+             */
+            public static final int MEDIA_TYPE_VIDEO = 3;
+
+            /**
+             * Constant for the {@link #MEDIA_TYPE} column indicating that file is an playlist file.
+             */
+            public static final int MEDIA_TYPE_PLAYLIST = 4;
+        }
+    }
 
     /**
      * This class is used internally by Images.Thumbnails and Video.Thumbnails, it's not intended
@@ -335,26 +511,27 @@ public final class MediaStore {
             // Log.v(TAG, "getThumbnail: origId="+origId+", kind="+kind+", isVideo="+isVideo);
             // If the magic is non-zero, we simply return thumbnail if it does exist.
             // querying MediaProvider and simply return thumbnail.
-            MiniThumbFile thumbFile = MiniThumbFile.instance(baseUri);
-            long magic = thumbFile.getMagic(origId);
-            if (magic != 0) {
-                if (kind == MICRO_KIND) {
-                    synchronized (sThumbBufLock) {
-                        if (sThumbBuf == null) {
-                            sThumbBuf = new byte[MiniThumbFile.BYTES_PER_MINTHUMB];
-                        }
-                        if (thumbFile.getMiniThumbFromFile(origId, sThumbBuf) != null) {
-                            bitmap = BitmapFactory.decodeByteArray(sThumbBuf, 0, sThumbBuf.length);
-                            if (bitmap == null) {
-                                Log.w(TAG, "couldn't decode byte array.");
+            MiniThumbFile thumbFile = new MiniThumbFile(isVideo ? Video.Media.EXTERNAL_CONTENT_URI
+                    : Images.Media.EXTERNAL_CONTENT_URI);
+            Cursor c = null;
+            try {
+                long magic = thumbFile.getMagic(origId);
+                if (magic != 0) {
+                    if (kind == MICRO_KIND) {
+                        synchronized (sThumbBufLock) {
+                            if (sThumbBuf == null) {
+                                sThumbBuf = new byte[MiniThumbFile.BYTES_PER_MINTHUMB];
+                            }
+                            if (thumbFile.getMiniThumbFromFile(origId, sThumbBuf) != null) {
+                                bitmap = BitmapFactory.decodeByteArray(sThumbBuf, 0, sThumbBuf.length);
+                                if (bitmap == null) {
+                                    Log.w(TAG, "couldn't decode byte array.");
+                                }
                             }
                         }
-                    }
-                    return bitmap;
-                } else if (kind == MINI_KIND) {
-                    String column = isVideo ? "video_id=" : "image_id=";
-                    Cursor c = null;
-                    try {
+                        return bitmap;
+                    } else if (kind == MINI_KIND) {
+                        String column = isVideo ? "video_id=" : "image_id=";
                         c = cr.query(baseUri, PROJECTION, column + origId, null, null);
                         if (c != null && c.moveToFirst()) {
                             bitmap = getMiniThumbFromFile(c, baseUri, cr, options);
@@ -362,17 +539,13 @@ public final class MediaStore {
                                 return bitmap;
                             }
                         }
-                    } finally {
-                        if (c != null) c.close();
                     }
                 }
-            }
 
-            Cursor c = null;
-            try {
                 Uri blockingUri = baseUri.buildUpon().appendQueryParameter("blocking", "1")
                         .appendQueryParameter("orig_id", String.valueOf(origId))
                         .appendQueryParameter("group_id", String.valueOf(groupId)).build();
+                if (c != null) c.close();
                 c = cr.query(blockingUri, PROJECTION, null, null, null);
                 // This happens when original image/video doesn't exist.
                 if (c == null) return null;
@@ -423,6 +596,9 @@ public final class MediaStore {
                 Log.w(TAG, ex);
             } finally {
                 if (c != null) c.close();
+                // To avoid file descriptor leak in application process.
+                thumbFile.deactivate();
+                thumbFile = null;
             }
             return bitmap;
         }
@@ -939,12 +1115,6 @@ public final class MediaStore {
             public static final String ALBUM_KEY = "album_key";
 
             /**
-             * A URI to the album art, if any
-             * <P>Type: TEXT</P>
-             */
-            public static final String ALBUM_ART = "album_art";
-
-            /**
              * The track number of this song on the album, if any.
              * This number encodes both the track number and the
              * disc number. For multi-disc sets, this number will
@@ -973,22 +1143,30 @@ public final class MediaStore {
             public static final String IS_PODCAST = "is_podcast";
 
             /**
-             * Non-zero id the audio file may be a ringtone
+             * Non-zero if the audio file may be a ringtone
              * <P>Type: INTEGER (boolean)</P>
              */
             public static final String IS_RINGTONE = "is_ringtone";
 
             /**
-             * Non-zero id the audio file may be an alarm
+             * Non-zero if the audio file may be an alarm
              * <P>Type: INTEGER (boolean)</P>
              */
             public static final String IS_ALARM = "is_alarm";
 
             /**
-             * Non-zero id the audio file may be a notification sound
+             * Non-zero if the audio file may be a notification sound
              * <P>Type: INTEGER (boolean)</P>
              */
             public static final String IS_NOTIFICATION = "is_notification";
+
+            /**
+             * The genre of the audio file, if any
+             * <P>Type: TEXT</P>
+             * Does not exist in the database - only used by the media scanner for inserts.
+             * @hide
+             */
+            public static final String GENRE = "genre";
         }
 
         /**
@@ -1144,6 +1322,19 @@ public final class MediaStore {
             public static Uri getContentUri(String volumeName) {
                 return Uri.parse(CONTENT_AUTHORITY_SLASH + volumeName +
                         "/audio/genres");
+            }
+
+            /**
+             * Get the content:// style URI for querying the genres of an audio file.
+             *
+             * @param volumeName the name of the volume to get the URI for
+             * @param audioId the ID of the audio file for which to retrieve the genres
+             * @return the URI to for querying the genres for the audio file
+             * with the given the volume and audioID
+             */
+            public static Uri getContentUriForAudioId(String volumeName, int audioId) {
+                return Uri.parse(CONTENT_AUTHORITY_SLASH + volumeName +
+                        "/audio/media/" + audioId + "/genres");
             }
 
             /**
@@ -1860,4 +2051,29 @@ public final class MediaStore {
      * the Music app.
      */
     public static final String MEDIA_IGNORE_FILENAME = ".nomedia";
+
+    /**
+     * Get the media provider's version.
+     * Applications that import data from the media provider into their own caches
+     * can use this to detect that the media provider changed, and reimport data
+     * as needed. No other assumptions should be made about the meaning of the version.
+     * @param context Context to use for performing the query.
+     * @return A version string, or null if the version could not be determined.
+     */
+    public static String getVersion(Context context) {
+        Cursor c = context.getContentResolver().query(
+                Uri.parse(CONTENT_AUTHORITY_SLASH + "none/version"),
+                null, null, null, null);
+        if (c != null) {
+            try {
+                if (c.moveToFirst()) {
+                    return c.getString(0);
+                }
+            } finally {
+                c.close();
+            }
+        }
+        return null;
+    }
+
 }

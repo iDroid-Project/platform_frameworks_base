@@ -37,9 +37,9 @@ LOCAL_SHARED_LIBRARIES := \
 	libcutils \
 	libutils \
 	libmedia \
-	libstagefright
+	libstagefright_amrnb_common
 
-LOCAL_STATIC_LIBRARIES := libgsm
+LOCAL_STATIC_LIBRARIES := libgsm libstagefright_amrnbdec libstagefright_amrnbenc
 
 LOCAL_C_INCLUDES += \
 	$(JNI_H_INCLUDE) \
@@ -49,10 +49,11 @@ LOCAL_C_INCLUDES += \
 	frameworks/base/media/libstagefright/codecs/amrnb/enc/include \
 	frameworks/base/media/libstagefright/codecs/amrnb/enc/src \
 	frameworks/base/media/libstagefright/codecs/amrnb/dec/include \
-	frameworks/base/media/libstagefright/codecs/amrnb/dec/src
+	frameworks/base/media/libstagefright/codecs/amrnb/dec/src \
+	system/media/audio_effects/include
 
 LOCAL_CFLAGS += -fvisibility=hidden
 
-LOCAL_PRELINK_MODULE := false
+
 
 include $(BUILD_SHARED_LIBRARY)

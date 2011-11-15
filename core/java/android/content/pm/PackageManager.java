@@ -23,6 +23,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.IntentSender;
+import android.content.pm.ManifestDigest;
 import android.content.res.Resources;
 import android.content.res.XmlResourceParser;
 import android.graphics.drawable.Drawable;
@@ -150,21 +151,21 @@ public abstract class PackageManager {
      * {@link PackageInfo#permissions}.
      */
     public static final int GET_PERMISSIONS               = 0x00001000;
-    
+
     /**
      * Flag parameter to retrieve all applications(even uninstalled ones) with data directories.
-     * This state could have resulted if applications have been deleted with flag 
+     * This state could have resulted if applications have been deleted with flag
      * DONT_DELETE_DATA
      * with a possibility of being replaced or reinstalled in future
      */
     public static final int GET_UNINSTALLED_PACKAGES = 0x00002000;
-    
+
     /**
      * {@link PackageInfo} flag: return information about
      * hardware preferences in
      * {@link PackageInfo#configPreferences PackageInfo.configPreferences} and
      * requested features in {@link PackageInfo#reqFeatures
-     * PackageInfo.reqFeatures}. 
+     * PackageInfo.reqFeatures}.
      */
     public static final int GET_CONFIGURATIONS = 0x00004000;
 
@@ -224,9 +225,39 @@ public abstract class PackageManager {
      */
     public static final int SIGNATURE_UNKNOWN_PACKAGE = -4;
 
+    /**
+     * Flag for {@link #setApplicationEnabledSetting(String, int, int)}
+     * and {@link #setComponentEnabledSetting(ComponentName, int, int)}: This
+     * component or application is in its default enabled state (as specified
+     * in its manifest).
+     */
     public static final int COMPONENT_ENABLED_STATE_DEFAULT = 0;
+
+    /**
+     * Flag for {@link #setApplicationEnabledSetting(String, int, int)}
+     * and {@link #setComponentEnabledSetting(ComponentName, int, int)}: This
+     * component or application has been explictily enabled, regardless of
+     * what it has specified in its manifest.
+     */
     public static final int COMPONENT_ENABLED_STATE_ENABLED = 1;
+
+    /**
+     * Flag for {@link #setApplicationEnabledSetting(String, int, int)}
+     * and {@link #setComponentEnabledSetting(ComponentName, int, int)}: This
+     * component or application has been explicitly disabled, regardless of
+     * what it has specified in its manifest.
+     */
     public static final int COMPONENT_ENABLED_STATE_DISABLED = 2;
+
+    /**
+     * Flag for {@link #setApplicationEnabledSetting(String, int, int)} only: The
+     * user has explicitly disabled the application, regardless of what it has
+     * specified in its manifest.  Because this is due to the user's request,
+     * they may re-enable it if desired through the appropriate system UI.  This
+     * option currently <strong>can not</strong> be used with
+     * {@link #setComponentEnabledSetting(ComponentName, int, int)}.
+     */
+    public static final int COMPONENT_ENABLED_STATE_DISABLED_USER = 3;
 
     /**
      * Flag parameter for {@link #installPackage(android.net.Uri, IPackageInstallObserver, int)} to
@@ -244,7 +275,7 @@ public abstract class PackageManager {
     public static final int INSTALL_REPLACE_EXISTING = 0x00000002;
 
     /**
-     * Flag parameter for {@link #installPackage} to indicate that you want to 
+     * Flag parameter for {@link #installPackage} to indicate that you want to
      * allow test packages (those that have set android:testOnly in their
      * manifest) to be installed.
      * @hide
@@ -259,11 +290,19 @@ public abstract class PackageManager {
     public static final int INSTALL_EXTERNAL = 0x00000008;
 
     /**
-    * Flag parameter for {@link #installPackage} to indicate that this
-    * package has to be installed on the sdcard.
-    * @hide
-    */
-   public static final int INSTALL_INTERNAL = 0x00000010;
+     * Flag parameter for {@link #installPackage} to indicate that this package
+     * has to be installed on the sdcard.
+     * @hide
+     */
+    public static final int INSTALL_INTERNAL = 0x00000010;
+
+    /**
+     * Flag parameter for {@link #installPackage} to indicate that this install
+     * was initiated via ADB.
+     *
+     * @hide
+     */
+    public static final int INSTALL_FROM_ADB = 0x00000020;
 
     /**
      * Flag parameter for
@@ -453,6 +492,30 @@ public abstract class PackageManager {
     public static final int INSTALL_FAILED_MEDIA_UNAVAILABLE = -20;
 
     /**
+     * Installation return code: this is passed to the {@link IPackageInstallObserver} by
+     * {@link #installPackage(android.net.Uri, IPackageInstallObserver, int)} if
+     * the new package couldn't be installed because the verification timed out.
+     * @hide
+     */
+    public static final int INSTALL_FAILED_VERIFICATION_TIMEOUT = -21;
+
+    /**
+     * Installation return code: this is passed to the {@link IPackageInstallObserver} by
+     * {@link #installPackage(android.net.Uri, IPackageInstallObserver, int)} if
+     * the new package couldn't be installed because the verification did not succeed.
+     * @hide
+     */
+    public static final int INSTALL_FAILED_VERIFICATION_FAILURE = -22;
+
+    /**
+     * Installation return code: this is passed to the {@link IPackageInstallObserver} by
+     * {@link #installPackage(android.net.Uri, IPackageInstallObserver, int)} if
+     * the package changed from what the calling program expected.
+     * @hide
+     */
+    public static final int INSTALL_FAILED_PACKAGE_CHANGED = -23;
+
+    /**
      * Installation parse return code: this is passed to the {@link IPackageInstallObserver} by
      * {@link #installPackage(android.net.Uri, IPackageInstallObserver, int)}
      * if the parser was given a path that is not a file, or does not end with the expected
@@ -552,9 +615,38 @@ public abstract class PackageManager {
     public static final int DONT_DELETE_DATA = 0x00000001;
 
     /**
+     * Return code for when package deletion succeeds. This is passed to the
+     * {@link IPackageDeleteObserver} by {@link #deletePackage()} if the system
+     * succeeded in deleting the package.
+     *
+     * @hide
+     */
+    public static final int DELETE_SUCCEEDED = 1;
+
+    /**
+     * Deletion failed return code: this is passed to the
+     * {@link IPackageDeleteObserver} by {@link #deletePackage()} if the system
+     * failed to delete the package for an unspecified reason.
+     *
+     * @hide
+     */
+    public static final int DELETE_FAILED_INTERNAL_ERROR = -1;
+
+    /**
+     * Deletion failed return code: this is passed to the
+     * {@link IPackageDeleteObserver} by {@link #deletePackage()} if the system
+     * failed to delete the package because it is the active DevicePolicy
+     * manager.
+     *
+     * @hide
+     */
+    public static final int DELETE_FAILED_DEVICE_POLICY_MANAGER = -2;
+
+    /**
      * Return code that is passed to the {@link IPackageMoveObserver} by
-     * {@link #movePackage(android.net.Uri, IPackageMoveObserver)}
-     * when the package has been successfully moved by the system.
+     * {@link #movePackage(android.net.Uri, IPackageMoveObserver)} when the
+     * package has been successfully moved by the system.
+     *
      * @hide
      */
     public static final int MOVE_SUCCEEDED = 1;
@@ -612,7 +704,7 @@ public abstract class PackageManager {
      * {@link #movePackage(android.net.Uri, IPackageMoveObserver)} if the
      * specified package already has an operation pending in the
      * {@link PackageHandler} queue.
-     * 
+     *
      * @hide
      */
     public static final int MOVE_FAILED_OPERATION_PENDING = -7;
@@ -633,10 +725,40 @@ public abstract class PackageManager {
     public static final int MOVE_EXTERNAL_MEDIA = 0x00000002;
 
     /**
-     * Feature for {@link #getSystemAvailableFeatures} and
-     * {@link #hasSystemFeature}: The device's audio pipeline is low-latency,
-     * more suitable for audio applications sensitive to delays or lag in
-     * sound input or output.
+     * Usable by the required verifier as the {@code verificationCode} argument
+     * for {@link PackageManager#verifyPendingInstall} to indicate that it will
+     * allow the installation to proceed without any of the optional verifiers
+     * needing to vote.
+     *
+     * @hide
+     */
+    public static final int VERIFICATION_ALLOW_WITHOUT_SUFFICIENT = 2;
+
+    /**
+     * Used as the {@code verificationCode} argument for
+     * {@link PackageManager#verifyPendingInstall} to indicate that the calling
+     * package verifier allows the installation to proceed.
+     */
+    public static final int VERIFICATION_ALLOW = 1;
+
+    /**
+     * Used as the {@code verificationCode} argument for
+     * {@link PackageManager#verifyPendingInstall} to indicate the calling
+     * package verifier does not vote to allow the installation to proceed.
+     */
+    public static final int VERIFICATION_REJECT = -1;
+
+    /**
+     * Range of IDs allocated for a user.
+     *
+     * @hide
+     */
+    public static final int PER_USER_RANGE = 100000;
+
+    /**
+     * Feature for {@link #getSystemAvailableFeatures} and {@link #hasSystemFeature}: The device's
+     * audio pipeline is low-latency, more suitable for audio applications sensitive to delays or
+     * lag in sound input or output.
      */
     @SdkConstant(SdkConstantType.FEATURE)
     public static final String FEATURE_AUDIO_LOW_LATENCY = "android.hardware.audio.low_latency";
@@ -760,7 +882,7 @@ public abstract class PackageManager {
      */
     @SdkConstant(SdkConstantType.FEATURE)
     public static final String FEATURE_SENSOR_PROXIMITY = "android.hardware.sensor.proximity";
-    
+
     /**
      * Feature for {@link #getSystemAvailableFeatures} and
      * {@link #hasSystemFeature}: The device has a telephony radio with data
@@ -768,14 +890,14 @@ public abstract class PackageManager {
      */
     @SdkConstant(SdkConstantType.FEATURE)
     public static final String FEATURE_TELEPHONY = "android.hardware.telephony";
-    
+
     /**
      * Feature for {@link #getSystemAvailableFeatures} and
      * {@link #hasSystemFeature}: The device has a CDMA telephony stack.
      */
     @SdkConstant(SdkConstantType.FEATURE)
     public static final String FEATURE_TELEPHONY_CDMA = "android.hardware.telephony.cdma";
-    
+
     /**
      * Feature for {@link #getSystemAvailableFeatures} and
      * {@link #hasSystemFeature}: The device has a GSM telephony stack.
@@ -785,9 +907,17 @@ public abstract class PackageManager {
 
     /**
      * Feature for {@link #getSystemAvailableFeatures} and
-     * {@link #hasSystemFeature}: The device supports connecting to USB accessories.
-     * @hide
+     * {@link #hasSystemFeature}: The device supports connecting to USB devices
+     * as the USB host.
      */
+    @SdkConstant(SdkConstantType.FEATURE)
+    public static final String FEATURE_USB_HOST = "android.hardware.usb.host";
+
+    /**
+     * Feature for {@link #getSystemAvailableFeatures} and
+     * {@link #hasSystemFeature}: The device supports connecting to USB accessories.
+     */
+    @SdkConstant(SdkConstantType.FEATURE)
     public static final String FEATURE_USB_ACCESSORY = "android.hardware.usb.accessory";
 
     /**
@@ -810,8 +940,8 @@ public abstract class PackageManager {
      */
     @SdkConstant(SdkConstantType.FEATURE)
     public static final String FEATURE_TOUCHSCREEN = "android.hardware.touchscreen";
-    
-    
+
+
     /**
      * Feature for {@link #getSystemAvailableFeatures} and
      * {@link #hasSystemFeature}: The device's touch screen supports
@@ -819,7 +949,7 @@ public abstract class PackageManager {
      */
     @SdkConstant(SdkConstantType.FEATURE)
     public static final String FEATURE_TOUCHSCREEN_MULTITOUCH = "android.hardware.touchscreen.multitouch";
-    
+
     /**
      * Feature for {@link #getSystemAvailableFeatures} and
      * {@link #hasSystemFeature}: The device's touch screen is capable of
@@ -839,6 +969,70 @@ public abstract class PackageManager {
 
     /**
      * Feature for {@link #getSystemAvailableFeatures} and
+     * {@link #hasSystemFeature}: The device does not have a touch screen, but
+     * does support touch emulation for basic events. For instance, the
+     * device might use a mouse or remote control to drive a cursor, and
+     * emulate basic touch pointer events like down, up, drag, etc. All
+     * devices that support android.hardware.touchscreen or a sub-feature are
+     * presumed to also support faketouch.
+     */
+    @SdkConstant(SdkConstantType.FEATURE)
+    public static final String FEATURE_FAKETOUCH = "android.hardware.faketouch";
+
+    /**
+     * Feature for {@link #getSystemAvailableFeatures} and
+     * {@link #hasSystemFeature}: The device does not have a touch screen, but
+     * does support touch emulation for basic events that supports distinct
+     * tracking of two or more fingers.  This is an extension of
+     * {@link #FEATURE_FAKETOUCH} for input devices with this capability.  Note
+     * that unlike a distinct multitouch screen as defined by
+     * {@link #FEATURE_TOUCHSCREEN_MULTITOUCH_DISTINCT}, these kinds of input
+     * devices will not actually provide full two-finger gestures since the
+     * input is being transformed to cursor movement on the screen.  That is,
+     * single finger gestures will move a cursor; two-finger swipes will
+     * result in single-finger touch events; other two-finger gestures will
+     * result in the corresponding two-finger touch event.
+     */
+    @SdkConstant(SdkConstantType.FEATURE)
+    public static final String FEATURE_FAKETOUCH_MULTITOUCH_DISTINCT = "android.hardware.faketouch.multitouch.distinct";
+
+    /**
+     * Feature for {@link #getSystemAvailableFeatures} and
+     * {@link #hasSystemFeature}: The device does not have a touch screen, but
+     * does support touch emulation for basic events that supports tracking
+     * a hand of fingers (5 or more fingers) fully independently.
+     * This is an extension of
+     * {@link #FEATURE_FAKETOUCH} for input devices with this capability.  Note
+     * that unlike a multitouch screen as defined by
+     * {@link #FEATURE_TOUCHSCREEN_MULTITOUCH_JAZZHAND}, not all two finger
+     * gestures can be detected due to the limitations described for
+     * {@link #FEATURE_FAKETOUCH_MULTITOUCH_DISTINCT}.
+     */
+    @SdkConstant(SdkConstantType.FEATURE)
+    public static final String FEATURE_FAKETOUCH_MULTITOUCH_JAZZHAND = "android.hardware.faketouch.multitouch.jazzhand";
+
+    /**
+     * Feature for {@link #getSystemAvailableFeatures} and
+     * {@link #hasSystemFeature}: The device supports portrait orientation
+     * screens.  For backwards compatibility, you can assume that if neither
+     * this nor {@link #FEATURE_SCREEN_LANDSCAPE} is set then the device supports
+     * both portrait and landscape.
+     */
+    @SdkConstant(SdkConstantType.FEATURE)
+    public static final String FEATURE_SCREEN_PORTRAIT = "android.hardware.screen.portrait";
+
+    /**
+     * Feature for {@link #getSystemAvailableFeatures} and
+     * {@link #hasSystemFeature}: The device supports landscape orientation
+     * screens.  For backwards compatibility, you can assume that if neither
+     * this nor {@link #FEATURE_SCREEN_PORTRAIT} is set then the device supports
+     * both portrait and landscape.
+     */
+    @SdkConstant(SdkConstantType.FEATURE)
+    public static final String FEATURE_SCREEN_LANDSCAPE = "android.hardware.screen.landscape";
+
+    /**
+     * Feature for {@link #getSystemAvailableFeatures} and
      * {@link #hasSystemFeature}: The device supports live wallpapers.
      */
     @SdkConstant(SdkConstantType.FEATURE)
@@ -852,6 +1046,13 @@ public abstract class PackageManager {
     public static final String FEATURE_WIFI = "android.hardware.wifi";
 
     /**
+     * Feature for {@link #getSystemAvailableFeatures} and
+     * {@link #hasSystemFeature}: The device supports Wi-Fi Direct networking.
+     */
+    @SdkConstant(SdkConstantType.FEATURE)
+    public static final String FEATURE_WIFI_DIRECT = "android.hardware.wifi.direct";
+
+    /**
      * Action to external storage service to clean out removed apps.
      * @hide
      */
@@ -859,35 +1060,61 @@ public abstract class PackageManager {
             = "android.content.pm.CLEAN_EXTERNAL_STORAGE";
 
     /**
+     * Extra field name for the URI to a verification file. Passed to a package
+     * verifier.
+     *
+     * @hide
+     */
+    public static final String EXTRA_VERIFICATION_URI = "android.content.pm.extra.VERIFICATION_URI";
+
+    /**
+     * Extra field name for the ID of a package pending verification. Passed to
+     * a package verifier and is used to call back to
+     * {@link PackageManager#verifyPendingInstall(int, int)}
+     */
+    public static final String EXTRA_VERIFICATION_ID = "android.content.pm.extra.VERIFICATION_ID";
+
+    /**
+     * Extra field name for the package identifier which is trying to install
+     * the package.
+     *
+     * @hide
+     */
+    public static final String EXTRA_VERIFICATION_INSTALLER_PACKAGE
+            = "android.content.pm.extra.VERIFICATION_INSTALLER_PACKAGE";
+
+    /**
+     * Extra field name for the requested install flags for a package pending
+     * verification. Passed to a package verifier.
+     *
+     * @hide
+     */
+    public static final String EXTRA_VERIFICATION_INSTALL_FLAGS
+            = "android.content.pm.extra.VERIFICATION_INSTALL_FLAGS";
+
+    /**
      * Retrieve overall information about an application package that is
      * installed on the system.
-     *
-     * <p>Throws {@link NameNotFoundException} if a package with the given
-     * name can not be found on the system.
+     * <p>
+     * Throws {@link NameNotFoundException} if a package with the given name can
+     * not be found on the system.
      *
      * @param packageName The full name (i.e. com.google.apps.contacts) of the
-     *                    desired package.
-
+     *            desired package.
      * @param flags Additional option flags. Use any combination of
-     * {@link #GET_ACTIVITIES},
-     * {@link #GET_GIDS},
-     * {@link #GET_CONFIGURATIONS},
-     * {@link #GET_INSTRUMENTATION},
-     * {@link #GET_PERMISSIONS},
-     * {@link #GET_PROVIDERS},
-     * {@link #GET_RECEIVERS},
-     * {@link #GET_SERVICES},
-     * {@link #GET_SIGNATURES},
-     * {@link #GET_UNINSTALLED_PACKAGES} to modify the data returned.
-     *
-     * @return Returns a PackageInfo object containing information about the package.
-     *         If flag GET_UNINSTALLED_PACKAGES is set and  if the package is not
-     *         found in the list of installed applications, the package information is
-     *         retrieved from the list of uninstalled applications(which includes 
-     *         installed applications as well as applications
-     *         with data directory ie applications which had been
+     *            {@link #GET_ACTIVITIES}, {@link #GET_GIDS},
+     *            {@link #GET_CONFIGURATIONS}, {@link #GET_INSTRUMENTATION},
+     *            {@link #GET_PERMISSIONS}, {@link #GET_PROVIDERS},
+     *            {@link #GET_RECEIVERS}, {@link #GET_SERVICES},
+     *            {@link #GET_SIGNATURES}, {@link #GET_UNINSTALLED_PACKAGES} to
+     *            modify the data returned.
+     * @return Returns a PackageInfo object containing information about the
+     *         package. If flag GET_UNINSTALLED_PACKAGES is set and if the
+     *         package is not found in the list of installed applications, the
+     *         package information is retrieved from the list of uninstalled
+     *         applications(which includes installed applications as well as
+     *         applications with data directory ie applications which had been
      *         deleted with DONT_DELTE_DATA flag set).
-     *         
      * @see #GET_ACTIVITIES
      * @see #GET_GIDS
      * @see #GET_CONFIGURATIONS
@@ -898,7 +1125,6 @@ public abstract class PackageManager {
      * @see #GET_SERVICES
      * @see #GET_SIGNATURES
      * @see #GET_UNINSTALLED_PACKAGES
-     *                  
      */
     public abstract PackageInfo getPackageInfo(String packageName, int flags)
             throws NameNotFoundException;
@@ -911,7 +1137,7 @@ public abstract class PackageManager {
      * the canonical name for each package.
      */
     public abstract String[] currentToCanonicalPackageNames(String[] names);
-    
+
     /**
      * Map from a packages canonical name to the current name in use on the device.
      * @param names Array of new names to be mapped.
@@ -919,7 +1145,7 @@ public abstract class PackageManager {
      * the current name for each package.
      */
     public abstract String[] canonicalToCurrentPackageNames(String[] names);
-    
+
     /**
      * Return a "good" intent to launch a front-door activity in a package,
      * for use for example to implement an "open" button when browsing through
@@ -927,12 +1153,12 @@ public abstract class PackageManager {
      * activity in the category {@link Intent#CATEGORY_INFO}, next for a
      * main activity in the category {@link Intent#CATEGORY_LAUNCHER}, or return
      * null if neither are found.
-     * 
+     *
      * <p>Throws {@link NameNotFoundException} if a package with the given
      * name can not be found on the system.
      *
      * @param packageName The name of the package to inspect.
-     * 
+     *
      * @return Returns either a fully-qualified Intent that can be used to
      * launch the main activity in the package, or null if the package does
      * not contain such an activity.
@@ -1028,16 +1254,16 @@ public abstract class PackageManager {
      *
      * @param packageName The full name (i.e. com.google.apps.contacts) of an
      *                    application.
-     * @param flags Additional option flags. Use any combination of 
+     * @param flags Additional option flags. Use any combination of
      * {@link #GET_META_DATA}, {@link #GET_SHARED_LIBRARY_FILES},
      * {@link #GET_UNINSTALLED_PACKAGES} to modify the data returned.
      *
-     * @return  {@link ApplicationInfo} Returns ApplicationInfo object containing 
+     * @return  {@link ApplicationInfo} Returns ApplicationInfo object containing
      *         information about the package.
      *         If flag GET_UNINSTALLED_PACKAGES is set and  if the package is not
-     *         found in the list of installed applications, 
-     *         the application information is retrieved from the 
-     *         list of uninstalled applications(which includes 
+     *         found in the list of installed applications,
+     *         the application information is retrieved from the
+     *         list of uninstalled applications(which includes
      *         installed applications as well as applications
      *         with data directory ie applications which had been
      *         deleted with DONT_DELTE_DATA flag set).
@@ -1059,7 +1285,7 @@ public abstract class PackageManager {
      * @param component The full component name (i.e.
      * com.google.apps.contacts/com.google.apps.contacts.ContactsList) of an Activity
      * class.
-     * @param flags Additional option flags. Use any combination of 
+     * @param flags Additional option flags. Use any combination of
      * {@link #GET_META_DATA}, {@link #GET_SHARED_LIBRARY_FILES},
      * to modify the data (in ApplicationInfo) returned.
      *
@@ -1082,7 +1308,7 @@ public abstract class PackageManager {
      * @param component The full component name (i.e.
      * com.google.apps.calendar/com.google.apps.calendar.CalendarAlarm) of a Receiver
      * class.
-     * @param flags Additional option flags.  Use any combination of 
+     * @param flags Additional option flags.  Use any combination of
      * {@link #GET_META_DATA}, {@link #GET_SHARED_LIBRARY_FILES},
      * to modify the data returned.
      *
@@ -1105,12 +1331,12 @@ public abstract class PackageManager {
      * @param component The full component name (i.e.
      * com.google.apps.media/com.google.apps.media.BackgroundPlayback) of a Service
      * class.
-     * @param flags Additional option flags.  Use any combination of 
+     * @param flags Additional option flags.  Use any combination of
      * {@link #GET_META_DATA}, {@link #GET_SHARED_LIBRARY_FILES},
      * to modify the data returned.
      *
      * @return ServiceInfo containing information about the service.
-     * 
+     *
      * @see #GET_META_DATA
      * @see #GET_SHARED_LIBRARY_FILES
      */
@@ -1157,7 +1383,7 @@ public abstract class PackageManager {
      *
      * @return A List of PackageInfo objects, one for each package that is
      *         installed on the device.  In the unlikely case of there being no
-     *         installed packages, an empty list is returned. 
+     *         installed packages, an empty list is returned.
      *         If flag GET_UNINSTALLED_PACKAGES is set, a list of all
      *         applications including those deleted with DONT_DELETE_DATA
      *         (partially installed apps with data directory) will be returned.
@@ -1172,7 +1398,7 @@ public abstract class PackageManager {
      * @see #GET_SERVICES
      * @see #GET_SIGNATURES
      * @see #GET_UNINSTALLED_PACKAGES
-     * 
+     *
      */
     public abstract List<PackageInfo> getInstalledPackages(int flags);
 
@@ -1234,7 +1460,7 @@ public abstract class PackageManager {
      * the device is rebooted before it is written.
      */
     public abstract boolean addPermissionAsync(PermissionInfo info);
-    
+
     /**
      * Removes a permission that was previously added with
      * {@link #addPermission(PermissionInfo)}.  The same ownership rules apply
@@ -1321,7 +1547,7 @@ public abstract class PackageManager {
      * user id is not currently assigned.
      */
     public abstract String getNameForUid(int uid);
-    
+
     /**
      * Return the user id associated with a shared user name. Multiple
      * applications can specify a shared user name in their manifest and thus
@@ -1342,38 +1568,38 @@ public abstract class PackageManager {
      * device. If flag GET_UNINSTALLED_PACKAGES has been set, a list of all
      * applications including those deleted with DONT_DELETE_DATA(partially
      * installed apps with data directory) will be returned.
-     * 
-     * @param flags Additional option flags. Use any combination of 
+     *
+     * @param flags Additional option flags. Use any combination of
      * {@link #GET_META_DATA}, {@link #GET_SHARED_LIBRARY_FILES},
      * {link #GET_UNINSTALLED_PACKAGES} to modify the data returned.
      *
      * @return A List of ApplicationInfo objects, one for each application that
      *         is installed on the device.  In the unlikely case of there being
-     *         no installed applications, an empty list is returned. 
+     *         no installed applications, an empty list is returned.
      *         If flag GET_UNINSTALLED_PACKAGES is set, a list of all
      *         applications including those deleted with DONT_DELETE_DATA
      *         (partially installed apps with data directory) will be returned.
-     *         
+     *
      * @see #GET_META_DATA
      * @see #GET_SHARED_LIBRARY_FILES
      * @see #GET_UNINSTALLED_PACKAGES
      */
     public abstract List<ApplicationInfo> getInstalledApplications(int flags);
-    
+
     /**
      * Get a list of shared libraries that are available on the
      * system.
-     * 
+     *
      * @return An array of shared library names that are
      * available on the system, or null if none are installed.
-     * 
+     *
      */
     public abstract String[] getSystemSharedLibraryNames();
 
     /**
      * Get a list of features that are available on the
      * system.
-     * 
+     *
      * @return An array of FeatureInfo classes describing the features
      * that are available on the system, or null if there are none(!!).
      */
@@ -1382,7 +1608,7 @@ public abstract class PackageManager {
     /**
      * Check whether the given feature name is one of the available
      * features as returned by {@link #getSystemAvailableFeatures()}.
-     * 
+     *
      * @return Returns true if the devices supports the feature, else
      * false.
      */
@@ -1393,13 +1619,13 @@ public abstract class PackageManager {
      * {@link Intent#resolveActivity} finds an activity if a class has not
      * been explicitly specified.
      *
-     * <p><em>Note: if using an implicit Intent (without an explicit ComponentName
+     * <p><em>Note:</em> if using an implicit Intent (without an explicit ComponentName
      * specified), be sure to consider whether to set the {@link #MATCH_DEFAULT_ONLY}
      * only flag.  You need to do so to resolve the activity in the same way
      * that {@link android.content.Context#startActivity(Intent)} and
      * {@link android.content.Intent#resolveActivity(PackageManager)
      * Intent.resolveActivity(PackageManager)} do.</p>
-     * 
+     *
      * @param intent An intent containing all of the desired specification
      *               (action, data, type, category, and/or component).
      * @param flags Additional option flags.  The most important is
@@ -1698,7 +1924,7 @@ public abstract class PackageManager {
      *
      * @return Returns the image of the logo or null if the activity has no
      * logo specified.
-     * 
+     *
      * @throws NameNotFoundException Thrown if the resources for the given
      * activity could not be loaded.
      *
@@ -1719,7 +1945,7 @@ public abstract class PackageManager {
      *
      * @return Returns the image of the logo, or null if the activity has no
      * logo specified.
-     * 
+     *
      * @throws NameNotFoundException Thrown if the resources for application
      * matching the given intent could not be loaded.
      *
@@ -1752,7 +1978,7 @@ public abstract class PackageManager {
      *
      * @return Returns the image of the logo, or null if no application logo
      * has been specified.
-     * 
+     *
      * @throws NameNotFoundException Thrown if the resources for the given
      * application could not be loaded.
      *
@@ -1886,7 +2112,7 @@ public abstract class PackageManager {
      * @see #GET_RECEIVERS
      * @see #GET_SERVICES
      * @see #GET_SIGNATURES
-     * 
+     *
      */
     public PackageInfo getPackageArchiveInfo(String archiveFilePath, int flags) {
         PackageParser packageParser = new PackageParser(archiveFilePath);
@@ -1898,12 +2124,15 @@ public abstract class PackageManager {
         if (pkg == null) {
             return null;
         }
+        if ((flags & GET_SIGNATURES) != 0) {
+            packageParser.collectCertificates(pkg, 0);
+        }
         return PackageParser.generatePackageInfo(pkg, null, flags, 0, 0);
     }
 
     /**
      * @hide
-     * 
+     *
      * Install a package. Since this may take a little while, the result will
      * be posted back to the given observer.  An installation will fail if the calling context
      * lacks the {@link android.Manifest.permission#INSTALL_PACKAGES} permission, if the
@@ -1922,6 +2151,65 @@ public abstract class PackageManager {
      */
     public abstract void installPackage(
             Uri packageURI, IPackageInstallObserver observer, int flags,
+            String installerPackageName);
+
+    /**
+     * Similar to
+     * {@link #installPackage(Uri, IPackageInstallObserver, int, String)} but
+     * with an extra verification file provided.
+     *
+     * @param packageURI The location of the package file to install. This can
+     *            be a 'file:' or a 'content:' URI.
+     * @param observer An observer callback to get notified when the package
+     *            installation is complete.
+     *            {@link IPackageInstallObserver#packageInstalled(String, int)}
+     *            will be called when that happens. observer may be null to
+     *            indicate that no callback is desired.
+     * @param flags - possible values: {@link #INSTALL_FORWARD_LOCK},
+     *            {@link #INSTALL_REPLACE_EXISTING}, {@link #INSTALL_ALLOW_TEST}
+     *            .
+     * @param installerPackageName Optional package name of the application that
+     *            is performing the installation. This identifies which market
+     *            the package came from.
+     * @param verificationURI The location of the supplementary verification
+     *            file. This can be a 'file:' or a 'content:' URI.
+     * @hide
+     */
+    public abstract void installPackageWithVerification(Uri packageURI,
+            IPackageInstallObserver observer, int flags, String installerPackageName,
+            Uri verificationURI, ManifestDigest manifestDigest);
+
+    /**
+     * Allows a package listening to the
+     * {@link Intent#ACTION_PACKAGE_NEEDS_VERIFICATION package verification
+     * broadcast} to respond to the package manager. The response must include
+     * the {@code verificationCode} which is one of
+     * {@link PackageManager#VERIFICATION_ALLOW} or
+     * {@link PackageManager#VERIFICATION_REJECT}.
+     *
+     * @param id pending package identifier as passed via the
+     *            {@link PackageManager#EXTRA_VERIFICATION_ID} Intent extra
+     * @param verificationCode either {@link PackageManager#VERIFICATION_ALLOW}
+     *            or {@link PackageManager#VERIFICATION_REJECT}.
+     */
+    public abstract void verifyPendingInstall(int id, int verificationCode);
+
+    /**
+     * Change the installer associated with a given package.  There are limitations
+     * on how the installer package can be changed; in particular:
+     * <ul>
+     * <li> A SecurityException will be thrown if <var>installerPackageName</var>
+     * is not signed with the same certificate as the calling application.
+     * <li> A SecurityException will be thrown if <var>targetPackage</var> already
+     * has an installer package, and that installer package is not signed with
+     * the same certificate as the calling application.
+     * </ul>
+     *
+     * @param targetPackage The installed package whose installer will be changed.
+     * @param installerPackageName The package name of the new installer.  May be
+     * null to clear the association.
+     */
+    public abstract void setInstallerPackageName(String targetPackage,
             String installerPackageName);
 
     /**
@@ -1945,11 +2233,11 @@ public abstract class PackageManager {
     /**
      * Retrieve the package name of the application that installed a package. This identifies
      * which market the package came from.
-     * 
+     *
      * @param packageName The name of the package to query
      */
     public abstract String getInstallerPackageName(String packageName);
-    
+
     /**
      * Attempts to clear the user data directory of an application.
      * Since this may take a little while, the result will
@@ -2004,7 +2292,7 @@ public abstract class PackageManager {
      * of bytes if possible.
      * @param observer call back used to notify when
      * the operation is completed
-     * 
+     *
      * @hide
      */
     public abstract void freeStorageAndNotify(long freeStorageSize, IPackageDataObserver observer);
@@ -2029,7 +2317,7 @@ public abstract class PackageManager {
      * @param pi IntentSender call back used to
      * notify when the operation is completed.May be null
      * to indicate that no call back is desired.
-     * 
+     *
      * @hide
      */
     public abstract void freeStorage(long freeStorageSize, IntentSender pi);
@@ -2105,7 +2393,7 @@ public abstract class PackageManager {
      * @deprecated This is a protected API that should not have been available
      * to third party applications.  It is the platform's responsibility for
      * assigning preferred activities and this can not be directly modified.
-     * 
+     *
      * Add a new preferred activity mapping to the system.  This will be used
      * to automatically select the given activity component when
      * {@link Context#startActivity(Intent) Context.startActivity()} finds
@@ -2128,7 +2416,7 @@ public abstract class PackageManager {
      * @deprecated This is a protected API that should not have been available
      * to third party applications.  It is the platform's responsibility for
      * assigning preferred activities and this can not be directly modified.
-     * 
+     *
      * Replaces an existing preferred activity mapping to the system, and if that were not present
      * adds a new preferred activity.  This will be used
      * to automatically select the given activity component when
@@ -2237,7 +2525,7 @@ public abstract class PackageManager {
      */
     public abstract void setApplicationEnabledSetting(String packageName,
             int newState, int flags);
-    
+
     /**
      * Return the the enabled setting for an application.  This returns
      * the last value set by
@@ -2252,6 +2540,7 @@ public abstract class PackageManager {
      * {@link #COMPONENT_ENABLED_STATE_DEFAULT}.  The last one means the
      * application's enabled state is based on the original information in
      * the manifest as found in {@link ComponentInfo}.
+     * @throws IllegalArgumentException if the named package does not exist.
      */
     public abstract int getApplicationEnabledSetting(String packageName);
 
@@ -2278,4 +2567,89 @@ public abstract class PackageManager {
      */
     public abstract void movePackage(
             String packageName, IPackageMoveObserver observer, int flags);
+
+    /**
+     * Creates a user with the specified name and options.
+     *
+     * @param name the user's name
+     * @param flags flags that identify the type of user and other properties.
+     * @see UserInfo
+     *
+     * @return the UserInfo object for the created user, or null if the user could not be created.
+     * @hide
+     */
+    public abstract UserInfo createUser(String name, int flags);
+
+    /**
+     * @return the list of users that were created
+     * @hide
+     */
+    public abstract List<UserInfo> getUsers();
+
+    /**
+     * @param id the ID of the user, where 0 is the primary user.
+     * @hide
+     */
+    public abstract boolean removeUser(int id);
+
+    /**
+     * Updates the user's name.
+     *
+     * @param id the user's id
+     * @param name the new name for the user
+     * @hide
+     */
+    public abstract void updateUserName(int id, String name);
+
+    /**
+     * Changes the user's properties specified by the flags.
+     *
+     * @param id the user's id
+     * @param flags the new flags for the user
+     * @hide
+     */
+    public abstract void updateUserFlags(int id, int flags);
+
+    /**
+     * Checks to see if the user id is the same for the two uids, i.e., they belong to the same
+     * user.
+     * @hide
+     */
+    public static boolean isSameUser(int uid1, int uid2) {
+        return getUserId(uid1) == getUserId(uid2);
+    }
+
+    /**
+     * Returns the user id for a given uid.
+     * @hide
+     */
+    public static int getUserId(int uid) {
+        return uid / PER_USER_RANGE;
+    }
+
+    /**
+     * Returns the uid that is composed from the userId and the appId.
+     * @hide
+     */
+    public static int getUid(int userId, int appId) {
+        return userId * PER_USER_RANGE + (appId % PER_USER_RANGE);
+    }
+
+    /**
+     * Returns the app id (or base uid) for a given uid, stripping out the user id from it.
+     * @hide
+     */
+    public static int getAppId(int uid) {
+        return uid % PER_USER_RANGE;
+    }
+
+    /**
+     * Returns the device identity that verifiers can use to associate their
+     * scheme to a particular device. This should not be used by anything other
+     * than a package verifier.
+     *
+     * @return identity that uniquely identifies current device
+     * @hide
+     */
+    public abstract VerifierDeviceIdentity getVerifierDeviceIdentity();
 }

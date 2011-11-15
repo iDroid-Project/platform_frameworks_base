@@ -4,7 +4,7 @@
     <ssid>opennet</ssid>
     <security>NONE</security>
   </accesspoint>
-    <accesspoint>
+  <accesspoint>
     <ssid>GoogleGuest</ssid>
     <security>NONE</security>
   </accesspoint>
@@ -19,7 +19,7 @@
     <password>androidwifi</password>
     <ip>192.168.14.2</ip>
     <gateway>192.168.14.1</gateway>
-    <netmask>255.255.255.0</netmask>
+    <networkprefixlength>24</networkprefixlength>
     <dns1>192.168.14.1</dns1>
     <dns2>192.168.1.9</dns2>
   </accesspoint>

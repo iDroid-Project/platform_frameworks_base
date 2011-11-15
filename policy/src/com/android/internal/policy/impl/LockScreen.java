@@ -17,29 +17,25 @@
 package com.android.internal.policy.impl;
 
 import com.android.internal.R;
-import com.android.internal.telephony.IccCard;
 import com.android.internal.widget.LockPatternUtils;
 import com.android.internal.widget.SlidingTab;
+import com.android.internal.widget.WaveView;
+import com.android.internal.widget.multiwaveview.MultiWaveView;
 
+import android.app.ActivityManager;
 import android.content.Context;
+import android.content.Intent;
 import android.content.res.Configuration;
 import android.content.res.Resources;
-import android.content.res.ColorStateList;
-import android.text.format.DateFormat;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.*;
-import android.graphics.drawable.Drawable;
 import android.util.Log;
 import android.media.AudioManager;
-import android.os.BatteryManager;
-import android.os.SystemClock;
-import android.os.SystemProperties;
 import android.provider.Settings;
 
-import java.util.Date;
 import java.io.File;
 
 /**
@@ -47,101 +43,244 @@ import java.io.File;
  * information about the device depending on its state, and how to get
  * past it, as applicable.
  */
-class LockScreen extends LinearLayout implements KeyguardScreen, KeyguardUpdateMonitor.InfoCallback,
-        KeyguardUpdateMonitor.SimStateCallback, SlidingTab.OnTriggerListener {
+class LockScreen extends LinearLayout implements KeyguardScreen {
 
+    private static final int ON_RESUME_PING_DELAY = 500; // delay first ping until the screen is on
     private static final boolean DBG = false;
     private static final String TAG = "LockScreen";
     private static final String ENABLE_MENU_KEY_FILE = "/data/local/enable_menu_key";
-
-    private Status mStatus = Status.Normal;
+    private static final int WAIT_FOR_ANIMATION_TIMEOUT = 0;
+    private static final int STAY_ON_WHILE_GRABBED_TIMEOUT = 30000;
 
     private LockPatternUtils mLockPatternUtils;
     private KeyguardUpdateMonitor mUpdateMonitor;
     private KeyguardScreenCallback mCallback;
 
-    private TextView mCarrier;
-    private SlidingTab mSelector;
-    private TextView mTime;
-    private TextView mDate;
-    private TextView mStatus1;
-    private TextView mStatus2;
-    private TextView mScreenLocked;
-    private TextView mEmergencyCallText;
-    private Button mEmergencyCallButton;
-
     // current configuration state of keyboard and display
     private int mKeyboardHidden;
     private int mCreationOrientation;
 
-    // are we showing battery information?
-    private boolean mShowingBatteryInfo = false;
-
-    // last known plugged in state
-    private boolean mPluggedIn = false;
-
-    // last known battery level
-    private int mBatteryLevel = 100;
-
-    private String mNextAlarm = null;
-    private Drawable mAlarmIcon = null;
-    private String mCharging = null;
-    private Drawable mChargingIcon = null;
-
     private boolean mSilentMode;
     private AudioManager mAudioManager;
-    private String mDateFormatString;
-    private java.text.DateFormat mTimeFormat;
     private boolean mEnableMenuKeyInLockScreen;
 
-    /**
-     * The status of this lock screen.
-     */
-    enum Status {
-        /**
-         * Normal case (sim card present, it's not locked)
-         */
-        Normal(true),
+    private KeyguardStatusViewManager mStatusViewManager;
+    private UnlockWidgetCommonMethods mUnlockWidgetMethods;
+    private View mUnlockWidget;
 
-        /**
-         * The sim card is 'network locked'.
-         */
-        NetworkLocked(true),
+    private interface UnlockWidgetCommonMethods {
+        // Update resources based on phone state
+        public void updateResources();
 
-        /**
-         * The sim card is missing.
-         */
-        SimMissing(false),
+        // Get the view associated with this widget
+        public View getView();
 
-        /**
-         * The sim card is missing, and this is the device isn't provisioned, so we don't let
-         * them get past the screen.
-         */
-        SimMissingLocked(false),
+        // Reset the view
+        public void reset(boolean animate);
 
-        /**
-         * The sim card is PUK locked, meaning they've entered the wrong sim unlock code too many
-         * times.
-         */
-        SimPukLocked(false),
+        // Animate the widget if it supports ping()
+        public void ping();
+    }
 
-        /**
-         * The sim card is locked.
-         */
-        SimLocked(true);
+    class SlidingTabMethods implements SlidingTab.OnTriggerListener, UnlockWidgetCommonMethods {
+        private final SlidingTab mSlidingTab;
 
-        private final boolean mShowStatusLines;
-
-        Status(boolean mShowStatusLines) {
-            this.mShowStatusLines = mShowStatusLines;
+        SlidingTabMethods(SlidingTab slidingTab) {
+            mSlidingTab = slidingTab;
         }
 
-        /**
-         * @return Whether the status lines (battery level and / or next alarm) are shown while
-         *         in this state.  Mostly dictated by whether this is room for them.
-         */
-        public boolean showStatusLines() {
-            return mShowStatusLines;
+        public void updateResources() {
+            boolean vibe = mSilentMode
+                && (mAudioManager.getRingerMode() == AudioManager.RINGER_MODE_VIBRATE);
+
+            mSlidingTab.setRightTabResources(
+                    mSilentMode ? ( vibe ? R.drawable.ic_jog_dial_vibrate_on
+                                         : R.drawable.ic_jog_dial_sound_off )
+                                : R.drawable.ic_jog_dial_sound_on,
+                    mSilentMode ? R.drawable.jog_tab_target_yellow
+                                : R.drawable.jog_tab_target_gray,
+                    mSilentMode ? R.drawable.jog_tab_bar_right_sound_on
+                                : R.drawable.jog_tab_bar_right_sound_off,
+                    mSilentMode ? R.drawable.jog_tab_right_sound_on
+                                : R.drawable.jog_tab_right_sound_off);
+        }
+
+        /** {@inheritDoc} */
+        public void onTrigger(View v, int whichHandle) {
+            if (whichHandle == SlidingTab.OnTriggerListener.LEFT_HANDLE) {
+                mCallback.goToUnlockScreen();
+            } else if (whichHandle == SlidingTab.OnTriggerListener.RIGHT_HANDLE) {
+                toggleRingMode();
+                mCallback.pokeWakelock();
+            }
+        }
+
+        /** {@inheritDoc} */
+        public void onGrabbedStateChange(View v, int grabbedState) {
+            if (grabbedState == SlidingTab.OnTriggerListener.RIGHT_HANDLE) {
+                mSilentMode = isSilentMode();
+                mSlidingTab.setRightHintText(mSilentMode ? R.string.lockscreen_sound_on_label
+                        : R.string.lockscreen_sound_off_label);
+            }
+            // Don't poke the wake lock when returning to a state where the handle is
+            // not grabbed since that can happen when the system (instead of the user)
+            // cancels the grab.
+            if (grabbedState != SlidingTab.OnTriggerListener.NO_HANDLE) {
+                mCallback.pokeWakelock();
+            }
+        }
+
+        public View getView() {
+            return mSlidingTab;
+        }
+
+        public void reset(boolean animate) {
+            mSlidingTab.reset(animate);
+        }
+
+        public void ping() {
+        }
+    }
+
+    class WaveViewMethods implements WaveView.OnTriggerListener, UnlockWidgetCommonMethods {
+
+        private final WaveView mWaveView;
+
+        WaveViewMethods(WaveView waveView) {
+            mWaveView = waveView;
+        }
+        /** {@inheritDoc} */
+        public void onTrigger(View v, int whichHandle) {
+            if (whichHandle == WaveView.OnTriggerListener.CENTER_HANDLE) {
+                requestUnlockScreen();
+            }
+        }
+
+        /** {@inheritDoc} */
+        public void onGrabbedStateChange(View v, int grabbedState) {
+            // Don't poke the wake lock when returning to a state where the handle is
+            // not grabbed since that can happen when the system (instead of the user)
+            // cancels the grab.
+            if (grabbedState == WaveView.OnTriggerListener.CENTER_HANDLE) {
+                mCallback.pokeWakelock(STAY_ON_WHILE_GRABBED_TIMEOUT);
+            }
+        }
+
+        public void updateResources() {
+        }
+
+        public View getView() {
+            return mWaveView;
+        }
+        public void reset(boolean animate) {
+            mWaveView.reset();
+        }
+        public void ping() {
+        }
+    }
+
+    class MultiWaveViewMethods implements MultiWaveView.OnTriggerListener,
+            UnlockWidgetCommonMethods {
+
+        private final MultiWaveView mMultiWaveView;
+        private boolean mCameraDisabled;
+
+        MultiWaveViewMethods(MultiWaveView multiWaveView) {
+            mMultiWaveView = multiWaveView;
+            final boolean cameraDisabled = mLockPatternUtils.getDevicePolicyManager()
+                    .getCameraDisabled(null);
+            if (cameraDisabled) {
+                Log.v(TAG, "Camera disabled by Device Policy");
+                mCameraDisabled = true;
+            } else {
+                // Camera is enabled if resource is initially defined for MultiWaveView
+                // in the lockscreen layout file
+                mCameraDisabled = mMultiWaveView.getTargetResourceId()
+                        != R.array.lockscreen_targets_with_camera;
+            }
+        }
+
+        public void updateResources() {
+            int resId;
+            if (mCameraDisabled) {
+                // Fall back to showing ring/silence if camera is disabled by DPM...
+                resId = mSilentMode ? R.array.lockscreen_targets_when_silent
+                    : R.array.lockscreen_targets_when_soundon;
+            } else {
+                resId = R.array.lockscreen_targets_with_camera;
+            }
+            mMultiWaveView.setTargetResources(resId);
+        }
+
+        public void onGrabbed(View v, int handle) {
+
+        }
+
+        public void onReleased(View v, int handle) {
+
+        }
+
+        public void onTrigger(View v, int target) {
+            if (target == 0 || target == 1) { // 0 = unlock/portrait, 1 = unlock/landscape
+                mCallback.goToUnlockScreen();
+            } else if (target == 2 || target == 3) { // 2 = alt/portrait, 3 = alt/landscape
+                if (!mCameraDisabled) {
+                    // Broadcast an intent to start the Camera
+                    Intent intent = new Intent(Intent.ACTION_CAMERA_BUTTON, null);
+                    mContext.sendOrderedBroadcast(intent, null);
+                    mCallback.goToUnlockScreen();
+                } else {
+                    toggleRingMode();
+                    mUnlockWidgetMethods.updateResources();
+                    mCallback.pokeWakelock();
+                }
+            }
+        }
+
+        public void onGrabbedStateChange(View v, int handle) {
+            // Don't poke the wake lock when returning to a state where the handle is
+            // not grabbed since that can happen when the system (instead of the user)
+            // cancels the grab.
+            if (handle != MultiWaveView.OnTriggerListener.NO_HANDLE) {
+                mCallback.pokeWakelock();
+            }
+        }
+
+        public View getView() {
+            return mMultiWaveView;
+        }
+
+        public void reset(boolean animate) {
+            mMultiWaveView.reset(animate);
+        }
+
+        public void ping() {
+            mMultiWaveView.ping();
+        }
+    }
+
+    private void requestUnlockScreen() {
+        // Delay hiding lock screen long enough for animation to finish
+        postDelayed(new Runnable() {
+            public void run() {
+                mCallback.goToUnlockScreen();
+            }
+        }, WAIT_FOR_ANIMATION_TIMEOUT);
+    }
+
+    private void toggleRingMode() {
+        // toggle silent mode
+        mSilentMode = !mSilentMode;
+        if (mSilentMode) {
+            final boolean vibe = (Settings.System.getInt(
+                mContext.getContentResolver(),
+                Settings.System.VIBRATE_IN_SILENT, 1) == 1);
+
+            mAudioManager.setRingerMode(vibe
+                ? AudioManager.RINGER_MODE_VIBRATE
+                : AudioManager.RINGER_MODE_SILENT);
+        } else {
+            mAudioManager.setRingerMode(AudioManager.RINGER_MODE_NORMAL);
         }
     }
 
@@ -155,9 +294,9 @@ class LockScreen extends LinearLayout implements KeyguardScreen, KeyguardUpdateM
     private boolean shouldEnableMenuKey() {
         final Resources res = getResources();
         final boolean configDisabled = res.getBoolean(R.bool.config_disableMenuKeyInLockScreen);
-        final boolean isMonkey = SystemProperties.getBoolean("ro.monkey", false);
+        final boolean isTestHarness = ActivityManager.isRunningInTestHarness();
         final boolean fileOverride = (new File(ENABLE_MENU_KEY_FILE)).exists();
-        return !configDisabled || isMonkey || fileOverride;
+        return !configDisabled || isTestHarness || fileOverride;
     }
 
     /**
@@ -196,90 +335,52 @@ class LockScreen extends LinearLayout implements KeyguardScreen, KeyguardUpdateM
             inflater.inflate(R.layout.keyguard_screen_tab_unlock_land, this, true);
         }
 
-        mCarrier = (TextView) findViewById(R.id.carrier);
-        // Required for Marquee to work
-        mCarrier.setSelected(true);
-        mCarrier.setTextColor(0xffffffff);
-
-        mDate = (TextView) findViewById(R.id.date);
-        mStatus1 = (TextView) findViewById(R.id.status1);
-        mStatus2 = (TextView) findViewById(R.id.status2);
-
-        mScreenLocked = (TextView) findViewById(R.id.screenLocked);
-        mSelector = (SlidingTab) findViewById(R.id.tab_selector);
-        mSelector.setHoldAfterTrigger(true, false);
-        mSelector.setLeftHintText(R.string.lockscreen_unlock_label);
-
-        mEmergencyCallText = (TextView) findViewById(R.id.emergencyCallText);
-        mEmergencyCallButton = (Button) findViewById(R.id.emergencyCallButton);
-        mEmergencyCallButton.setText(R.string.lockscreen_emergency_call);
-
-        mLockPatternUtils.updateEmergencyCallButtonState(mEmergencyCallButton);
-        mEmergencyCallButton.setOnClickListener(new View.OnClickListener() {
-            public void onClick(View v) {
-                mCallback.takeEmergencyCallAction();
-            }
-        });
-
+        mStatusViewManager = new KeyguardStatusViewManager(this, mUpdateMonitor, mLockPatternUtils,
+                mCallback, false);
 
         setFocusable(true);
         setFocusableInTouchMode(true);
         setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
 
-        mUpdateMonitor.registerInfoCallback(this);
-        mUpdateMonitor.registerSimStateCallback(this);
-
-        mAudioManager = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
+        mAudioManager = (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE);
         mSilentMode = isSilentMode();
 
-        mSelector.setLeftTabResources(
-                R.drawable.ic_jog_dial_unlock,
-                R.drawable.jog_tab_target_green,
-                R.drawable.jog_tab_bar_left_unlock,
-                R.drawable.jog_tab_left_unlock);
+        mUnlockWidget = findViewById(R.id.unlock_widget);
+        if (mUnlockWidget instanceof SlidingTab) {
+            SlidingTab slidingTabView = (SlidingTab) mUnlockWidget;
+            slidingTabView.setHoldAfterTrigger(true, false);
+            slidingTabView.setLeftHintText(R.string.lockscreen_unlock_label);
+            slidingTabView.setLeftTabResources(
+                    R.drawable.ic_jog_dial_unlock,
+                    R.drawable.jog_tab_target_green,
+                    R.drawable.jog_tab_bar_left_unlock,
+                    R.drawable.jog_tab_left_unlock);
+            SlidingTabMethods slidingTabMethods = new SlidingTabMethods(slidingTabView);
+            slidingTabView.setOnTriggerListener(slidingTabMethods);
+            mUnlockWidgetMethods = slidingTabMethods;
+        } else if (mUnlockWidget instanceof WaveView) {
+            WaveView waveView = (WaveView) mUnlockWidget;
+            WaveViewMethods waveViewMethods = new WaveViewMethods(waveView);
+            waveView.setOnTriggerListener(waveViewMethods);
+            mUnlockWidgetMethods = waveViewMethods;
+        } else if (mUnlockWidget instanceof MultiWaveView) {
+            MultiWaveView multiWaveView = (MultiWaveView) mUnlockWidget;
+            MultiWaveViewMethods multiWaveViewMethods = new MultiWaveViewMethods(multiWaveView);
+            multiWaveView.setOnTriggerListener(multiWaveViewMethods);
+            mUnlockWidgetMethods = multiWaveViewMethods;
+        } else {
+            throw new IllegalStateException("Unrecognized unlock widget: " + mUnlockWidget);
+        }
 
-        updateRightTabResources();
+        // Update widget with initial ring state
+        mUnlockWidgetMethods.updateResources();
 
-        mSelector.setOnTriggerListener(this);
-
-        resetStatusInfo(updateMonitor);
+        if (DBG) Log.v(TAG, "*** LockScreen accel is "
+                + (mUnlockWidget.isHardwareAccelerated() ? "on":"off"));
     }
 
     private boolean isSilentMode() {
         return mAudioManager.getRingerMode() != AudioManager.RINGER_MODE_NORMAL;
-    }
-
-    private void updateRightTabResources() {
-        boolean vibe = mSilentMode
-            && (mAudioManager.getRingerMode() == AudioManager.RINGER_MODE_VIBRATE);
-
-        mSelector.setRightTabResources(
-                mSilentMode ? ( vibe ? R.drawable.ic_jog_dial_vibrate_on
-                                     : R.drawable.ic_jog_dial_sound_off )
-                            : R.drawable.ic_jog_dial_sound_on,
-                mSilentMode ? R.drawable.jog_tab_target_yellow
-                            : R.drawable.jog_tab_target_gray,
-                mSilentMode ? R.drawable.jog_tab_bar_right_sound_on
-                            : R.drawable.jog_tab_bar_right_sound_off,
-                mSilentMode ? R.drawable.jog_tab_right_sound_on
-                            : R.drawable.jog_tab_right_sound_off);
-    }
-
-    private void resetStatusInfo(KeyguardUpdateMonitor updateMonitor) {
-        mShowingBatteryInfo = updateMonitor.shouldShowBatteryInfo();
-        mPluggedIn = updateMonitor.isDevicePluggedIn();
-        mBatteryLevel = updateMonitor.getBatteryLevel();
-
-        mStatus = getCurrentStatus(updateMonitor.getSimState());
-        updateLayout(mStatus);
-
-        refreshBatteryStringAndIcon();
-        refreshAlarmDisplay();
-
-        mTimeFormat = DateFormat.getTimeFormat(getContext());
-        mDateFormatString = getContext().getString(R.string.full_wday_month_day_no_year);
-        refreshTimeAndDateDisplay();
-        updateStatusLines();
     }
 
     @Override
@@ -288,331 +389,6 @@ class LockScreen extends LinearLayout implements KeyguardScreen, KeyguardUpdateM
             mCallback.goToUnlockScreen();
         }
         return false;
-    }
-
-    /** {@inheritDoc} */
-    public void onTrigger(View v, int whichHandle) {
-        if (whichHandle == SlidingTab.OnTriggerListener.LEFT_HANDLE) {
-            mCallback.goToUnlockScreen();
-        } else if (whichHandle == SlidingTab.OnTriggerListener.RIGHT_HANDLE) {
-            // toggle silent mode
-            mSilentMode = !mSilentMode;
-            if (mSilentMode) {
-                final boolean vibe = (Settings.System.getInt(
-                    getContext().getContentResolver(),
-                    Settings.System.VIBRATE_IN_SILENT, 1) == 1);
-
-                mAudioManager.setRingerMode(vibe
-                    ? AudioManager.RINGER_MODE_VIBRATE
-                    : AudioManager.RINGER_MODE_SILENT);
-            } else {
-                mAudioManager.setRingerMode(AudioManager.RINGER_MODE_NORMAL);
-            }
-
-            updateRightTabResources();
-
-            String message = mSilentMode ?
-                    getContext().getString(R.string.global_action_silent_mode_on_status) :
-                    getContext().getString(R.string.global_action_silent_mode_off_status);
-
-            final int toastIcon = mSilentMode
-                ? R.drawable.ic_lock_ringer_off
-                : R.drawable.ic_lock_ringer_on;
-
-            final int toastColor = mSilentMode
-                ? getContext().getResources().getColor(R.color.keyguard_text_color_soundoff)
-                : getContext().getResources().getColor(R.color.keyguard_text_color_soundon);
-            toastMessage(mScreenLocked, message, toastColor, toastIcon);
-            mCallback.pokeWakelock();
-        }
-    }
-
-    /** {@inheritDoc} */
-    public void onGrabbedStateChange(View v, int grabbedState) {
-        if (grabbedState == SlidingTab.OnTriggerListener.RIGHT_HANDLE) {
-            mSilentMode = isSilentMode();
-            mSelector.setRightHintText(mSilentMode ? R.string.lockscreen_sound_on_label
-                    : R.string.lockscreen_sound_off_label);
-        }
-        // Don't poke the wake lock when returning to a state where the handle is
-        // not grabbed since that can happen when the system (instead of the user)
-        // cancels the grab.
-        if (grabbedState != SlidingTab.OnTriggerListener.NO_HANDLE) {
-            mCallback.pokeWakelock();
-        }
-    }
-
-    /**
-     * Displays a message in a text view and then restores the previous text.
-     * @param textView The text view.
-     * @param text The text.
-     * @param color The color to apply to the text, or 0 if the existing color should be used.
-     * @param iconResourceId The left hand icon.
-     */
-    private void toastMessage(final TextView textView, final String text, final int color, final int iconResourceId) {
-        if (mPendingR1 != null) {
-            textView.removeCallbacks(mPendingR1);
-            mPendingR1 = null;
-        }
-        if (mPendingR2 != null) {
-            mPendingR2.run(); // fire immediately, restoring non-toasted appearance
-            textView.removeCallbacks(mPendingR2);
-            mPendingR2 = null;
-        }
-
-        final String oldText = textView.getText().toString();
-        final ColorStateList oldColors = textView.getTextColors();
-
-        mPendingR1 = new Runnable() {
-            public void run() {
-                textView.setText(text);
-                if (color != 0) {
-                    textView.setTextColor(color);
-                }
-                textView.setCompoundDrawablesWithIntrinsicBounds(iconResourceId, 0, 0, 0);
-            }
-        };
-
-        textView.postDelayed(mPendingR1, 0);
-        mPendingR2 = new Runnable() {
-            public void run() {
-                textView.setText(oldText);
-                textView.setTextColor(oldColors);
-                textView.setCompoundDrawablesWithIntrinsicBounds(0, 0, 0, 0);
-            }
-        };
-        textView.postDelayed(mPendingR2, 3500);
-    }
-    private Runnable mPendingR1;
-    private Runnable mPendingR2;
-
-    private void refreshAlarmDisplay() {
-        mNextAlarm = mLockPatternUtils.getNextAlarm();
-        if (mNextAlarm != null) {
-            mAlarmIcon = getContext().getResources().getDrawable(R.drawable.ic_lock_idle_alarm);
-        }
-        updateStatusLines();
-    }
-
-    /** {@inheritDoc} */
-    public void onRefreshBatteryInfo(boolean showBatteryInfo, boolean pluggedIn,
-            int batteryLevel) {
-        if (DBG) Log.d(TAG, "onRefreshBatteryInfo(" + showBatteryInfo + ", " + pluggedIn + ")");
-        mShowingBatteryInfo = showBatteryInfo;
-        mPluggedIn = pluggedIn;
-        mBatteryLevel = batteryLevel;
-
-        refreshBatteryStringAndIcon();
-        updateStatusLines();
-    }
-
-    private void refreshBatteryStringAndIcon() {
-        if (!mShowingBatteryInfo) {
-            mCharging = null;
-            return;
-        }
-
-        if (mChargingIcon == null) {
-            mChargingIcon =
-                    getContext().getResources().getDrawable(R.drawable.ic_lock_idle_charging);
-        }
-
-        if (mPluggedIn) {
-            if (mUpdateMonitor.isDeviceCharged()) {
-                mCharging = getContext().getString(R.string.lockscreen_charged);
-            } else {
-                mCharging = getContext().getString(R.string.lockscreen_plugged_in, mBatteryLevel);
-            }
-        } else {
-            mCharging = getContext().getString(R.string.lockscreen_low_battery);
-        }
-    }
-
-    /** {@inheritDoc} */
-    public void onTimeChanged() {
-        refreshTimeAndDateDisplay();
-    }
-
-    private void refreshTimeAndDateDisplay() {
-        mDate.setText(DateFormat.format(mDateFormatString, new Date()));
-    }
-
-    private void updateStatusLines() {
-        if (!mStatus.showStatusLines()
-                || (mCharging == null && mNextAlarm == null)) {
-            mStatus1.setVisibility(View.INVISIBLE);
-            mStatus2.setVisibility(View.INVISIBLE);
-        } else if (mCharging != null && mNextAlarm == null) {
-            // charging only
-            mStatus1.setVisibility(View.VISIBLE);
-            mStatus2.setVisibility(View.INVISIBLE);
-
-            mStatus1.setText(mCharging);
-            mStatus1.setCompoundDrawablesWithIntrinsicBounds(mChargingIcon, null, null, null);
-        } else if (mNextAlarm != null && mCharging == null) {
-            // next alarm only
-            mStatus1.setVisibility(View.VISIBLE);
-            mStatus2.setVisibility(View.INVISIBLE);
-
-            mStatus1.setText(mNextAlarm);
-            mStatus1.setCompoundDrawablesWithIntrinsicBounds(mAlarmIcon, null, null, null);
-        } else if (mCharging != null && mNextAlarm != null) {
-            // both charging and next alarm
-            mStatus1.setVisibility(View.VISIBLE);
-            mStatus2.setVisibility(View.VISIBLE);
-
-            mStatus1.setText(mCharging);
-            mStatus1.setCompoundDrawablesWithIntrinsicBounds(mChargingIcon, null, null, null);
-            mStatus2.setText(mNextAlarm);
-            mStatus2.setCompoundDrawablesWithIntrinsicBounds(mAlarmIcon, null, null, null);
-        }
-    }
-
-    /** {@inheritDoc} */
-    public void onRefreshCarrierInfo(CharSequence plmn, CharSequence spn) {
-        if (DBG) Log.d(TAG, "onRefreshCarrierInfo(" + plmn + ", " + spn + ")");
-        updateLayout(mStatus);
-    }
-
-    /**
-     * Determine the current status of the lock screen given the sim state and other stuff.
-     */
-    private Status getCurrentStatus(IccCard.State simState) {
-        boolean missingAndNotProvisioned = (!mUpdateMonitor.isDeviceProvisioned()
-                && simState == IccCard.State.ABSENT);
-        if (missingAndNotProvisioned) {
-            return Status.SimMissingLocked;
-        }
-
-        switch (simState) {
-            case ABSENT:
-                return Status.SimMissing;
-            case NETWORK_LOCKED:
-                return Status.SimMissingLocked;
-            case NOT_READY:
-                return Status.SimMissing;
-            case PIN_REQUIRED:
-                return Status.SimLocked;
-            case PUK_REQUIRED:
-                return Status.SimPukLocked;
-            case READY:
-                return Status.Normal;
-            case UNKNOWN:
-                return Status.SimMissing;
-        }
-        return Status.SimMissing;
-    }
-
-    /**
-     * Update the layout to match the current status.
-     */
-    private void updateLayout(Status status) {
-        // The emergency call button no longer appears on this screen.
-        if (DBG) Log.d(TAG, "updateLayout: status=" + status);
-
-        mEmergencyCallButton.setVisibility(View.GONE); // in almost all cases
-
-        switch (status) {
-            case Normal:
-                // text
-                mCarrier.setText(
-                        getCarrierString(
-                                mUpdateMonitor.getTelephonyPlmn(),
-                                mUpdateMonitor.getTelephonySpn()));
-
-                // Empty now, but used for sliding tab feedback
-                mScreenLocked.setText("");
-
-                // layout
-                mScreenLocked.setVisibility(View.VISIBLE);
-                mSelector.setVisibility(View.VISIBLE);
-                mEmergencyCallText.setVisibility(View.GONE);
-                break;
-            case NetworkLocked:
-                // The carrier string shows both sim card status (i.e. No Sim Card) and
-                // carrier's name and/or "Emergency Calls Only" status
-                mCarrier.setText(
-                        getCarrierString(
-                                mUpdateMonitor.getTelephonyPlmn(),
-                                getContext().getText(R.string.lockscreen_network_locked_message)));
-                mScreenLocked.setText(R.string.lockscreen_instructions_when_pattern_disabled);
-
-                // layout
-                mScreenLocked.setVisibility(View.VISIBLE);
-                mSelector.setVisibility(View.VISIBLE);
-                mEmergencyCallText.setVisibility(View.GONE);
-                break;
-            case SimMissing:
-                // text
-                mCarrier.setText(R.string.lockscreen_missing_sim_message_short);
-                mScreenLocked.setText(R.string.lockscreen_missing_sim_instructions);
-
-                // layout
-                mScreenLocked.setVisibility(View.VISIBLE);
-                mSelector.setVisibility(View.VISIBLE);
-                mEmergencyCallText.setVisibility(View.VISIBLE);
-                // do not need to show the e-call button; user may unlock
-                break;
-            case SimMissingLocked:
-                // text
-                mCarrier.setText(
-                        getCarrierString(
-                                mUpdateMonitor.getTelephonyPlmn(),
-                                getContext().getText(R.string.lockscreen_missing_sim_message_short)));
-                mScreenLocked.setText(R.string.lockscreen_missing_sim_instructions);
-
-                // layout
-                mScreenLocked.setVisibility(View.VISIBLE);
-                mSelector.setVisibility(View.GONE); // cannot unlock
-                mEmergencyCallText.setVisibility(View.VISIBLE);
-                mEmergencyCallButton.setVisibility(View.VISIBLE);
-                break;
-            case SimLocked:
-                // text
-                mCarrier.setText(
-                        getCarrierString(
-                                mUpdateMonitor.getTelephonyPlmn(),
-                                getContext().getText(R.string.lockscreen_sim_locked_message)));
-
-                // layout
-                mScreenLocked.setVisibility(View.INVISIBLE);
-                mSelector.setVisibility(View.VISIBLE);
-                mEmergencyCallText.setVisibility(View.GONE);
-                break;
-            case SimPukLocked:
-                // text
-                mCarrier.setText(
-                        getCarrierString(
-                                mUpdateMonitor.getTelephonyPlmn(),
-                                getContext().getText(R.string.lockscreen_sim_puk_locked_message)));
-                mScreenLocked.setText(R.string.lockscreen_sim_puk_locked_instructions);
-
-                // layout
-                mScreenLocked.setVisibility(View.VISIBLE);
-                mSelector.setVisibility(View.GONE); // cannot unlock
-                mEmergencyCallText.setVisibility(View.VISIBLE);
-                mEmergencyCallButton.setVisibility(View.VISIBLE);
-                break;
-        }
-    }
-
-    static CharSequence getCarrierString(CharSequence telephonyPlmn, CharSequence telephonySpn) {
-        if (telephonyPlmn != null && telephonySpn == null) {
-            return telephonyPlmn;
-        } else if (telephonyPlmn != null && telephonySpn != null) {
-            return telephonyPlmn + "|" + telephonySpn;
-        } else if (telephonyPlmn == null && telephonySpn != null) {
-            return telephonySpn;
-        } else {
-            return "";
-        }
-    }
-
-    public void onSimStateChanged(IccCard.State simState) {
-        if (DBG) Log.d(TAG, "onSimStateChanged(" + simState + ")");
-        mStatus = getCurrentStatus(simState);
-        updateLayout(mStatus);
-        updateStatusLines();
     }
 
     void updateConfiguration() {
@@ -658,13 +434,20 @@ class LockScreen extends LinearLayout implements KeyguardScreen, KeyguardUpdateM
 
     /** {@inheritDoc} */
     public void onPause() {
-
+        mStatusViewManager.onPause();
+        mUnlockWidgetMethods.reset(false);
     }
+
+    private final Runnable mOnResumePing = new Runnable() {
+        public void run() {
+            mUnlockWidgetMethods.ping();
+        }
+    };
 
     /** {@inheritDoc} */
     public void onResume() {
-        resetStatusInfo(mUpdateMonitor);
-        mLockPatternUtils.updateEmergencyCallButtonState(mEmergencyCallButton);
+        mStatusViewManager.onResume();
+        postDelayed(mOnResumePing, ON_RESUME_PING_DELAY);
     }
 
     /** {@inheritDoc} */
@@ -680,11 +463,10 @@ class LockScreen extends LinearLayout implements KeyguardScreen, KeyguardUpdateM
         boolean silent = AudioManager.RINGER_MODE_NORMAL != state;
         if (silent != mSilentMode) {
             mSilentMode = silent;
-            updateRightTabResources();
+            mUnlockWidgetMethods.updateResources();
         }
     }
 
     public void onPhoneStateChanged(String newState) {
-        mLockPatternUtils.updateEmergencyCallButtonState(mEmergencyCallButton);
     }
 }

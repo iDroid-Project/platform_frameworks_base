@@ -32,13 +32,14 @@ public class PhoneSystemBar extends CustomBar {
     public PhoneSystemBar(Context context, Density density) throws XmlPullParserException {
         super(context, density, "/bars/phone_system_bar.xml", "phone_system_bar.xml");
 
-        setGravity(mGravity | Gravity.RIGHT);
+        // FIXME: use FILL_H?
+        setGravity(Gravity.START | Gravity.TOP | Gravity.RIGHT);
         setBackgroundColor(0xFF000000);
 
         // Cannot access the inside items through id because no R.id values have been
         // created for them.
         // We do know the order though.
-        // 0 is the spacer.
+        // 0 is the spacer
         loadIcon(1, "stat_sys_wifi_signal_4_fully.png", density);
         Drawable drawable = loadIcon(2, ResourceType.DRAWABLE, "stat_sys_battery_charge");
         if (drawable instanceof LevelListDrawable) {

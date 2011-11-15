@@ -33,7 +33,6 @@ import com.android.util.Pair;
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 
-import android.app.Activity;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.ContentResolver;
@@ -46,10 +45,13 @@ import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.res.AssetManager;
+import android.content.res.BridgeResources;
+import android.content.res.BridgeTypedArray;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
 import android.content.res.Resources.Theme;
+import android.database.DatabaseErrorHandler;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteDatabase.CursorFactory;
 import android.graphics.Bitmap;
@@ -61,9 +63,11 @@ import android.os.Looper;
 import android.util.AttributeSet;
 import android.util.DisplayMetrics;
 import android.util.TypedValue;
-import android.view.LayoutInflater;
+import android.view.BridgeInflater;
+import android.view.Surface;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.textservice.TextServicesManager;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -82,14 +86,19 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Custom implementation of Context/Activity to handle non compiled resources.
  */
-public final class BridgeContext extends Activity {
+public final class BridgeContext extends Context {
 
     private Resources mSystemResources;
     private final HashMap<View, Object> mViewKeyMap = new HashMap<View, Object>();
     private final Object mProjectKey;
     private final DisplayMetrics mMetrics;
     private final RenderResources mRenderResources;
+    private final Configuration mConfig;
     private final ApplicationInfo mApplicationInfo;
+    private final IProjectCallback mProjectCallback;
+    private final BridgeWindowManager mIWindowManager;
+
+    private Resources.Theme mTheme;
 
     private final Map<Object, Map<String, String>> mDefaultPropMaps =
         new IdentityHashMap<Object, Map<String,String>>();
@@ -103,7 +112,6 @@ public final class BridgeContext extends Activity {
     private Map<int[], Map<Integer, TypedArray>> mTypedArrayCache;
     private BridgeInflater mBridgeInflater;
 
-    private final IProjectCallback mProjectCallback;
     private BridgeContentResolver mContentResolver;
 
     private final Stack<BridgeXmlBlockParser> mParserStack = new Stack<BridgeXmlBlockParser>();
@@ -111,28 +119,25 @@ public final class BridgeContext extends Activity {
     /**
      * @param projectKey An Object identifying the project. This is used for the cache mechanism.
      * @param metrics the {@link DisplayMetrics}.
-     * @param themeName The name of the theme to use.
-     * @param projectResources the resources of the project. The map contains (String, map) pairs
-     * where the string is the type of the resource reference used in the layout file, and the
-     * map contains (String, {@link }) pairs where the key is the resource name,
-     * and the value is the resource value.
-     * @param frameworkResources the framework resources. The map contains (String, map) pairs
-     * where the string is the type of the resource reference used in the layout file, and the map
-     * contains (String, {@link ResourceValue}) pairs where the key is the resource name, and the
-     * value is the resource value.
-     * @param styleInheritanceMap
+     * @param renderResources the configured resources (both framework and projects) for this
+     * render.
      * @param projectCallback
+     * @param config the Configuration object for this render.
      * @param targetSdkVersion the targetSdkVersion of the application.
      */
     public BridgeContext(Object projectKey, DisplayMetrics metrics,
             RenderResources renderResources,
             IProjectCallback projectCallback,
+            Configuration config,
             int targetSdkVersion) {
         mProjectKey = projectKey;
         mMetrics = metrics;
         mProjectCallback = projectCallback;
 
         mRenderResources = renderResources;
+        mConfig = config;
+
+        mIWindowManager = new BridgeWindowManager(mConfig, metrics, Surface.ROTATION_0);
 
         mApplicationInfo = new ApplicationInfo();
         mApplicationInfo.targetSdkVersion = targetSdkVersion;
@@ -146,13 +151,12 @@ public final class BridgeContext extends Activity {
      */
     public void initResources() {
         AssetManager assetManager = AssetManager.getSystem();
-        Configuration config = new Configuration();
 
         mSystemResources = BridgeResources.initSystem(
                 this,
                 assetManager,
                 mMetrics,
-                config,
+                mConfig,
                 mProjectCallback);
         mTheme = mSystemResources.newTheme();
     }
@@ -190,6 +194,10 @@ public final class BridgeContext extends Activity {
 
     public RenderResources getRenderResources() {
         return mRenderResources;
+    }
+
+    public BridgeWindowManager getIWindowManager() {
+        return mIWindowManager;
     }
 
     public Map<String, String> getDefaultPropMap(Object key) {
@@ -384,13 +392,6 @@ public final class BridgeContext extends Activity {
         return Pair.of(null, false);
     }
 
-    // ------------- Activity Methods
-
-    @Override
-    public LayoutInflater getLayoutInflater() {
-        return mBridgeInflater;
-    }
-
     // ------------ Context methods
 
     @Override
@@ -412,6 +413,11 @@ public final class BridgeContext extends Activity {
     public Object getSystemService(String service) {
         if (LAYOUT_INFLATER_SERVICE.equals(service)) {
             return mBridgeInflater;
+        }
+
+        if (TEXT_SERVICES_MANAGER_SERVICE.equals(service)) {
+            // we need to return a valid service to avoid NPE
+            return TextServicesManager.getInstance();
         }
 
         // AutoCompleteTextView and MultiAutoCompleteTextView want a window
@@ -804,7 +810,7 @@ public final class BridgeContext extends Activity {
         return null;
     }
 
-    int getDynamicIdByStyle(StyleResourceValue resValue) {
+    public int getDynamicIdByStyle(StyleResourceValue resValue) {
         if (mDynamicIdToStyleMap == null) {
             // create the maps.
             mDynamicIdToStyleMap = new HashMap<Integer, StyleResourceValue>();
@@ -834,7 +840,7 @@ public final class BridgeContext extends Activity {
         return null;
     }
 
-    int getFrameworkResourceValue(ResourceType resType, String resName, int defValue) {
+    public int getFrameworkResourceValue(ResourceType resType, String resName, int defValue) {
         Integer value = Bridge.getResourceId(resType, resName);
         if (value != null) {
             return value.intValue();
@@ -843,7 +849,7 @@ public final class BridgeContext extends Activity {
         return defValue;
     }
 
-    int getProjectResourceValue(ResourceType resType, String resName, int defValue) {
+    public int getProjectResourceValue(ResourceType resType, String resName, int defValue) {
         if (mProjectCallback != null) {
             Integer value = mProjectCallback.getResourceId(resType, resName);
             if (value != null) {
@@ -1124,6 +1130,13 @@ public final class BridgeContext extends Activity {
     }
 
     @Override
+    public SQLiteDatabase openOrCreateDatabase(String arg0, int arg1,
+            CursorFactory arg2, DatabaseErrorHandler arg3) {
+        // TODO Auto-generated method stub
+        return null;
+    }
+
+    @Override
     public Drawable peekWallpaper() {
         // TODO Auto-generated method stub
         return null;
@@ -1257,11 +1270,23 @@ public final class BridgeContext extends Activity {
 
     @Override
     public Context getApplicationContext() {
-        throw new UnsupportedOperationException();
+        return this;
+    }
+
+    @Override
+    public void startActivities(Intent[] arg0) {
+        // TODO Auto-generated method stub
+
     }
 
     @Override
     public boolean isRestricted() {
         return false;
+    }
+
+    @Override
+    public File getObbDir() {
+        Bridge.getLog().error(LayoutLog.TAG_UNSUPPORTED, "OBB not supported", null);
+        return null;
     }
 }

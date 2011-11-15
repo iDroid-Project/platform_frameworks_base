@@ -26,6 +26,8 @@ import java.io.FileDescriptor;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 
+import java.util.Map;
+
 /**
  * MediaMetadataRetriever class provides a unified interface for retrieving
  * frame and meta data from an input media file.
@@ -56,7 +58,33 @@ public class MediaMetadataRetriever
      * @throws IllegalArgumentException If the path is invalid.
      */
     public native void setDataSource(String path) throws IllegalArgumentException;
-    
+
+    /**
+     * Sets the data source (URI) to use. Call this
+     * method before the rest of the methods in this class. This method may be
+     * time-consuming.
+     *
+     * @param uri The URI of the input media.
+     * @param headers the headers to be sent together with the request for the data
+     * @throws IllegalArgumentException If the URI is invalid.
+     */
+    public void setDataSource(String uri,  Map<String, String> headers)
+            throws IllegalArgumentException {
+        int i = 0;
+        String[] keys = new String[headers.size()];
+        String[] values = new String[headers.size()];
+        for (Map.Entry<String, String> entry: headers.entrySet()) {
+            keys[i] = entry.getKey();
+            values[i] = entry.getValue();
+            ++i;
+        }
+        _setDataSource(uri, keys, values);
+    }
+
+    private native void _setDataSource(
+        String uri, String[] keys, String[] values)
+        throws IllegalArgumentException;
+
     /**
      * Sets the data source (FileDescriptor) to use.  It is the caller's
      * responsibility to close the file descriptor. It is safe to do so as soon
@@ -244,7 +272,7 @@ public class MediaMetadataRetriever
     
     /**
      * Call this method after setDataSource(). This method finds the optional
-     * graphic or album art associated associated with the data source. If
+     * graphic or album/cover art associated associated with the data source. If
      * there are more than one pictures, (any) one of them is returned.
      * 
      * @return null if no such graphic is found.
@@ -398,5 +426,37 @@ public class MediaMetadataRetriever
      * The metadata key to retrieve the music album compilation status.
      */
     public static final int METADATA_KEY_COMPILATION     = 15;
+    /**
+     * If this key exists the media contains audio content.
+     */
+    public static final int METADATA_KEY_HAS_AUDIO       = 16;
+    /**
+     * If this key exists the media contains video content.
+     */
+    public static final int METADATA_KEY_HAS_VIDEO       = 17;
+    /**
+     * If the media contains video, this key retrieves its width.
+     */
+    public static final int METADATA_KEY_VIDEO_WIDTH     = 18;
+    /**
+     * If the media contains video, this key retrieves its height.
+     */
+    public static final int METADATA_KEY_VIDEO_HEIGHT    = 19;
+    /**
+     * This key retrieves the average bitrate (in bits/sec), if available.
+     */
+    public static final int METADATA_KEY_BITRATE         = 20;
+    /**
+     * This key retrieves the language code of text tracks, if available.
+     * If multiple text tracks present, the return value will look like:
+     * "eng:chi"
+     * @hide
+     */
+    public static final int METADATA_KEY_TIMED_TEXT_LANGUAGES      = 21;
+    /**
+     * If this key exists the media is drm-protected.
+     * @hide
+     */
+    public static final int METADATA_KEY_IS_DRM          = 22;
     // Add more here...
 }

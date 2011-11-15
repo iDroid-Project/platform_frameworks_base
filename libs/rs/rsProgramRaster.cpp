@@ -17,132 +17,97 @@
 #include "rsContext.h"
 #include "rsProgramRaster.h"
 
-#include <GLES/gl.h>
-#include <GLES/glext.h>
-
 using namespace android;
 using namespace android::renderscript;
 
 
-ProgramRaster::ProgramRaster(Context *rsc,
-                             bool pointSmooth,
-                             bool lineSmooth,
-                             bool pointSprite) :
-    Program(rsc)
-{
-    mAllocFile = __FILE__;
-    mAllocLine = __LINE__;
-    mPointSmooth = pointSmooth;
-    mLineSmooth = lineSmooth;
-    mPointSprite = pointSprite;
+ProgramRaster::ProgramRaster(Context *rsc, bool pointSprite, RsCullMode cull)
+    : ProgramBase(rsc) {
 
-    mPointSize = 1.0f;
-    mLineWidth = 1.0f;
+    memset(&mHal, 0, sizeof(mHal));
+    mHal.state.pointSprite = pointSprite;
+    mHal.state.cull = cull;
+    rsc->mHal.funcs.raster.init(rsc, this);
 }
 
-ProgramRaster::~ProgramRaster()
-{
-}
-
-void ProgramRaster::setLineWidth(float s)
-{
-    mLineWidth = s;
-}
-
-void ProgramRaster::setPointSize(float s)
-{
-    mPointSize = s;
-}
-
-void ProgramRaster::setupGL(const Context *rsc, ProgramRasterState *state)
-{
-    if (state->mLast.get() == this) {
-        return;
-    }
-    state->mLast.set(this);
-
-    glPointSize(mPointSize);
-    if (mPointSmooth) {
-        glEnable(GL_POINT_SMOOTH);
-    } else {
-        glDisable(GL_POINT_SMOOTH);
-    }
-
-    glLineWidth(mLineWidth);
-    if (mLineSmooth) {
-        glEnable(GL_LINE_SMOOTH);
-    } else {
-        glDisable(GL_LINE_SMOOTH);
-    }
-
-    if (rsc->checkVersion1_1()) {
-        if (mPointSprite) {
-            glEnable(GL_POINT_SPRITE_OES);
-        } else {
-            glDisable(GL_POINT_SPRITE_OES);
+void ProgramRaster::preDestroy() const {
+    for (uint32_t ct = 0; ct < mRSC->mStateRaster.mRasterPrograms.size(); ct++) {
+        if (mRSC->mStateRaster.mRasterPrograms[ct] == this) {
+            mRSC->mStateRaster.mRasterPrograms.removeAt(ct);
+            break;
         }
     }
 }
 
-void ProgramRaster::setupGL2(const Context *rsc, ProgramRasterState *state)
-{
-    if (state->mLast.get() == this) {
+ProgramRaster::~ProgramRaster() {
+    mRSC->mHal.funcs.raster.destroy(mRSC, this);
+}
+
+void ProgramRaster::setup(const Context *rsc, ProgramRasterState *state) {
+    if (state->mLast.get() == this && !mDirty) {
         return;
     }
     state->mLast.set(this);
+    mDirty = false;
+
+    rsc->mHal.funcs.raster.setActive(rsc, this);
 }
 
-
-
-ProgramRasterState::ProgramRasterState()
-{
+void ProgramRaster::serialize(OStream *stream) const {
 }
 
-ProgramRasterState::~ProgramRasterState()
-{
+ProgramRaster *ProgramRaster::createFromStream(Context *rsc, IStream *stream) {
+    return NULL;
 }
 
-void ProgramRasterState::init(Context *rsc, int32_t w, int32_t h)
-{
-    ProgramRaster *pr = new ProgramRaster(rsc, false, false, false);
-    mDefault.set(pr);
+ProgramRasterState::ProgramRasterState() {
 }
 
-void ProgramRasterState::deinit(Context *rsc)
-{
+ProgramRasterState::~ProgramRasterState() {
+}
+
+void ProgramRasterState::init(Context *rsc) {
+    mDefault.set(ProgramRaster::getProgramRaster(rsc, false, RS_CULL_BACK).get());
+}
+
+void ProgramRasterState::deinit(Context *rsc) {
     mDefault.clear();
     mLast.clear();
 }
 
+ObjectBaseRef<ProgramRaster> ProgramRaster::getProgramRaster(Context *rsc,
+                                                             bool pointSprite,
+                                                             RsCullMode cull) {
+    ObjectBaseRef<ProgramRaster> returnRef;
+    ObjectBase::asyncLock();
+    for (uint32_t ct = 0; ct < rsc->mStateRaster.mRasterPrograms.size(); ct++) {
+        ProgramRaster *existing = rsc->mStateRaster.mRasterPrograms[ct];
+        if (existing->mHal.state.pointSprite != pointSprite) continue;
+        if (existing->mHal.state.cull != cull) continue;
+        returnRef.set(existing);
+        ObjectBase::asyncUnlock();
+        return returnRef;
+    }
+    ObjectBase::asyncUnlock();
+
+    ProgramRaster *pr = new ProgramRaster(rsc, pointSprite, cull);
+    returnRef.set(pr);
+
+    ObjectBase::asyncLock();
+    rsc->mStateRaster.mRasterPrograms.push(pr);
+    ObjectBase::asyncUnlock();
+
+    return returnRef;
+}
 
 namespace android {
 namespace renderscript {
 
-RsProgramRaster rsi_ProgramRasterCreate(Context * rsc, RsElement in, RsElement out,
-                                      bool pointSmooth,
-                                      bool lineSmooth,
-                                      bool pointSprite)
-{
-    ProgramRaster *pr = new ProgramRaster(rsc,
-                                          pointSmooth,
-                                          lineSmooth,
-                                          pointSprite);
+RsProgramRaster rsi_ProgramRasterCreate(Context * rsc, bool pointSprite, RsCullMode cull) {
+    ObjectBaseRef<ProgramRaster> pr = ProgramRaster::getProgramRaster(rsc, pointSprite, cull);
     pr->incUserRef();
-    return pr;
+    return pr.get();
 }
-
-void rsi_ProgramRasterSetPointSize(Context * rsc, RsProgramRaster vpr, float s)
-{
-    ProgramRaster *pr = static_cast<ProgramRaster *>(vpr);
-    pr->setPointSize(s);
-}
-
-void rsi_ProgramRasterSetLineWidth(Context * rsc, RsProgramRaster vpr, float s)
-{
-    ProgramRaster *pr = static_cast<ProgramRaster *>(vpr);
-    pr->setLineWidth(s);
-}
-
 
 }
 }

@@ -16,21 +16,32 @@
 
 package android.graphics.drawable;
 
-import java.io.InputStream;
-import java.io.IOException;
-import java.util.Arrays;
-
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 
 import android.content.res.Resources;
 import android.content.res.TypedArray;
-import android.graphics.*;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.ColorFilter;
+import android.graphics.NinePatch;
+import android.graphics.PixelFormat;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffColorFilter;
+import android.graphics.Rect;
+import android.graphics.Region;
 import android.util.AttributeSet;
 import android.util.DisplayMetrics;
 import android.util.StateSet;
-import android.util.Xml;
 import android.util.TypedValue;
+import android.util.Xml;
+import android.view.View;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.lang.ref.WeakReference;
+import java.util.Arrays;
 
 /**
  * A Drawable is a general abstraction for "something that can be drawn."  Most
@@ -92,9 +103,15 @@ import android.util.TypedValue;
  *     <li> <b>Scale</b>: a compound drawable with a single child drawable,
  *     whose overall size is modified based on the current level.
  * </ul>
- * <p>For information and examples of creating drawable resources (XML or bitmap files that
- * can be loaded in code), see <a
- * href="{@docRoot}guide/topics/resources/drawable-resource.html">Drawable Resources</a>.
+ *
+ * <div class="special reference">
+ * <h3>Developer Guides</h3>
+ * <p>For more information about how to use drawables, read the
+ * <a href="{@docRoot}guide/topics/graphics/2d-graphics.html">Canvas and Drawables</a> developer
+ * guide. For information and examples of creating drawable resources (XML or bitmap files that
+ * can be loaded in code), read the
+ * <a href="{@docRoot}guide/topics/resources/drawable-resource.html">Drawable Resources</a>
+ * document.</p></div>
  */
 public abstract class Drawable {
     private static final Rect ZERO_BOUNDS_RECT = new Rect();
@@ -103,7 +120,7 @@ public abstract class Drawable {
     private int mLevel = 0;
     private int mChangingConfigurations = 0;
     private Rect mBounds = ZERO_BOUNDS_RECT;  // lazily becomes a new Rect()
-    /*package*/ Callback mCallback = null;
+    private WeakReference<Callback> mCallback = null;
     private boolean mVisible = true;
 
     /**
@@ -278,26 +295,59 @@ public abstract class Drawable {
     }
 
     /**
+     * Implement this interface if you want to create an drawable that is RTL aware
+     *
+     * @hide
+     */
+    public static interface Callback2 extends Callback {
+        /**
+         * A Drawable can call this to get the resolved layout direction of the <var>who</var>.
+         *
+         * @param who The drawable being queried.
+         */
+        public int getResolvedLayoutDirection(Drawable who);
+    }
+
+    /**
      * Bind a {@link Callback} object to this Drawable.  Required for clients
      * that want to support animated drawables.
      *
      * @param cb The client's Callback implementation.
+     * 
+     * @see #getCallback() 
      */
     public final void setCallback(Callback cb) {
-        mCallback = cb;
+        mCallback = new WeakReference<Callback>(cb);
     }
 
+    /**
+     * Return the current {@link Callback} implementation attached to this
+     * Drawable.
+     * 
+     * @return A {@link Callback} instance or null if no callback was set.
+     * 
+     * @see #setCallback(android.graphics.drawable.Drawable.Callback) 
+     */
+    public Callback getCallback() {
+        if (mCallback != null) {
+            return mCallback.get();
+        }
+        return null;
+    }
+    
     /**
      * Use the current {@link Callback} implementation to have this Drawable
      * redrawn.  Does nothing if there is no Callback attached to the
      * Drawable.
      *
      * @see Callback#invalidateDrawable
+     * @see #getCallback() 
+     * @see #setCallback(android.graphics.drawable.Drawable.Callback) 
      */
-    public void invalidateSelf()
-    {
-        if (mCallback != null) {
-            mCallback.invalidateDrawable(this);
+    public void invalidateSelf() {
+        final Callback callback = getCallback();
+        if (callback != null) {
+            callback.invalidateDrawable(this);
         }
     }
 
@@ -311,10 +361,10 @@ public abstract class Drawable {
      *
      * @see Callback#scheduleDrawable
      */
-    public void scheduleSelf(Runnable what, long when)
-    {
-        if (mCallback != null) {
-            mCallback.scheduleDrawable(this, what, when);
+    public void scheduleSelf(Runnable what, long when) {
+        final Callback callback = getCallback();
+        if (callback != null) {
+            callback.scheduleDrawable(this, what, when);
         }
     }
 
@@ -327,11 +377,25 @@ public abstract class Drawable {
      *
      * @see Callback#unscheduleDrawable
      */
-    public void unscheduleSelf(Runnable what)
-    {
-        if (mCallback != null) {
-            mCallback.unscheduleDrawable(this, what);
+    public void unscheduleSelf(Runnable what) {
+        final Callback callback = getCallback();
+        if (callback != null) {
+            callback.unscheduleDrawable(this, what);
         }
+    }
+
+    /**
+     * Use the current {@link android.graphics.drawable.Drawable.Callback2} implementation to get
+     * the resolved layout direction of this Drawable.
+     *
+     * @hide
+     */
+    public int getResolvedLayoutDirectionSelf() {
+        final Callback callback = getCallback();
+        if (callback == null || !(callback instanceof Callback2)) {
+            return View.LAYOUT_DIRECTION_LTR;
+        }
+        return ((Callback2) callback).getResolvedLayoutDirection(this);
     }
 
     /**
@@ -414,6 +478,13 @@ public abstract class Drawable {
     }
 
     /**
+     * If this Drawable does transition animations between states, ask that
+     * it immediately jump to the current state and skip any active animations.
+     */
+    public void jumpToCurrentState() {
+    }
+
+    /**
      * @return The current drawable that will be used by this drawable. For simple drawables, this
      *         is just the drawable itself. For drawables that change state like
      *         {@link StateListDrawable} and {@link LevelListDrawable} this will be the child drawable
@@ -472,7 +543,10 @@ public abstract class Drawable {
      */
     public boolean setVisible(boolean visible, boolean restart) {
         boolean changed = mVisible != visible;
-        mVisible = visible;
+        if (changed) {
+            mVisible = visible;
+            invalidateSelf();
+        }
         return changed;
     }
 
@@ -645,6 +719,8 @@ public abstract class Drawable {
      * Calling this method on a mutable Drawable will have no effect.
      *
      * @return This drawable.
+     * @see ConstantState
+     * @see #getConstantState()
      */
     public Drawable mutate() {
         return this;
@@ -749,6 +825,10 @@ public abstract class Drawable {
             drawable = new StateListDrawable();
         } else if (name.equals("level-list")) {
             drawable = new LevelListDrawable();
+        /* Probably not doing this.
+        } else if (name.equals("mipmap")) {
+            drawable = new MipmapDrawable();
+        */
         } else if (name.equals("layer-list")) {
             drawable = new LayerDrawable();
         } else if (name.equals("transition")) {
@@ -770,7 +850,7 @@ public abstract class Drawable {
         } else if (name.equals("inset")) {
             drawable = new InsetDrawable();
         } else if (name.equals("bitmap")) {
-            drawable = new BitmapDrawable();
+            drawable = new BitmapDrawable(r);
             if (r != null) {
                ((BitmapDrawable) drawable).setTargetDensity(r.getDisplayMetrics());
             }
@@ -805,6 +885,9 @@ public abstract class Drawable {
         return null;
     }
 
+    /**
+     * Inflate this Drawable from an XML resource.
+     */
     public void inflate(Resources r, XmlPullParser parser, AttributeSet attrs)
             throws XmlPullParserException, IOException {
 
@@ -813,6 +896,12 @@ public abstract class Drawable {
         a.recycle();
     }
 
+    /**
+     * Inflate a Drawable from an XML resource.
+     *
+     * @throws XmlPullParserException
+     * @throws IOException
+     */
     void inflateWithAttributes(Resources r, XmlPullParser parser,
             TypedArray attrs, int visibleAttr)
             throws XmlPullParserException, IOException {
@@ -820,12 +909,27 @@ public abstract class Drawable {
         mVisible = attrs.getBoolean(visibleAttr, mVisible);
     }
 
+    /**
+     * This abstract class is used by {@link Drawable}s to store shared constant state and data
+     * between Drawables. {@link BitmapDrawable}s created from the same resource will for instance
+     * share a unique bitmap stored in their ConstantState.
+     *
+     * <p>
+     * {@link #newDrawable(Resources)} can be used as a factory to create new Drawable instances
+     * from this ConstantState.
+     * </p>
+     *
+     * Use {@link Drawable#getConstantState()} to retrieve the ConstantState of a Drawable. Calling
+     * {@link Drawable#mutate()} on a Drawable should typically create a new ConstantState for that
+     * Drawable.
+     */
     public static abstract class ConstantState {
         /**
          * Create a new drawable without supplying resources the caller
          * is running in.  Note that using this means the density-dependent
          * drawables (like bitmaps) will not be able to update their target
-         * density correctly.
+         * density correctly. One should use {@link #newDrawable(Resources)}
+         * instead to provide a resource.
          */
         public abstract Drawable newDrawable();
         /**
@@ -844,6 +948,13 @@ public abstract class Drawable {
         public abstract int getChangingConfigurations();
     }
 
+    /**
+     * Return a {@link ConstantState} instance that holds the shared state of this Drawable.
+     *q
+     * @return The ConstantState associated to that Drawable.
+     * @see ConstantState
+     * @see Drawable#mutate()
+     */
     public ConstantState getConstantState() {
         return null;
     }

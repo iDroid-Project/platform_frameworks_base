@@ -37,10 +37,10 @@ import com.android.internal.telephony.CallStateException;
 import com.android.internal.telephony.Connection;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneNotifier;
-import com.android.internal.telephony.UUSInfo;
 
 import java.text.ParseException;
 import java.util.List;
+import java.util.regex.Pattern;
 
 /**
  * {@hide}
@@ -69,6 +69,14 @@ public class SipPhone extends SipPhoneBase {
         backgroundCall = new SipCall();
         mProfile = profile;
         mSipManager = SipManager.newInstance(context);
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (o == this) return true;
+        if (!(o instanceof SipPhone)) return false;
+        SipPhone that = (SipPhone) o;
+        return mProfile.getUriString().equals(that.mProfile.getUriString());
     }
 
     public String getPhoneName() {
@@ -144,10 +152,6 @@ public class SipPhone extends SipPhoneBase {
                 throw new CallStateException("phone not ringing");
             }
         }
-    }
-
-    public Connection dial(String dialString, UUSInfo uusinfo) throws CallStateException {
-        return dial(dialString);
     }
 
     public Connection dial(String dialString) throws CallStateException {
@@ -383,8 +387,8 @@ public class SipPhone extends SipPhoneBase {
         Connection dial(String originalNumber) throws SipException {
             String calleeSipUri = originalNumber;
             if (!calleeSipUri.contains("@")) {
-                calleeSipUri = mProfile.getUriString().replaceFirst(
-                        mProfile.getUserName() + "@",
+                String replaceStr = Pattern.quote(mProfile.getUserName() + "@");
+                calleeSipUri = mProfile.getUriString().replaceFirst(replaceStr,
                         calleeSipUri + "@");
             }
             try {
@@ -858,10 +862,6 @@ public class SipPhone extends SipPhoneBase {
             }
         }
 
-        @Override
-        public UUSInfo getUUSInfo() {
-            return null;
-        }
     }
 
     private static Call.State getCallStateFrom(SipAudioCall sipAudioCall) {

@@ -22,21 +22,19 @@
 
 #include <gui/Sensor.h>
 
-#include "SensorDevice.h"
 #include "SensorInterface.h"
-#include "SecondOrderLowPassFilter.h"
 
 // ---------------------------------------------------------------------------
 namespace android {
 // ---------------------------------------------------------------------------
 
+class SensorDevice;
+class SensorFusion;
+
 class GravitySensor : public SensorInterface {
     SensorDevice& mSensorDevice;
+    SensorFusion& mSensorFusion;
     Sensor mAccelerometer;
-    double mAccTime;
-
-    SecondOrderLowPassFilter mLowPass;
-    CascadedBiquadFilter mX, mY, mZ;
 
 public:
     GravitySensor(sensor_t const* list, size_t count);

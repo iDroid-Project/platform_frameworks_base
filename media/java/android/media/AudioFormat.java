@@ -31,9 +31,9 @@ public class AudioFormat {
     public static final int ENCODING_INVALID = 0;
     /** Default audio data format */
     public static final int ENCODING_DEFAULT = 1;
-    /** Audio data format: PCM 16 bit per sample */
+    /** Audio data format: PCM 16 bit per sample. Guaranteed to be supported by devices. */
     public static final int ENCODING_PCM_16BIT = 2; // accessed by native code
-    /** Audio data format: PCM 8 bit per sample */
+    /** Audio data format: PCM 8 bit per sample. Not guaranteed to be supported by devices. */
     public static final int ENCODING_PCM_8BIT = 3;  // accessed by native code
 
     /** Invalid audio channel configuration */
@@ -54,7 +54,8 @@ public class AudioFormat {
     /** Default audio channel mask */
     public static final int CHANNEL_OUT_DEFAULT = 1;
 
-    // Channel mask definitions must be kept in sync with native values in include/media/AudioSystem.h
+    // Channel mask definitions below are translated to the native values defined in
+    //  in /system/core/include/system/audio.h in the JNI code of AudioTrack
     public static final int CHANNEL_OUT_FRONT_LEFT = 0x4;
     public static final int CHANNEL_OUT_FRONT_RIGHT = 0x8;
     public static final int CHANNEL_OUT_FRONT_CENTER = 0x10;
@@ -64,6 +65,25 @@ public class AudioFormat {
     public static final int CHANNEL_OUT_FRONT_LEFT_OF_CENTER = 0x100;
     public static final int CHANNEL_OUT_FRONT_RIGHT_OF_CENTER = 0x200;
     public static final int CHANNEL_OUT_BACK_CENTER = 0x400;
+    /** @hide */
+    public static final int CHANNEL_OUT_SIDE_LEFT =         0x800;
+    /** @hide */
+    public static final int CHANNEL_OUT_SIDE_RIGHT =       0x1000;
+    /** @hide */
+    public static final int CHANNEL_OUT_TOP_CENTER =       0x2000;
+    /** @hide */
+    public static final int CHANNEL_OUT_TOP_FRONT_LEFT =   0x4000;
+    /** @hide */
+    public static final int CHANNEL_OUT_TOP_FRONT_CENTER = 0x8000;
+    /** @hide */
+    public static final int CHANNEL_OUT_TOP_FRONT_RIGHT = 0x10000;
+    /** @hide */
+    public static final int CHANNEL_OUT_TOP_BACK_LEFT =   0x20000;
+    /** @hide */
+    public static final int CHANNEL_OUT_TOP_BACK_CENTER = 0x40000;
+    /** @hide */
+    public static final int CHANNEL_OUT_TOP_BACK_RIGHT =  0x80000;
+
     public static final int CHANNEL_OUT_MONO = CHANNEL_OUT_FRONT_LEFT;
     public static final int CHANNEL_OUT_STEREO = (CHANNEL_OUT_FRONT_LEFT | CHANNEL_OUT_FRONT_RIGHT);
     public static final int CHANNEL_OUT_QUAD = (CHANNEL_OUT_FRONT_LEFT | CHANNEL_OUT_FRONT_RIGHT |
@@ -75,6 +95,12 @@ public class AudioFormat {
     public static final int CHANNEL_OUT_7POINT1 = (CHANNEL_OUT_FRONT_LEFT | CHANNEL_OUT_FRONT_RIGHT |
             CHANNEL_OUT_FRONT_CENTER | CHANNEL_OUT_LOW_FREQUENCY | CHANNEL_OUT_BACK_LEFT | CHANNEL_OUT_BACK_RIGHT |
             CHANNEL_OUT_FRONT_LEFT_OF_CENTER | CHANNEL_OUT_FRONT_RIGHT_OF_CENTER);
+    /** @hide */
+    public static final int CHANNEL_OUT_7POINT1_SURROUND = (
+            CHANNEL_OUT_FRONT_LEFT | CHANNEL_OUT_FRONT_CENTER | CHANNEL_OUT_FRONT_RIGHT |
+            CHANNEL_OUT_SIDE_LEFT | CHANNEL_OUT_SIDE_RIGHT |
+            CHANNEL_OUT_BACK_LEFT | CHANNEL_OUT_BACK_RIGHT |
+            CHANNEL_OUT_LOW_FREQUENCY);
 
     public static final int CHANNEL_IN_DEFAULT = 1;
     public static final int CHANNEL_IN_LEFT = 0x4;

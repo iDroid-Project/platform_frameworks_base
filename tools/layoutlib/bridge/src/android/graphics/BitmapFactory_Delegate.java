@@ -17,12 +17,12 @@
 package android.graphics;
 
 import com.android.layoutlib.bridge.Bridge;
-import com.android.layoutlib.bridge.android.BridgeResources.NinePatchInputStream;
 import com.android.layoutlib.bridge.impl.DelegateManager;
 import com.android.ninepatch.NinePatchChunk;
 import com.android.resources.Density;
 import com.android.tools.layoutlib.annotations.LayoutlibDelegate;
 
+import android.content.res.BridgeResources.NinePatchInputStream;
 import android.graphics.BitmapFactory.Options;
 
 import java.io.FileDescriptor;
@@ -136,17 +136,20 @@ import java.io.InputStream;
     @LayoutlibDelegate
     /*package*/ static Bitmap nativeDecodeFileDescriptor(FileDescriptor fd,
             Rect padding, Options opts) {
+        opts.inBitmap = null;
         return null;
     }
 
     @LayoutlibDelegate
     /*package*/ static Bitmap nativeDecodeAsset(int asset, Rect padding, Options opts) {
+        opts.inBitmap = null;
         return null;
     }
 
     @LayoutlibDelegate
     /*package*/ static Bitmap nativeDecodeByteArray(byte[] data, int offset,
             int length, Options opts) {
+        opts.inBitmap = null;
         return null;
     }
 
@@ -155,5 +158,10 @@ import java.io.InputStream;
         // don't scale for now. This should not be called anyway since we re-implement
         // BitmapFactory.finishDecode();
         return chunk;
+    }
+
+    @LayoutlibDelegate
+    /*package*/ static boolean nativeIsSeekable(FileDescriptor fd) {
+        return true;
     }
 }

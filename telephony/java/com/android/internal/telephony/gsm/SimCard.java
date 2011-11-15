@@ -19,6 +19,10 @@ package com.android.internal.telephony.gsm;
 import android.util.Log;
 
 import com.android.internal.telephony.IccCard;
+import com.android.internal.telephony.Phone;
+import com.android.internal.telephony.PhoneBase;
+import com.android.internal.telephony.TelephonyProperties;
+import android.os.SystemProperties;
 
 /**
  * {@hide}
@@ -34,17 +38,37 @@ public final class SimCard extends IccCard {
         updateStateProperty();
     }
 
+    /**
+    * We have the Sim card for LTE on CDMA phone
+    */
+    public SimCard(PhoneBase phone, String logTag, Boolean dbg) {
+        super(phone, logTag, dbg);
+        mPhone.mCM.registerForSIMLockedOrAbsent(mHandler, EVENT_ICC_LOCKED_OR_ABSENT, null);
+        mPhone.mCM.registerForOffOrNotAvailable(mHandler, EVENT_RADIO_OFF_OR_NOT_AVAILABLE, null);
+        mPhone.mCM.registerForSIMReady(mHandler, EVENT_ICC_READY, null);
+        updateStateProperty();
+
+        if(mPhone.getLteOnCdmaMode() == Phone.LTE_ON_CDMA_TRUE) {
+            mPhone.mCM.registerForIccStatusChanged(mHandler, EVENT_ICC_LOCKED_OR_ABSENT, null);
+        }
+    }
+
     @Override
     public void dispose() {
+        super.dispose();
         //Unregister for all events
         mPhone.mCM.unregisterForSIMLockedOrAbsent(mHandler);
         mPhone.mCM.unregisterForOffOrNotAvailable(mHandler);
         mPhone.mCM.unregisterForSIMReady(mHandler);
+
+        if(mPhone.getLteOnCdmaMode() == Phone.LTE_ON_CDMA_TRUE) {
+            mPhone.mCM.unregisterForIccStatusChanged(mHandler);
+        }
     }
 
     @Override
     public String getServiceProviderName () {
-        return ((GSMPhone)mPhone).mSIMRecords.getServiceProviderName();
+        return mPhone.mIccRecords.getServiceProviderName();
     }
 
 }

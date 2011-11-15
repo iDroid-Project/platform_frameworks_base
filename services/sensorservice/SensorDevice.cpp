@@ -29,6 +29,7 @@
 #include <hardware/sensors.h>
 
 #include "SensorDevice.h"
+#include "SensorService.h"
 
 namespace android {
 // ---------------------------------------------------------------------------
@@ -137,9 +138,18 @@ void SensorDevice::dump(String8& result, char* buffer, size_t SIZE)
 
     Mutex::Autolock _l(mLock);
     for (size_t i=0 ; i<size_t(count) ; i++) {
-        snprintf(buffer, SIZE, "handle=0x%08x, active-count=%d\n",
+        const Info& info = mActivationCount.valueFor(list[i].handle);
+        snprintf(buffer, SIZE, "handle=0x%08x, active-count=%d, rates(ms)={ ",
                 list[i].handle,
-                mActivationCount.valueFor(list[i].handle).rates.size());
+                info.rates.size());
+        result.append(buffer);
+        for (size_t j=0 ; j<info.rates.size() ; j++) {
+            snprintf(buffer, SIZE, "%4.1f%s",
+                    info.rates.valueAt(j) / 1e6f,
+                    j<info.rates.size()-1 ? ", " : "");
+            result.append(buffer);
+        }
+        snprintf(buffer, SIZE, " }, selected=%4.1f ms\n",  info.delay / 1e6f);
         result.append(buffer);
     }
 }
@@ -166,17 +176,32 @@ status_t SensorDevice::activate(void* ident, int handle, int enabled)
     bool actuateHardware = false;
 
     Info& info( mActivationCount.editValueFor(handle) );
+
+
+    LOGD_IF(DEBUG_CONNECTIONS,
+            "SensorDevice::activate: ident=%p, handle=0x%08x, enabled=%d, count=%d",
+            ident, handle, enabled, info.rates.size());
+
     if (enabled) {
         Mutex::Autolock _l(mLock);
+        LOGD_IF(DEBUG_CONNECTIONS, "... index=%ld",
+                info.rates.indexOfKey(ident));
+
         if (info.rates.indexOfKey(ident) < 0) {
             info.rates.add(ident, DEFAULT_EVENTS_PERIOD);
-            actuateHardware = true;
+            if (info.rates.size() == 1) {
+                actuateHardware = true;
+            }
         } else {
             // sensor was already activated for this ident
         }
     } else {
         Mutex::Autolock _l(mLock);
-        if (info.rates.removeItem(ident) >= 0) {
+        LOGD_IF(DEBUG_CONNECTIONS, "... index=%ld",
+                info.rates.indexOfKey(ident));
+
+        ssize_t idx = info.rates.removeItem(ident);
+        if (idx >= 0) {
             if (info.rates.size() == 0) {
                 actuateHardware = true;
             }
@@ -186,6 +211,8 @@ status_t SensorDevice::activate(void* ident, int handle, int enabled)
     }
 
     if (actuateHardware) {
+        LOGD_IF(DEBUG_CONNECTIONS, "\t>>> actuating h/w");
+
         err = mSensorDevice->activate(mSensorDevice, handle, enabled);
         if (enabled) {
             LOGE_IF(err, "Error activating sensor %d (%s)", handle, strerror(-err));
@@ -199,17 +226,9 @@ status_t SensorDevice::activate(void* ident, int handle, int enabled)
         }
     }
 
-    if (!actuateHardware || enabled) {
+    { // scope for the lock
         Mutex::Autolock _l(mLock);
-        nsecs_t ns = info.rates.valueAt(0);
-        for (size_t i=1 ; i<info.rates.size() ; i++) {
-            if (info.rates.valueAt(i) < ns) {
-                nsecs_t cur = info.rates.valueAt(i);
-                if (cur < ns) {
-                    ns = cur;
-                }
-            }
-        }
+        nsecs_t ns = info.selectDelay();
         mSensorDevice->setDelay(mSensorDevice, handle, ns);
     }
 
@@ -219,21 +238,39 @@ status_t SensorDevice::activate(void* ident, int handle, int enabled)
 status_t SensorDevice::setDelay(void* ident, int handle, int64_t ns)
 {
     if (!mSensorDevice) return NO_INIT;
+    Mutex::Autolock _l(mLock);
     Info& info( mActivationCount.editValueFor(handle) );
-    { // scope for lock
-        Mutex::Autolock _l(mLock);
-        ssize_t index = info.rates.indexOfKey(ident);
-        if (index < 0) return BAD_INDEX;
-        info.rates.editValueAt(index) = ns;
-        ns = info.rates.valueAt(0);
-        for (size_t i=1 ; i<info.rates.size() ; i++) {
-            nsecs_t cur = info.rates.valueAt(i);
-            if (cur < ns) {
-                ns = cur;
-            }
+    status_t err = info.setDelayForIdent(ident, ns);
+    if (err < 0) return err;
+    ns = info.selectDelay();
+    return mSensorDevice->setDelay(mSensorDevice, handle, ns);
+}
+
+// ---------------------------------------------------------------------------
+
+status_t SensorDevice::Info::setDelayForIdent(void* ident, int64_t ns)
+{
+    ssize_t index = rates.indexOfKey(ident);
+    if (index < 0) {
+        LOGE("Info::setDelayForIdent(ident=%p, ns=%lld) failed (%s)",
+                ident, ns, strerror(-index));
+        return BAD_INDEX;
+    }
+    rates.editValueAt(index) = ns;
+    return NO_ERROR;
+}
+
+nsecs_t SensorDevice::Info::selectDelay()
+{
+    nsecs_t ns = rates.valueAt(0);
+    for (size_t i=1 ; i<rates.size() ; i++) {
+        nsecs_t cur = rates.valueAt(i);
+        if (cur < ns) {
+            ns = cur;
         }
     }
-    return mSensorDevice->setDelay(mSensorDevice, handle, ns);
+    delay = ns;
+    return ns;
 }
 
 // ---------------------------------------------------------------------------

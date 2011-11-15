@@ -19,9 +19,8 @@
 #define ANDROID_SERVERS_CAMERA_CAMERASERVICE_H
 
 #include <binder/BinderService.h>
-
 #include <camera/ICameraService.h>
-#include <camera/CameraHardwareInterface.h>
+#include <hardware/camera.h>
 
 /* This needs to be increased if we can have more cameras */
 #define MAX_CAMERAS 2
@@ -30,6 +29,7 @@ namespace android {
 
 class MemoryHeapBase;
 class MediaPlayer;
+class CameraHardwareInterface;
 
 class CameraService :
     public BinderService<CameraService>,
@@ -53,6 +53,7 @@ public:
     virtual status_t    dump(int fd, const Vector<String16>& args);
     virtual status_t    onTransact(uint32_t code, const Parcel& data,
                                    Parcel* reply, uint32_t flags);
+    virtual void onFirstRef();
 
     enum sound_kind {
         SOUND_SHUTTER = 0,
@@ -75,6 +76,9 @@ private:
     void                setCameraFree(int cameraId);
 
     // sounds
+    audio_stream_type_t mAudioStreamType;
+    MediaPlayer*        newMediaPlayer(const char *file);
+
     Mutex               mSoundLock;
     sp<MediaPlayer>     mSoundPlayer[NUM_SOUNDS];
     int                 mSoundRef;  // reference count (release all MediaPlayer when 0)
@@ -87,18 +91,20 @@ private:
         virtual status_t        connect(const sp<ICameraClient>& client);
         virtual status_t        lock();
         virtual status_t        unlock();
-        virtual status_t        setPreviewDisplay(const sp<ISurface>& surface);
+        virtual status_t        setPreviewDisplay(const sp<Surface>& surface);
+        virtual status_t        setPreviewTexture(const sp<ISurfaceTexture>& surfaceTexture);
         virtual void            setPreviewCallbackFlag(int flag);
         virtual status_t        startPreview();
         virtual void            stopPreview();
         virtual bool            previewEnabled();
+        virtual status_t        storeMetaDataInBuffers(bool enabled);
         virtual status_t        startRecording();
         virtual void            stopRecording();
         virtual bool            recordingEnabled();
         virtual void            releaseRecordingFrame(const sp<IMemory>& mem);
         virtual status_t        autoFocus();
         virtual status_t        cancelAutoFocus();
-        virtual status_t        takePicture();
+        virtual status_t        takePicture(int msgType);
         virtual status_t        setParameters(const String8& params);
         virtual String8         getParameters() const;
         virtual status_t        sendCommand(int32_t cmd, int32_t arg1, int32_t arg2);
@@ -121,7 +127,6 @@ private:
 
         // these are internal functions used to set up preview buffers
         status_t                registerPreviewBuffers();
-        status_t                setOverlay();
 
         // camera operation mode
         enum camera_mode {
@@ -133,28 +138,40 @@ private:
         status_t                startPreviewMode();
         status_t                startRecordingMode();
 
+        // internal function used by sendCommand to enable/disable shutter sound.
+        status_t                enableShutterSound(bool enable);
+
         // these are static callback functions
         static void             notifyCallback(int32_t msgType, int32_t ext1, int32_t ext2, void* user);
-        static void             dataCallback(int32_t msgType, const sp<IMemory>& dataPtr, void* user);
+        static void             dataCallback(int32_t msgType, const sp<IMemory>& dataPtr,
+                                             camera_frame_metadata_t *metadata, void* user);
         static void             dataCallbackTimestamp(nsecs_t timestamp, int32_t msgType, const sp<IMemory>& dataPtr, void* user);
         // convert client from cookie
         static sp<Client>       getClientFromCookie(void* user);
         // handlers for messages
-        void                    handleShutter(image_rect_type *size);
-        void                    handlePreviewData(const sp<IMemory>& mem);
+        void                    handleShutter(void);
+        void                    handlePreviewData(int32_t msgType, const sp<IMemory>& mem,
+                                                  camera_frame_metadata_t *metadata);
         void                    handlePostview(const sp<IMemory>& mem);
         void                    handleRawPicture(const sp<IMemory>& mem);
         void                    handleCompressedPicture(const sp<IMemory>& mem);
         void                    handleGenericNotify(int32_t msgType, int32_t ext1, int32_t ext2);
-        void                    handleGenericData(int32_t msgType, const sp<IMemory>& dataPtr);
+        void                    handleGenericData(int32_t msgType, const sp<IMemory>& dataPtr,
+                                                  camera_frame_metadata_t *metadata);
         void                    handleGenericDataTimestamp(nsecs_t timestamp, int32_t msgType, const sp<IMemory>& dataPtr);
 
         void                    copyFrameAndPostCopiedFrame(
+                                    int32_t msgType,
                                     const sp<ICameraClient>& client,
                                     const sp<IMemoryHeap>& heap,
-                                    size_t offset, size_t size);
+                                    size_t offset, size_t size,
+                                    camera_frame_metadata_t *metadata);
 
         int                     getOrientation(int orientation, bool mirror);
+
+        status_t                setPreviewWindow(
+                                    const sp<IBinder>& binder,
+                                    const sp<ANativeWindow>& window);
 
         // these are initialized in the constructor.
         sp<CameraService>               mCameraService;  // immutable after constructor
@@ -163,18 +180,15 @@ private:
         int                             mCameraFacing;   // immutable after constructor
         pid_t                           mClientPid;
         sp<CameraHardwareInterface>     mHardware;       // cleared after disconnect()
-        bool                            mUseOverlay;     // immutable after constructor
-        sp<OverlayRef>                  mOverlayRef;
-        int                             mOverlayW;
-        int                             mOverlayH;
         int                             mPreviewCallbackFlag;
         int                             mOrientation;     // Current display orientation
-        // True if display orientation has been changed. This is only used in overlay.
-        int                             mOrientationChanged;
+        bool                            mPlayShutterSound;
 
         // Ensures atomicity among the public methods
         mutable Mutex                   mLock;
-        sp<ISurface>                    mSurface;
+        // This is a binder of Surface or SurfaceTexture.
+        sp<IBinder>                     mSurface;
+        sp<ANativeWindow>               mPreviewWindow;
 
         // If the user want us to return a copy of the preview frame (instead
         // of the original one), we allocate mPreviewBuffer and reuse it if possible.
@@ -198,6 +212,8 @@ private:
         // is found to be disabled. It returns true if mLock is grabbed.
         bool                    lockIfMessageWanted(int32_t msgType);
     };
+
+    camera_module_t *mModule;
 };
 
 } // namespace android

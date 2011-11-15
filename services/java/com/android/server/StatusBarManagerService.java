@@ -16,28 +16,25 @@
 
 package com.android.server;
 
-import android.app.PendingIntent;
 import android.app.StatusBarManager;
 import android.content.BroadcastReceiver;
-import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.content.res.Resources;
-import android.net.Uri;
-import android.os.IBinder;
-import android.os.RemoteException;
 import android.os.Binder;
 import android.os.Handler;
-import android.os.SystemClock;
+import android.os.IBinder;
+import android.os.RemoteException;
 import android.util.Slog;
+import android.view.View;
 
 import com.android.internal.statusbar.IStatusBar;
 import com.android.internal.statusbar.IStatusBarService;
 import com.android.internal.statusbar.StatusBarIcon;
 import com.android.internal.statusbar.StatusBarIconList;
 import com.android.internal.statusbar.StatusBarNotification;
+import com.android.server.wm.WindowManagerService;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -52,11 +49,13 @@ import java.util.Map;
  * if they are local, that they just enqueue messages to not deadlock.
  */
 public class StatusBarManagerService extends IStatusBarService.Stub
+    implements WindowManagerService.OnHardKeyboardStatusChangeListener
 {
     static final String TAG = "StatusBarManagerService";
     static final boolean SPEW = false;
 
     final Context mContext;
+    final WindowManagerService mWindowManager;
     Handler mHandler = new Handler();
     NotificationCallbacks mNotificationCallbacks;
     volatile IStatusBar mBar;
@@ -66,7 +65,16 @@ public class StatusBarManagerService extends IStatusBarService.Stub
 
     // for disabling the status bar
     ArrayList<DisableRecord> mDisableRecords = new ArrayList<DisableRecord>();
+    IBinder mSysUiVisToken = new Binder();
     int mDisabled = 0;
+
+    Object mLock = new Object();
+    // encompasses lights-out mode and other flags defined on View
+    int mSystemUiVisibility = 0;
+    boolean mMenuVisible = false;
+    int mImeWindowVis = 0;
+    int mImeBackDisposition;
+    IBinder mImeToken = null;
 
     private class DisableRecord implements IBinder.DeathRecipient {
         String pkg;
@@ -84,6 +92,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub
         void onSetDisabled(int status);
         void onClearAll();
         void onNotificationClick(String pkg, String tag, int id);
+        void onNotificationClear(String pkg, String tag, int id);
         void onPanelRevealed();
         void onNotificationError(String pkg, String tag, int id,
                 int uid, int initialPid, String message);
@@ -92,8 +101,10 @@ public class StatusBarManagerService extends IStatusBarService.Stub
     /**
      * Construct the service, add the status bar view to the window manager
      */
-    public StatusBarManagerService(Context context) {
+    public StatusBarManagerService(Context context, WindowManagerService windowManager) {
         mContext = context;
+        mWindowManager = windowManager;
+        mWindowManager.setOnHardKeyboardStatusChangeListener(this);
 
         final Resources res = context.getResources();
         mIcons.defineSlots(res.getStringArray(com.android.internal.R.array.config_statusBarIcons));
@@ -101,22 +112,6 @@ public class StatusBarManagerService extends IStatusBarService.Stub
 
     public void setNotificationCallbacks(NotificationCallbacks listener) {
         mNotificationCallbacks = listener;
-    }
-
-    // ================================================================================
-    // Constructing the view
-    // ================================================================================
-
-    public void systemReady() {
-    }
-
-    public void systemReady2() {
-        ComponentName cn = ComponentName.unflattenFromString(
-                mContext.getString(com.android.internal.R.string.config_statusBarComponent));
-        Intent intent = new Intent();
-        intent.setComponent(cn);
-        Slog.i(TAG, "Starting service: " + cn);
-        mContext.startService(intent);
     }
 
     // ================================================================================
@@ -147,31 +142,36 @@ public class StatusBarManagerService extends IStatusBarService.Stub
     public void disable(int what, IBinder token, String pkg) {
         enforceStatusBar();
 
+        synchronized (mLock) {
+            disableLocked(what, token, pkg);
+        }
+    }
+
+    private void disableLocked(int what, IBinder token, String pkg) {
         // It's important that the the callback and the call to mBar get done
         // in the same order when multiple threads are calling this function
         // so they are paired correctly.  The messages on the handler will be
         // handled in the order they were enqueued, but will be outside the lock.
-        synchronized (mDisableRecords) {
-            manageDisableListLocked(what, token, pkg);
-            final int net = gatherDisableActionsLocked();
-            if (net != mDisabled) {
-                mDisabled = net;
-                mHandler.post(new Runnable() {
-                        public void run() {
-                            mNotificationCallbacks.onSetDisabled(net);
-                        }
-                    });
-                if (mBar != null) {
-                    try {
-                        mBar.disable(net);
-                    } catch (RemoteException ex) {
+        manageDisableListLocked(what, token, pkg);
+        final int net = gatherDisableActionsLocked();
+        if (net != mDisabled) {
+            mDisabled = net;
+            mHandler.post(new Runnable() {
+                    public void run() {
+                        mNotificationCallbacks.onSetDisabled(net);
                     }
+                });
+            if (mBar != null) {
+                try {
+                    mBar.disable(net);
+                } catch (RemoteException ex) {
                 }
             }
         }
     }
 
-    public void setIcon(String slot, String iconPackage, int iconId, int iconLevel) {
+    public void setIcon(String slot, String iconPackage, int iconId, int iconLevel,
+            String contentDescription) {
         enforceStatusBar();
 
         synchronized (mIcons) {
@@ -180,7 +180,8 @@ public class StatusBarManagerService extends IStatusBarService.Stub
                 throw new SecurityException("invalid status bar icon slot: " + slot);
             }
 
-            StatusBarIcon icon = new StatusBarIcon(iconPackage, iconId, iconLevel);
+            StatusBarIcon icon = new StatusBarIcon(iconPackage, iconId, iconLevel, 0,
+                    contentDescription);
             //Slog.d(TAG, "setIcon slot=" + slot + " index=" + index + " icon=" + icon);
             mIcons.setIcon(index, icon);
 
@@ -240,6 +241,117 @@ public class StatusBarManagerService extends IStatusBarService.Stub
         }
     }
 
+    /** 
+     * Hide or show the on-screen Menu key. Only call this from the window manager, typically in
+     * response to a window with FLAG_NEEDS_MENU_KEY set.
+     */
+    public void topAppWindowChanged(final boolean menuVisible) {
+        enforceStatusBar();
+
+        if (SPEW) Slog.d(TAG, (menuVisible?"showing":"hiding") + " MENU key");
+
+        synchronized(mLock) {
+            mMenuVisible = menuVisible;
+            mHandler.post(new Runnable() {
+                    public void run() {
+                        if (mBar != null) {
+                            try {
+                                mBar.topAppWindowChanged(menuVisible);
+                            } catch (RemoteException ex) {
+                            }
+                        }
+                    }
+                });
+        }
+    }
+
+    public void setImeWindowStatus(final IBinder token, final int vis, final int backDisposition) {
+        enforceStatusBar();
+
+        if (SPEW) {
+            Slog.d(TAG, "swetImeWindowStatus vis=" + vis + " backDisposition=" + backDisposition);
+        }
+
+        synchronized(mLock) {
+            // In case of IME change, we need to call up setImeWindowStatus() regardless of
+            // mImeWindowVis because mImeWindowVis may not have been set to false when the
+            // previous IME was destroyed.
+            mImeWindowVis = vis;
+            mImeBackDisposition = backDisposition;
+            mImeToken = token;
+            mHandler.post(new Runnable() {
+                public void run() {
+                    if (mBar != null) {
+                        try {
+                            mBar.setImeWindowStatus(token, vis, backDisposition);
+                        } catch (RemoteException ex) {
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    public void setSystemUiVisibility(int vis) {
+        // also allows calls from window manager which is in this process.
+        enforceStatusBarService();
+
+        if (SPEW) Slog.d(TAG, "setSystemUiVisibility(0x" + Integer.toHexString(vis) + ")");
+
+        synchronized (mLock) {
+            updateUiVisibilityLocked(vis);
+            disableLocked(vis & StatusBarManager.DISABLE_MASK, mSysUiVisToken,
+                    "WindowManager.LayoutParams");
+        }
+    }
+
+    private void updateUiVisibilityLocked(final int vis) {
+        if (mSystemUiVisibility != vis) {
+            mSystemUiVisibility = vis;
+            mHandler.post(new Runnable() {
+                    public void run() {
+                        if (mBar != null) {
+                            try {
+                                mBar.setSystemUiVisibility(vis);
+                            } catch (RemoteException ex) {
+                            }
+                        }
+                    }
+                });
+        }
+    }
+
+    public void setHardKeyboardEnabled(final boolean enabled) {
+        mHandler.post(new Runnable() {
+            public void run() {
+                mWindowManager.setHardKeyboardEnabled(enabled);
+            }
+        });
+    }
+
+    @Override
+    public void onHardKeyboardStatusChange(final boolean available, final boolean enabled) {
+        mHandler.post(new Runnable() {
+            public void run() {
+                if (mBar != null) {
+                    try {
+                        mBar.setHardKeyboardStatus(available, enabled);
+                    } catch (RemoteException ex) {
+                    }
+                }
+            }
+        });
+    }
+
+    @Override
+    public void toggleRecentApps() {
+        if (mBar != null) {
+            try {
+                mBar.toggleRecentApps();
+            } catch (RemoteException ex) {}
+        }
+    }
+
     private void enforceStatusBar() {
         mContext.enforceCallingOrSelfPermission(android.Manifest.permission.STATUS_BAR,
                 "StatusBarManagerService");
@@ -255,12 +367,12 @@ public class StatusBarManagerService extends IStatusBarService.Stub
                 "StatusBarManagerService");
     }
 
-
     // ================================================================================
     // Callbacks from the status bar service.
     // ================================================================================
     public void registerStatusBar(IStatusBar bar, StatusBarIconList iconList,
-            List<IBinder> notificationKeys, List<StatusBarNotification> notifications) {
+            List<IBinder> notificationKeys, List<StatusBarNotification> notifications,
+            int switches[], List<IBinder> binders) {
         enforceStatusBarService();
 
         Slog.i(TAG, "registerStatusBar bar=" + bar);
@@ -274,6 +386,16 @@ public class StatusBarManagerService extends IStatusBarService.Stub
                 notifications.add(e.getValue());
             }
         }
+        synchronized (mLock) {
+            switches[0] = gatherDisableActionsLocked();
+            switches[1] = mSystemUiVisibility;
+            switches[2] = mMenuVisible ? 1 : 0;
+            switches[3] = mImeWindowVis;
+            switches[4] = mImeBackDisposition;
+            binders.add(mImeToken);
+        }
+        switches[5] = mWindowManager.isHardKeyboardAvailable() ? 1 : 0;
+        switches[6] = mWindowManager.isHardKeyboardEnabled() ? 1 : 0;
     }
 
     /**
@@ -299,6 +421,12 @@ public class StatusBarManagerService extends IStatusBarService.Stub
 
         // WARNING: this will call back into us to do the remove.  Don't hold any locks.
         mNotificationCallbacks.onNotificationError(pkg, tag, id, uid, initialPid, message);
+    }
+
+    public void onNotificationClear(String pkg, String tag, int id) {
+        enforceStatusBarService();
+
+        mNotificationCallbacks.onNotificationClear(pkg, tag, id);
     }
 
     public void onClearAllNotifications() {
@@ -364,37 +492,35 @@ public class StatusBarManagerService extends IStatusBarService.Stub
             Slog.d(TAG, "manageDisableList what=0x" + Integer.toHexString(what) + " pkg=" + pkg);
         }
         // update the list
-        synchronized (mDisableRecords) {
-            final int N = mDisableRecords.size();
-            DisableRecord tok = null;
-            int i;
-            for (i=0; i<N; i++) {
-                DisableRecord t = mDisableRecords.get(i);
-                if (t.token == token) {
-                    tok = t;
-                    break;
-                }
+        final int N = mDisableRecords.size();
+        DisableRecord tok = null;
+        int i;
+        for (i=0; i<N; i++) {
+            DisableRecord t = mDisableRecords.get(i);
+            if (t.token == token) {
+                tok = t;
+                break;
             }
-            if (what == 0 || !token.isBinderAlive()) {
-                if (tok != null) {
-                    mDisableRecords.remove(i);
-                    tok.token.unlinkToDeath(tok, 0);
-                }
-            } else {
-                if (tok == null) {
-                    tok = new DisableRecord();
-                    try {
-                        token.linkToDeath(tok, 0);
-                    }
-                    catch (RemoteException ex) {
-                        return; // give up
-                    }
-                    mDisableRecords.add(tok);
-                }
-                tok.what = what;
-                tok.token = token;
-                tok.pkg = pkg;
+        }
+        if (what == 0 || !token.isBinderAlive()) {
+            if (tok != null) {
+                mDisableRecords.remove(i);
+                tok.token.unlinkToDeath(tok, 0);
             }
+        } else {
+            if (tok == null) {
+                tok = new DisableRecord();
+                try {
+                    token.linkToDeath(tok, 0);
+                }
+                catch (RemoteException ex) {
+                    return; // give up
+                }
+                mDisableRecords.add(tok);
+            }
+            tok.what = what;
+            tok.token = token;
+            tok.pkg = pkg;
         }
     }
 
@@ -435,7 +561,7 @@ public class StatusBarManagerService extends IStatusBarService.Stub
             }
         }
 
-        synchronized (mDisableRecords) {
+        synchronized (mLock) {
             final int N = mDisableRecords.size();
             pw.println("  mDisableRecords.size=" + N
                     + " mDisabled=0x" + Integer.toHexString(mDisabled));

@@ -1,4 +1,4 @@
-page.title=Licensing Your Applications
+page.title=Application Licensing
 @jd:body
 
 <div id="qv-wrapper">
@@ -263,15 +263,15 @@ licensed for all users. If your application is already published as free,
 you won't be able to upload a new version that uses licensing.</li>
 </ul>
 
-<h4>Replacement for copy protection</h4>
+<h4>Replacement for Copy Protection</h4>
 
 <p>Android Market Licensing is a flexible, secure mechanism for controlling
-access to your applications. It effectively replaces the copy-protection
+access to your applications. It effectively replaces the Copy Protection
 mechanism offered on Android Market and gives you wider distribution
 potential for your applications. </p>
 
 <ul>
-<li>A limitation of the legacy copy-protection mechanism on Android Market is
+<li>A limitation of the legacy Copy Protection mechanism on Android Market is
 that applications using it can be installed only on compatible devices that
 provide a secure internal storage environment. For example, a copy-protected
 application cannot be downloaded from Market to a device that provides root
@@ -368,7 +368,7 @@ to set up your development environment for licensing. </p>
 
 <ol>
 <li><a href="#download-sdk">Downloading the latest SDK</a>, if you haven't already done so </li>
-<li><a href="#runtime-setup">Setting up the runtime environment</a> for development</a></li>
+<li><a href="#runtime-setup">Setting up the runtime environment</a> for development</li>
 <li><a href="#download-lvl">Downloading the Market Licensing component</a> into your SDK </li>
 <li><a href="#lvl-setup">Setting up the Licensing Verification Library</a></li>
 <li><a href="#add-library">Including the LVL library project in your application</a></li>
@@ -518,7 +518,7 @@ Android Virtual Devices.</li>
 </ol>
 
 <p>If you are not familiar with AVDs or how to use them, see <a
-href="{@docRoot}guide/developing/tools/avd.html">Android Virtual Devices</a>.</p>
+href="{@docRoot}guide/developing/devices/index.html">Managing Virtual Devices</a>.</p>
 
 <h4 id="project-update">Updating your project configuration</h4>
 
@@ -582,9 +582,9 @@ Licensing package contains the LVL and the LVL sample application. </div>
 <p>When the download is complete, the Android SDK and AVD Manager installs both
 the LVL library project and the example application into these directories: </p>
 
-<p style="margin-left:2em"><code>&lt;<em>sdk</em>&gt;/market_licensing/library/</code>
+<p style="margin-left:2em"><code>&lt;<em>sdk</em>&gt;/extras/google/market_licensing/library/</code>
 &nbsp;&nbsp;(the LVL library project)<br />
-<code>&lt;<em>sdk</em>&gt;/market_licensing/sample/</code>&nbsp;&nbsp;(the example
+<code>&lt;<em>sdk</em>&gt;/extras/google/market_licensing/sample/</code>&nbsp;&nbsp;(the example
 application)</p>
 
 <p>If you aren't familiar with how to download components into your SDK, see the
@@ -628,12 +628,9 @@ version of the LVL.</p>
 share its code and resources across multiple applications. </p>
 
 <p style="margin-top:.5em;">If you aren't familiar with library projects or how
-to use them, read more in <a
-href="{@docRoot}guide/developing/eclipse-adt.html#libraryProject">Developing in
-Eclipse with ADT</a> or <a
-href="{@docRoot}guide/developing/other-ide.html#libraryProject">Developing in
-Other IDEs</a>, as appropriate for your environment.</p>
-
+to use them, see <a href="{@docRoot}guide/developing/projects/index.html#LibraryProjects">
+Managing Projects</a>.
+</p>
 </div>
 </div>
 
@@ -665,13 +662,13 @@ name, package, and set other fields as needed. </li>
 </ol>
 
 <p> When created, the project is
-predefined as a library project in its <code>default.properties</code> file, so
+predefined as a library project in its <code>project.properties</code> file, so
 no further configuration is needed. </p>
 
 <p>For more information about how to create an application project or work with
 library projects in Eclipse, see <a
-href="{@docRoot}guide/developing/eclipse-adt.html#CreatingAProject">Developing
-in Eclipse with ADT</a>.</p>
+href="{@docRoot}guide/developing/projects/projects-eclipse.html">Managing Projects from
+Eclipse with ADT</a></p>.
 
 <h4>Copying the LVL sources to your application</h4>
 
@@ -701,9 +698,9 @@ haven't done that already, do it now before continuing. </p>
 <p>Next, open the application's project properties window, as shown below.
 Select the "Android" properties group and click <strong>Add</strong>, then
 choose the LVL library project (com_android_vending_licensing) and click
-<strong>OK</strong>. For more information, see
-<a href="{@docRoot}guide/developing/eclipse-adt.html#libraryProject">Developing
-in Eclipse with ADT</a></p>
+<strong>OK</strong>. For more information, see 
+<a href="{@docRoot}guide/developing/projects/projects-eclipse.html#SettingUpLibraryProject">
+Managing Projects from Eclipse with ADT</a></p>.
 
 <div style="margin-bottom:2em;">
 
@@ -715,7 +712,7 @@ application from the application's project properties.</div>
 
 <p>If you are developing using the SDK command-line tools, navigate to the
 directory containing your application project and open the
-<code>default.properties</code> file. Add a line to the file that specifies the
+<code>project.properties</code> file. Add a line to the file that specifies the
 <code>android.library.reference.&lt;n&gt;</code> key and the path to the
 library. For example: </p>
 
@@ -730,11 +727,9 @@ properties, including the reference to the library project:</p>
 --library <em>path/to/my/library_project</em>
 </pre>
 
-<p>For more information about working with library projects, see <a
-href="{@docRoot}guide/developing/eclipse-adt.html#libraryProject">Developing
-in Eclipse with ADT</a> or <a
-href="{@docRoot}guide/developing/other-ide.html#libraryProject">Developing in
-Other IDEs</a>, as appropriate for your environment.</p>
+<p>For more information about working with library projects, 
+see <a href="{@docRoot}guide/developing/projects/projects-cmdline.html#SettingUpLibraryProject">
+Managing Projects from the Command Line</a></p>.
 
 
 <h2 id="app-integration">Integrating the LVL with Your Application</h2>
@@ -1535,7 +1530,7 @@ Make sure that you sign in to the account from which the application you are
 licensing is published (or will be published). </li>
 <li>In the account home page, locate the "Edit profile" link and click it. </li>
 <li>In the Edit Profile page, locate the "Licensing" pane, shown below. Your
-public key for licensing is given in the "Public key" text box. </p>
+public key for licensing is given in the "Public key" text box. </li>
 </ol>
 
 <p>To add the public key to your application, simply copy/paste the key string
@@ -2129,7 +2124,7 @@ returned by the Android Market server in a license response.</p>
 <tr>
 <td>LICENSED</td>
 <td>The application is licensed to the user. The user has purchased the
-application or the application is free.</td>
+application or the application only exists as a draft.</td>
 <td>Yes</td>
 <td><code>VT</code>,&nbsp;<code>GT</code>, <code>GR</code></td>
 <td><em>Allow access according to Policy constraints.</em></td>
@@ -2207,6 +2202,17 @@ implementation.</p>
 
 </table>
 
+<p class="note"><strong>Note:</strong> As documented in <a href="#test-env">
+Setting Up The Testing Environment</a>, the response code can be manually
+overridden for the application developer and any registered test users via the
+Android Market publisher site.
+<br/><br/>
+Additionally, as noted above, applications that are in draft mode (in other
+words, applicaitons that have been uploaded but have <em>never</em> been
+published) will return LICENSED for all users, even if not listed as a test
+user. Since the application has never been offered for download, it is assumed
+that any users running it must have obtained it from an authorized channel for
+testing purposes.</p>
 
 <h2 id="extras">Server Response Extras</h2>
 

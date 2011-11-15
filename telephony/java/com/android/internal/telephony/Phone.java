@@ -17,18 +17,18 @@
 package com.android.internal.telephony;
 
 import android.content.Context;
-import android.content.SharedPreferences;
+import android.net.LinkCapabilities;
+import android.net.LinkProperties;
 import android.os.Handler;
 import android.os.Message;
-import android.preference.PreferenceManager;
+import android.os.SystemProperties;
 import android.telephony.CellLocation;
 import android.telephony.PhoneStateListener;
 import android.telephony.ServiceState;
 import android.telephony.SignalStrength;
 
 import com.android.internal.telephony.DataConnection;
-import com.android.internal.telephony.gsm.NetworkInfo;
-import com.android.internal.telephony.gsm.GsmDataConnection;
+import com.android.internal.telephony.ims.IsimRecords;
 import com.android.internal.telephony.test.SimulatedRadioControl;
 
 import java.util.List;
@@ -99,12 +99,14 @@ public interface Phone {
     static final String PHONE_NAME_KEY = "phoneName";
     static final String FAILURE_REASON_KEY = "reason";
     static final String STATE_CHANGE_REASON_KEY = "reason";
-    static final String DATA_APN_TYPES_KEY = "apnType";
+    static final String DATA_APN_TYPE_KEY = "apnType";
     static final String DATA_APN_KEY = "apn";
+    static final String DATA_LINK_PROPERTIES_KEY = "linkProperties";
+    static final String DATA_LINK_CAPABILITIES_KEY = "linkCapabilities";
 
     static final String DATA_IFACE_NAME_KEY = "iface";
-    static final String DATA_GATEWAY_KEY = "gateway";
     static final String NETWORK_UNAVAILABLE_KEY = "networkUnvailable";
+    static final String DATA_NETWORK_ROAMING_KEY = "networkRoaming";
     static final String PHONE_IN_ECM_STATE = "phoneinECMState";
 
     /**
@@ -126,12 +128,22 @@ public interface Phone {
     static final String APN_TYPE_DUN = "dun";
     /** APN type for HiPri traffic */
     static final String APN_TYPE_HIPRI = "hipri";
+    /** APN type for FOTA */
+    static final String APN_TYPE_FOTA = "fota";
+    /** APN type for IMS */
+    static final String APN_TYPE_IMS = "ims";
+    /** APN type for CBS */
+    static final String APN_TYPE_CBS = "cbs";
 
     // "Features" accessible through the connectivity manager
     static final String FEATURE_ENABLE_MMS = "enableMMS";
     static final String FEATURE_ENABLE_SUPL = "enableSUPL";
     static final String FEATURE_ENABLE_DUN = "enableDUN";
     static final String FEATURE_ENABLE_HIPRI = "enableHIPRI";
+    static final String FEATURE_ENABLE_DUN_ALWAYS = "enableDUNAlways";
+    static final String FEATURE_ENABLE_FOTA = "enableFOTA";
+    static final String FEATURE_ENABLE_IMS = "enableIMS";
+    static final String FEATURE_ENABLE_CBS = "enableCBS";
 
     /**
      * Return codes for <code>enableApnType()</code>
@@ -140,6 +152,7 @@ public interface Phone {
     static final int APN_REQUEST_STARTED    = 1;
     static final int APN_TYPE_NOT_AVAILABLE = 2;
     static final int APN_REQUEST_FAILED     = 3;
+    static final int APN_ALREADY_INACTIVE   = 4;
 
 
     /**
@@ -149,8 +162,8 @@ public interface Phone {
     static final String REASON_ROAMING_OFF = "roamingOff";
     static final String REASON_DATA_DISABLED = "dataDisabled";
     static final String REASON_DATA_ENABLED = "dataEnabled";
-    static final String REASON_GPRS_ATTACHED = "gprsAttached";
-    static final String REASON_GPRS_DETACHED = "gprsDetached";
+    static final String REASON_DATA_ATTACHED = "dataAttached";
+    static final String REASON_DATA_DETACHED = "dataDetached";
     static final String REASON_CDMA_DATA_ATTACHED = "cdmaDataAttached";
     static final String REASON_CDMA_DATA_DETACHED = "cdmaDataDetached";
     static final String REASON_APN_CHANGED = "apnChanged";
@@ -164,6 +177,10 @@ public interface Phone {
     static final String REASON_PS_RESTRICT_ENABLED = "psRestrictEnabled";
     static final String REASON_PS_RESTRICT_DISABLED = "psRestrictDisabled";
     static final String REASON_SIM_LOADED = "simLoaded";
+    static final String REASON_NW_TYPE_CHANGED = "nwTypeChanged";
+    static final String REASON_DATA_DEPENDENCY_MET = "dependencyMet";
+    static final String REASON_DATA_DEPENDENCY_UNMET = "dependencyUnmet";
+    static final String REASON_LINK_PROPERTIES_CHANGED = "linkPropertiesChanged";
 
     // Used for band mode selection methods
     static final int BM_UNSPECIFIED = 0; // selected by baseband automatically
@@ -180,6 +197,11 @@ public interface Phone {
     static final int PHONE_TYPE_CDMA = RILConstants.CDMA_PHONE;
     static final int PHONE_TYPE_SIP = RILConstants.SIP_PHONE;
 
+    // Modes for LTE_ON_CDMA
+    static final int LTE_ON_CDMA_UNKNOWN = RILConstants.LTE_ON_CDMA_UNKNOWN;
+    static final int LTE_ON_CDMA_FALSE = RILConstants.LTE_ON_CDMA_FALSE;
+    static final int LTE_ON_CDMA_TRUE = RILConstants.LTE_ON_CDMA_TRUE;
+
     // Used for preferred network type
     // Note NT_* substitute RILConstants.NETWORK_MODE_* above the Phone
     int NT_MODE_WCDMA_PREF   = RILConstants.NETWORK_MODE_WCDMA_PREF;
@@ -193,6 +215,7 @@ public interface Phone {
     int NT_MODE_EVDO_NO_CDMA = RILConstants.NETWORK_MODE_EVDO_NO_CDMA;
     int NT_MODE_GLOBAL       = RILConstants.NETWORK_MODE_GLOBAL;
 
+    int NT_MODE_LTE_ONLY     = RILConstants.NETWORK_MODE_LTE_ONLY;
     int PREFERRED_NT_MODE    = RILConstants.PREFERRED_NETWORK_MODE;
 
 
@@ -243,11 +266,19 @@ public interface Phone {
     CellLocation getCellLocation();
 
     /**
-     * Get the current DataState. No change notification exists at this
-     * interface -- use
+     * Get the current for the default apn DataState. No change notification
+     * exists at this interface -- use
      * {@link android.telephony.PhoneStateListener} instead.
      */
     DataState getDataConnectionState();
+
+    /**
+     * Get the current DataState. No change notification exists at this
+     * interface -- use
+     * {@link android.telephony.PhoneStateListener} instead.
+     * @param apnType specify for which apn to get connection state info.
+     */
+    DataState getDataConnectionState(String apnType);
 
     /**
      * Get the current DataActivityState. No change notification exists at this
@@ -301,16 +332,27 @@ public interface Phone {
 
     /**
      * Returns an array of string identifiers for the APN types serviced by the
-     * currently active or last connected APN.
-     *  @return The string array.
+     * currently active.
+     *  @return The string array will always return at least one entry, Phone.APN_TYPE_DEFAULT.
+     * TODO: Revisit if we always should return at least one entry.
      */
     String[] getActiveApnTypes();
 
     /**
-     * Returns a string identifier for currently active or last connected APN.
-     *  @return The string name.
+     * Returns string for the active APN host.
+     *  @return type as a string or null if none.
      */
-    String getActiveApn();
+    String getActiveApnHost(String apnType);
+
+    /**
+     * Return the LinkProperties for the named apn or null if not available
+     */
+    LinkProperties getLinkProperties(String apnType);
+
+    /**
+     * Return the LinkCapabilities
+     */
+    LinkCapabilities getLinkCapabilities(String apnType);
 
     /**
      * Get current signal strength. No change notification available on this
@@ -890,7 +932,8 @@ public interface Phone {
     boolean getCallForwardingIndicator();
 
     /**
-     * Get the line 1 phone number (MSISDN).<p>
+     * Get the line 1 phone number (MSISDN). For CDMA phones, the MDN is returned
+     * and {@link #getMsisdn()} will return the MSISDN on CDMA/LTE phones.<p>
      *
      * @return phone number. May return null if not
      * available or the SIM is not ready
@@ -1036,7 +1079,7 @@ public interface Phone {
      * one of the following members:.<p>
      *<ul>
      * <li><code>response.obj.result</code> will be a <code>List</code> of
-     * <code>com.android.internal.telephony.gsm.NetworkInfo</code> objects, or</li>
+     * <code>OperatorInfo</code> objects, or</li>
      * <li><code>response.obj.exception</code> will be set with an exception
      * on failure.</li>
      * </ul>
@@ -1050,8 +1093,7 @@ public interface Phone {
      * @param response The message to dispatch when the network selection
      * is complete.
      *
-     * @see #selectNetworkManually(com.android.internal.telephony.gsm.NetworkInfo,
-     * android.os.Message )
+     * @see #selectNetworkManually(OperatorInfo, android.os.Message )
      */
     void setNetworkSelectionModeAutomatic(Message response);
 
@@ -1063,7 +1105,7 @@ public interface Phone {
      *
      * @see #setNetworkSelectionModeAutomatic(Message)
      */
-    void selectNetworkManually(NetworkInfo network,
+    void selectNetworkManually(OperatorInfo network,
                             Message response);
 
     /**
@@ -1218,13 +1260,6 @@ public interface Phone {
     void getDataCallList(Message response);
 
     /**
-     * Get current mutiple data connection status
-     *
-     * @return list of data connections
-     */
-    List<DataConnection> getCurrentDataConnectionList();
-
-    /**
      * Update the ServiceState CellLocation for current network registration.
      */
     void updateServiceLocation();
@@ -1306,36 +1341,6 @@ public interface Phone {
     SimulatedRadioControl getSimulatedRadioControl();
 
     /**
-     * Allow mobile data connections.
-     * @return {@code true} if the operation started successfully
-     * <br/>{@code false} if it
-     * failed immediately.<br/>
-     * Even in the {@code true} case, it may still fail later
-     * during setup, in which case an asynchronous indication will
-     * be supplied.
-     */
-    boolean enableDataConnectivity();
-
-    /**
-     * Disallow mobile data connections, and terminate any that
-     * are in progress.
-     * @return {@code true} if the operation started successfully
-     * <br/>{@code false} if it
-     * failed immediately.<br/>
-     * Even in the {@code true} case, it may still fail later
-     * during setup, in which case an asynchronous indication will
-     * be supplied.
-     */
-    boolean disableDataConnectivity();
-
-    /**
-     * Report the current state of data connectivity (enabled or disabled)
-     * @return {@code false} if data connectivity has been explicitly disabled,
-     * {@code true} otherwise.
-     */
-    boolean isDataConnectivityEnabled();
-
-    /**
      * Enables the specified APN type. Only works for "special" APN types,
      * i.e., not the default APN.
      * @param type The desired APN type. Cannot be {@link #APN_TYPE_DEFAULT}.
@@ -1373,27 +1378,9 @@ public interface Phone {
     boolean isDataConnectivityPossible();
 
     /**
-     * Returns the name of the network interface used by the specified APN type.
+     * Report on whether data connectivity is allowed for an APN.
      */
-    String getInterfaceName(String apnType);
-
-    /**
-     * Returns the IP address of the network interface used by the specified
-     * APN type.
-     */
-    String getIpAddress(String apnType);
-
-    /**
-     * Returns the gateway for the network interface used by the specified APN
-     * type.
-     */
-    String getGateway(String apnType);
-
-    /**
-     * Returns the DNS servers for the network interface used by the specified
-     * APN type.
-     */
-    public String[] getDnsServers(String apnType);
+    boolean isDataConnectivityPossible(String apnType);
 
     /**
      * Retrieves the unique device ID, e.g., IMEI for GSM phones and MEID for CDMA phones.
@@ -1407,7 +1394,7 @@ public interface Phone {
     String getDeviceSvn();
 
     /**
-     * Retrieves the unique sbuscriber ID, e.g., IMSI for GSM phones.
+     * Retrieves the unique subscriber ID, e.g., IMSI for GSM phones.
      */
     String getSubscriberId();
 
@@ -1444,6 +1431,18 @@ public interface Phone {
      * Retrieves MEID for CDMA phones.
      */
     String getMeid();
+
+    /**
+     * Retrieves the MSISDN from the UICC. For GSM/UMTS phones, this is equivalent to
+     * {@link #getLine1Number()}. For CDMA phones, {@link #getLine1Number()} returns
+     * the MDN, so this method is provided to return the MSISDN on CDMA/LTE phones.
+     */
+    String getMsisdn();
+
+    /**
+     * Retrieves IMEI for phones. Returns null if IMEI is not set.
+     */
+    String getImei();
 
     /**
      * Retrieves the PhoneSubInfo of the Phone
@@ -1540,6 +1539,11 @@ public interface Phone {
      * @return  true means the dialStr is OTA number, and false means the dialStr is not OTA number
      */
     boolean isOtaSpNumber(String dialStr);
+
+    /**
+     * Returns true if OTA Service Provisioning needs to be performed.
+     */
+    boolean needsOtaServiceProvisioning();
 
     /**
      * Register for notifications when CDMA call waiting comes
@@ -1716,5 +1720,49 @@ public interface Phone {
      */
     void unsetOnEcbModeExitResponse(Handler h);
 
+    /**
+     * Return if the current radio is LTE on CDMA. This
+     * is a tri-state return value as for a period of time
+     * the mode may be unknown.
+     *
+     * @return {@link #LTE_ON_CDMA_UNKNOWN}, {@link #LTE_ON_CDMA_FALSE} or {@link #LTE_ON_CDMA_TRUE}
+     */
+    public int getLteOnCdmaMode();
 
+    /**
+     * TODO: Adding a function for each property is not good.
+     * A fucntion of type getPhoneProp(propType) where propType is an
+     * enum of GSM+CDMA+LTE props would be a better approach.
+     *
+     * Get "Restriction of menu options for manual PLMN selection" bit
+     * status from EF_CSP data, this belongs to "Value Added Services Group".
+     * @return true if this bit is set or EF_CSP data is unavailable,
+     * false otherwise
+     */
+    boolean isCspPlmnEnabled();
+
+    /**
+     * Return an interface to retrieve the ISIM records for IMS, if available.
+     * @return the interface to retrieve the ISIM records, or null if not supported
+     */
+    IsimRecords getIsimRecords();
+
+    /**
+     * Request the ISIM application on the UICC to perform the AKA
+     * challenge/response algorithm for IMS authentication. The nonce string
+     * and challenge response are Base64 encoded Strings.
+     *
+     * @param nonce the nonce string to pass with the ISIM authentication request
+     * @param response a callback message with the String response in the obj field
+     */
+    void requestIsimAuthentication(String nonce, Message response);
+
+    /**
+     * Sets the SIM voice message waiting indicator records.
+     * @param line GSM Subscriber Profile Number, one-based. Only '1' is supported
+     * @param countWaiting The number of messages waiting, if known. Use
+     *                     -1 to indicate that an unknown number of
+     *                      messages are waiting
+     */
+    void setVoiceMessageWaiting(int line, int countWaiting);
 }

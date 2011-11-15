@@ -14,10 +14,14 @@
  * limitations under the License.
  */
 
+//#define LOG_NDEBUG 0
+#define LOG_TAG "M3UParser"
+#include <utils/Log.h>
+
 #include "include/M3UParser.h"
 
+#include <media/stagefright/foundation/ADebug.h>
 #include <media/stagefright/foundation/AMessage.h>
-#include <media/stagefright/MediaDebug.h>
 #include <media/stagefright/MediaErrors.h>
 
 namespace android {
@@ -60,14 +64,21 @@ size_t M3UParser::size() {
 }
 
 bool M3UParser::itemAt(size_t index, AString *uri, sp<AMessage> *meta) {
-    uri->clear();
-    if (meta) { *meta = NULL; }
+    if (uri) {
+        uri->clear();
+    }
+
+    if (meta) {
+        *meta = NULL;
+    }
 
     if (index >= mItems.size()) {
         return false;
     }
 
-    *uri = mItems.itemAt(index).mURI;
+    if (uri) {
+        *uri = mItems.itemAt(index).mURI;
+    }
 
     if (meta) {
         *meta = mItems.itemAt(index).mMeta;
@@ -80,33 +91,56 @@ static bool MakeURL(const char *baseURL, const char *url, AString *out) {
     out->clear();
 
     if (strncasecmp("http://", baseURL, 7)
+            && strncasecmp("https://", baseURL, 8)
             && strncasecmp("file://", baseURL, 7)) {
         // Base URL must be absolute
         return false;
     }
 
-    if (!strncasecmp("http://", url, 7)) {
+    if (!strncasecmp("http://", url, 7) || !strncasecmp("https://", url, 8)) {
         // "url" is already an absolute URL, ignore base URL.
         out->setTo(url);
+
+        LOGV("base:'%s', url:'%s' => '%s'", baseURL, url, out->c_str());
+
         return true;
     }
 
-    size_t n = strlen(baseURL);
-    if (baseURL[n - 1] == '/') {
-        out->setTo(baseURL);
-        out->append(url);
-    } else {
-        char *slashPos = strrchr(baseURL, '/');
+    if (url[0] == '/') {
+        // URL is an absolute path.
 
-        if (slashPos > &baseURL[6]) {
-            out->setTo(baseURL, slashPos - baseURL);
+        char *protocolEnd = strstr(baseURL, "//") + 2;
+        char *pathStart = strchr(protocolEnd, '/');
+
+        if (pathStart != NULL) {
+            out->setTo(baseURL, pathStart - baseURL);
         } else {
             out->setTo(baseURL);
         }
 
-        out->append("/");
         out->append(url);
+    } else {
+        // URL is a relative path
+
+        size_t n = strlen(baseURL);
+        if (baseURL[n - 1] == '/') {
+            out->setTo(baseURL);
+            out->append(url);
+        } else {
+            const char *slashPos = strrchr(baseURL, '/');
+
+            if (slashPos > &baseURL[6]) {
+                out->setTo(baseURL, slashPos - baseURL);
+            } else {
+                out->setTo(baseURL);
+            }
+
+            out->append("/");
+            out->append(url);
+        }
     }
+
+    LOGV("base:'%s', url:'%s' => '%s'", baseURL, url, out->c_str());
 
     return true;
 }
@@ -158,13 +192,18 @@ status_t M3UParser::parse(const void *_data, size_t size) {
                     return ERROR_MALFORMED;
                 }
                 err = parseMetaData(line, &mMeta, "media-sequence");
+            } else if (line.startsWith("#EXT-X-KEY")) {
+                if (mIsVariantPlaylist) {
+                    return ERROR_MALFORMED;
+                }
+                err = parseCipherInfo(line, &itemMeta, mBaseURI);
             } else if (line.startsWith("#EXT-X-ENDLIST")) {
                 mIsComplete = true;
             } else if (line.startsWith("#EXTINF")) {
                 if (mIsVariantPlaylist) {
                     return ERROR_MALFORMED;
                 }
-                err = parseMetaData(line, &itemMeta, "duration");
+                err = parseMetaDataDuration(line, &itemMeta, "durationUs");
             } else if (line.startsWith("#EXT-X-DISCONTINUITY")) {
                 if (mIsVariantPlaylist) {
                     return ERROR_MALFORMED;
@@ -188,9 +227,9 @@ status_t M3UParser::parse(const void *_data, size_t size) {
 
         if (!line.startsWith("#")) {
             if (!mIsVariantPlaylist) {
-                int32_t durationSecs;
+                int64_t durationUs;
                 if (itemMeta == NULL
-                        || !itemMeta->findInt32("duration", &durationSecs)) {
+                        || !itemMeta->findInt64("durationUs", &durationUs)) {
                     return ERROR_MALFORMED;
                 }
             }
@@ -232,6 +271,30 @@ status_t M3UParser::parseMetaData(
         *meta = new AMessage;
     }
     (*meta)->setInt32(key, x);
+
+    return OK;
+}
+
+// static
+status_t M3UParser::parseMetaDataDuration(
+        const AString &line, sp<AMessage> *meta, const char *key) {
+    ssize_t colonPos = line.find(":");
+
+    if (colonPos < 0) {
+        return ERROR_MALFORMED;
+    }
+
+    double x;
+    status_t err = ParseDouble(line.c_str() + colonPos + 1, &x);
+
+    if (err != OK) {
+        return err;
+    }
+
+    if (meta->get() == NULL) {
+        *meta = new AMessage;
+    }
+    (*meta)->setInt64(key, (int64_t)x * 1E6);
 
     return OK;
 }
@@ -291,6 +354,98 @@ status_t M3UParser::parseStreamInf(
     return OK;
 }
 
+// Find the next occurence of the character "what" at or after "offset",
+// but ignore occurences between quotation marks.
+// Return the index of the occurrence or -1 if not found.
+static ssize_t FindNextUnquoted(
+        const AString &line, char what, size_t offset) {
+    CHECK_NE((int)what, (int)'"');
+
+    bool quoted = false;
+    while (offset < line.size()) {
+        char c = line.c_str()[offset];
+
+        if (c == '"') {
+            quoted = !quoted;
+        } else if (c == what && !quoted) {
+            return offset;
+        }
+
+        ++offset;
+    }
+
+    return -1;
+}
+
+// static
+status_t M3UParser::parseCipherInfo(
+        const AString &line, sp<AMessage> *meta, const AString &baseURI) {
+    ssize_t colonPos = line.find(":");
+
+    if (colonPos < 0) {
+        return ERROR_MALFORMED;
+    }
+
+    size_t offset = colonPos + 1;
+
+    while (offset < line.size()) {
+        ssize_t end = FindNextUnquoted(line, ',', offset);
+        if (end < 0) {
+            end = line.size();
+        }
+
+        AString attr(line, offset, end - offset);
+        attr.trim();
+
+        offset = end + 1;
+
+        ssize_t equalPos = attr.find("=");
+        if (equalPos < 0) {
+            continue;
+        }
+
+        AString key(attr, 0, equalPos);
+        key.trim();
+
+        AString val(attr, equalPos + 1, attr.size() - equalPos - 1);
+        val.trim();
+
+        LOGV("key=%s value=%s", key.c_str(), val.c_str());
+
+        key.tolower();
+
+        if (key == "method" || key == "uri" || key == "iv") {
+            if (meta->get() == NULL) {
+                *meta = new AMessage;
+            }
+
+            if (key == "uri") {
+                if (val.size() >= 2
+                        && val.c_str()[0] == '"'
+                        && val.c_str()[val.size() - 1] == '"') {
+                    // Remove surrounding quotes.
+                    AString tmp(val, 1, val.size() - 2);
+                    val = tmp;
+                }
+
+                AString absURI;
+                if (MakeURL(baseURI.c_str(), val.c_str(), &absURI)) {
+                    val = absURI;
+                } else {
+                    LOGE("failed to make absolute url for '%s'.",
+                         val.c_str());
+                }
+            }
+
+            key.insert(AString("cipher-"), 0);
+
+            (*meta)->setString(key.c_str(), val.c_str(), val.size());
+        }
+    }
+
+    return OK;
+}
+
 // static
 status_t M3UParser::ParseInt32(const char *s, int32_t *x) {
     char *end;
@@ -301,6 +456,20 @@ status_t M3UParser::ParseInt32(const char *s, int32_t *x) {
     }
 
     *x = (int32_t)lval;
+
+    return OK;
+}
+
+// static
+status_t M3UParser::ParseDouble(const char *s, double *x) {
+    char *end;
+    double dval = strtod(s, &end);
+
+    if (end == s || (*end != '\0' && *end != ',')) {
+        return ERROR_MALFORMED;
+    }
+
+    *x = dval;
 
     return OK;
 }

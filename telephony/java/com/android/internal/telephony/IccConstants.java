@@ -52,10 +52,28 @@ public interface IccConstants {
     static final int EF_SPN_CPHS = 0x6f14;
     static final int EF_SPN_SHORT_CPHS = 0x6f18;
     static final int EF_INFO_CPHS = 0x6f16;
+    static final int EF_CSP_CPHS = 0x6f15;
 
     // CDMA RUIM file ids from 3GPP2 C.S0023-0
     static final int EF_CST = 0x6f32;
     static final int EF_RUIM_SPN =0x6F41;
+
+    // ETSI TS.102.221
+    static final int EF_PL = 0x2F05;
+    // 3GPP2 C.S0065
+    static final int EF_CSIM_LI = 0x6F3A;
+    static final int EF_CSIM_SPN =0x6F41;
+    static final int EF_CSIM_MDN = 0x6F44;
+    static final int EF_CSIM_IMSIM = 0x6F22;
+    static final int EF_CSIM_CDMAHOME = 0x6F28;
+    static final int EF_CSIM_EPRL = 0x6F5A;
+
+    //ISIM access
+    static final int EF_IMPU = 0x6f04;
+    static final int EF_IMPI = 0x6f02;
+    static final int EF_DOMAIN = 0x6f03;
+    static final int EF_IST = 0x6f07;
+    static final int EF_PCSCF = 0x6f09;
 
     // SMS record length from TS 51.011 10.5.3
     static public final int SMS_RECORD_LENGTH = 176;
@@ -66,4 +84,7 @@ public interface IccConstants {
     static final String DF_GRAPHICS = "5F50";
     static final String DF_GSM = "7F20";
     static final String DF_CDMA = "7F25";
+
+    //ISIM access
+    static final String DF_ADFISIM = "7FFF";
 }

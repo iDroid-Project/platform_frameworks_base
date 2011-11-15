@@ -20,9 +20,11 @@ import java.lang.reflect.Method;
 import java.lang.reflect.InvocationTargetException;
 
 /**
- * <p>Various utilities for debugging and logging.</p> 
+ * <p>Various utilities for debugging and logging.</p>
  */
 public class DebugUtils {
+    /** @hide */ public DebugUtils() {}
+
     /**
      * <p>Filters objects against the <code>ANDROID_OBJECT_FILTER</code>
      * environment variable. This environment variable can filter objects
@@ -99,6 +101,25 @@ public class DebugUtils {
             }
         }
         return match;
+    }
+
+    /** @hide */
+    public static void buildShortClassTag(Object cls, StringBuilder out) {
+        if (cls == null) {
+            out.append("null");
+        } else {
+            String simpleName = cls.getClass().getSimpleName();
+            if (simpleName == null || simpleName.isEmpty()) {
+                simpleName = cls.getClass().getName();
+                int end = simpleName.lastIndexOf('.');
+                if (end > 0) {
+                    simpleName = simpleName.substring(end+1);
+                }
+            }
+            out.append(simpleName);
+            out.append('{');
+            out.append(Integer.toHexString(System.identityHashCode(cls)));
+        }
     }
 
 }

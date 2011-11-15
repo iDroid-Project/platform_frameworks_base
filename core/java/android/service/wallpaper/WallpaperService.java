@@ -36,6 +36,8 @@ import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
+import android.os.PowerManager;
+import android.os.Process;
 import android.os.RemoteException;
 import android.util.Log;
 import android.util.LogPrinter;
@@ -45,16 +47,16 @@ import android.view.InputChannel;
 import android.view.InputDevice;
 import android.view.InputHandler;
 import android.view.InputQueue;
-import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.SurfaceHolder;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.ViewRoot;
+import android.view.ViewRootImpl;
 import android.view.WindowManager;
 import android.view.WindowManagerImpl;
-import android.view.WindowManagerPolicy;
 
+import java.io.FileDescriptor;
+import java.io.PrintWriter;
 import java.util.ArrayList;
 
 /**
@@ -138,6 +140,7 @@ public abstract class WallpaperService extends Service {
         boolean mSurfaceCreated;
         boolean mIsCreating;
         boolean mDrawingAllowed;
+        boolean mOffsetsChanged;
         int mWidth;
         int mHeight;
         int mFormat;
@@ -180,7 +183,7 @@ public abstract class WallpaperService extends Service {
         
         final BaseSurfaceHolder mSurfaceHolder = new BaseSurfaceHolder() {
             {
-                mRequestedFormat = PixelFormat.RGB_565;
+                mRequestedFormat = PixelFormat.RGBX_8888;
             }
 
             @Override
@@ -206,8 +209,14 @@ public abstract class WallpaperService extends Service {
 
             @Override
             public void setFixedSize(int width, int height) {
-                throw new UnsupportedOperationException(
-                        "Wallpapers currently only support sizing from layout");
+                if (Process.myUid() != Process.SYSTEM_UID) {
+                    // Regular apps can't do this.  It can only work for
+                    // certain designs of window animations, so you can't
+                    // rely on it.
+                    throw new UnsupportedOperationException(
+                            "Wallpapers currently only support sizing from layout");
+                }
+                super.setFixedSize(width, height);
             }
             
             public void setKeepScreenOn(boolean screenOn) {
@@ -219,14 +228,17 @@ public abstract class WallpaperService extends Service {
         
         final InputHandler mInputHandler = new BaseInputHandler() {
             @Override
-            public void handleMotion(MotionEvent event, Runnable finishedCallback) {
+            public void handleMotion(MotionEvent event,
+                    InputQueue.FinishedCallback finishedCallback) {
+                boolean handled = false;
                 try {
                     int source = event.getSource();
                     if ((source & InputDevice.SOURCE_CLASS_POINTER) != 0) {
                         dispatchPointer(event);
+                        handled = true;
                     }
                 } finally {
-                    finishedCallback.run();
+                    finishedCallback.finished(handled);
                 }
             }
         };
@@ -449,17 +461,56 @@ public abstract class WallpaperService extends Service {
         public void onSurfaceDestroyed(SurfaceHolder holder) {
         }
         
-        private void dispatchPointer(MotionEvent event) {
+        protected void dump(String prefix, FileDescriptor fd, PrintWriter out, String[] args) {
+            out.print(prefix); out.print("mInitializing="); out.print(mInitializing);
+                    out.print(" mDestroyed="); out.println(mDestroyed);
+            out.print(prefix); out.print("mVisible="); out.print(mVisible);
+                    out.print(" mScreenOn="); out.print(mScreenOn);
+                    out.print(" mReportedVisible="); out.println(mReportedVisible);
+            out.print(prefix); out.print("mCreated="); out.print(mCreated);
+                    out.print(" mSurfaceCreated="); out.print(mSurfaceCreated);
+                    out.print(" mIsCreating="); out.print(mIsCreating);
+                    out.print(" mDrawingAllowed="); out.println(mDrawingAllowed);
+            out.print(prefix); out.print("mWidth="); out.print(mWidth);
+                    out.print(" mCurWidth="); out.print(mCurWidth);
+                    out.print(" mHeight="); out.print(mHeight);
+                    out.print(" mCurHeight="); out.println(mCurHeight);
+            out.print(prefix); out.print("mType="); out.print(mType);
+                    out.print(" mWindowFlags="); out.print(mWindowFlags);
+                    out.print(" mCurWindowFlags="); out.println(mCurWindowFlags);
+            out.print(prefix); out.print("mVisibleInsets=");
+                    out.print(mVisibleInsets.toShortString());
+                    out.print(" mWinFrame="); out.print(mWinFrame.toShortString());
+                    out.print(" mContentInsets="); out.println(mContentInsets.toShortString());
+            out.print(prefix); out.print("mConfiguration="); out.println(mConfiguration);
+            out.print(prefix); out.print("mLayout="); out.println(mLayout);
             synchronized (mLock) {
-                if (event.getAction() == MotionEvent.ACTION_MOVE) {
-                    mPendingMove = event;
-                } else {
-                    mPendingMove = null;
+                out.print(prefix); out.print("mPendingXOffset="); out.print(mPendingXOffset);
+                        out.print(" mPendingXOffset="); out.println(mPendingXOffset);
+                out.print(prefix); out.print("mPendingXOffsetStep=");
+                        out.print(mPendingXOffsetStep);
+                        out.print(" mPendingXOffsetStep="); out.println(mPendingXOffsetStep);
+                out.print(prefix); out.print("mOffsetMessageEnqueued=");
+                        out.print(mOffsetMessageEnqueued);
+                        out.print(" mPendingSync="); out.println(mPendingSync);
+                if (mPendingMove != null) {
+                    out.print(prefix); out.print("mPendingMove="); out.println(mPendingMove);
                 }
             }
+        }
 
-            Message msg = mCaller.obtainMessageO(MSG_TOUCH_EVENT, event);
-            mCaller.sendMessage(msg);
+        private void dispatchPointer(MotionEvent event) {
+            if (event.isTouchEvent()) {
+                synchronized (mLock) {
+                    if (event.getAction() == MotionEvent.ACTION_MOVE) {
+                        mPendingMove = event;
+                    } else {
+                        mPendingMove = null;
+                    }
+                }
+                Message msg = mCaller.obtainMessageO(MSG_TOUCH_EVENT, event);
+                mCaller.sendMessage(msg);
+            }
         }
 
         void updateSurface(boolean forceRelayout, boolean forceReport, boolean redrawNeeded) {
@@ -514,8 +565,11 @@ public abstract class WallpaperService extends Service {
                         mLayout.windowAnimations =
                                 com.android.internal.R.style.Animation_Wallpaper;
                         mInputChannel = new InputChannel();
-                        mSession.add(mWindow, mLayout, View.VISIBLE, mContentInsets,
-                                mInputChannel);
+                        if (mSession.add(mWindow, mWindow.mSeq, mLayout, View.VISIBLE, mContentInsets,
+                                mInputChannel) < 0) {
+                            Log.w(TAG, "Failed to add window while updating wallpaper surface.");
+                            return;
+                        }
                         mCreated = true;
 
                         InputQueue.registerInputChannel(mInputChannel, mInputHandler,
@@ -526,7 +580,7 @@ public abstract class WallpaperService extends Service {
                     mDrawingAllowed = true;
 
                     final int relayoutResult = mSession.relayout(
-                        mWindow, mLayout, mWidth, mHeight,
+                        mWindow, mWindow.mSeq, mLayout, mWidth, mHeight,
                             View.VISIBLE, false, mWinFrame, mContentInsets,
                             mVisibleInsets, mConfiguration, mSurfaceHolder.mSurface);
 
@@ -543,7 +597,8 @@ public abstract class WallpaperService extends Service {
                         sizeChanged = true;
                         mCurHeight = h;
                     }
-                    
+
+                    mSurfaceHolder.setSurfaceFrameSize(w, h);
                     mSurfaceHolder.mSurfaceLock.unlock();
 
                     if (!mSurfaceHolder.mSurface.isValid()) {
@@ -551,12 +606,15 @@ public abstract class WallpaperService extends Service {
                         if (DEBUG) Log.v(TAG, "Layout: Surface destroyed");
                         return;
                     }
-                    
+
+                    boolean didSurface = false;
+
                     try {
                         mSurfaceHolder.ungetCallbacks();
 
                         if (surfaceCreating) {
                             mIsCreating = true;
+                            didSurface = true;
                             if (DEBUG) Log.v(TAG, "onSurfaceCreated("
                                     + mSurfaceHolder + "): " + this);
                             onSurfaceCreated(mSurfaceHolder);
@@ -584,6 +642,7 @@ public abstract class WallpaperService extends Service {
                                     + mSurfaceHolder + ", " + mFormat
                                     + ", " + mCurWidth + ", " + mCurHeight
                                     + "): " + this);
+                            didSurface = true;
                             onSurfaceChanged(mSurfaceHolder, mFormat,
                                     mCurWidth, mCurHeight);
                             SurfaceHolder.Callback callbacks[] = mSurfaceHolder.getCallbacks();
@@ -606,6 +665,26 @@ public abstract class WallpaperService extends Service {
                                     }
                                 }
                             }
+                        }
+
+                        if (didSurface && !mReportedVisible) {
+                            // This wallpaper is currently invisible, but its
+                            // surface has changed.  At this point let's tell it
+                            // again that it is invisible in case the report about
+                            // the surface caused it to start running.  We really
+                            // don't want wallpapers running when not visible.
+                            if (mIsCreating) {
+                                // Some wallpapers will ignore this call if they
+                                // had previously been told they were invisble,
+                                // so if we are creating a new surface then toggle
+                                // the state to get them to notice.
+                                if (DEBUG) Log.v(TAG, "onVisibilityChanged(true) at surface: "
+                                        + this);
+                                onVisibilityChanged(true);
+                            }
+                            if (DEBUG) Log.v(TAG, "onVisibilityChanged(false) at surface: "
+                                        + this);
+                            onVisibilityChanged(false);
                         }
 
                     } finally {
@@ -635,10 +714,12 @@ public abstract class WallpaperService extends Service {
             mWindowToken = wrapper.mWindowToken;
             mSurfaceHolder.setSizeFromLayout();
             mInitializing = true;
-            mSession = ViewRoot.getWindowSession(getMainLooper());
+            mSession = ViewRootImpl.getWindowSession(getMainLooper());
             
             mWindow.setSession(mSession);
-            
+
+            mScreenOn = ((PowerManager)getSystemService(Context.POWER_SERVICE)).isScreenOn();
+
             IntentFilter filter = new IntentFilter();
             filter.addAction(Intent.ACTION_SCREEN_ON);
             filter.addAction(Intent.ACTION_SCREEN_OFF);
@@ -648,6 +729,7 @@ public abstract class WallpaperService extends Service {
             onCreate(mSurfaceHolder);
             
             mInitializing = false;
+            mReportedVisible = false;
             updateSurface(false, false, false);
         }
         
@@ -658,7 +740,7 @@ public abstract class WallpaperService extends Service {
                 mIWallpaperEngine.mReqWidth = desiredWidth;
                 mIWallpaperEngine.mReqHeight = desiredHeight;
                 onDesiredSizeChanged(desiredWidth, desiredHeight);
-                doOffsetsChanged();
+                doOffsetsChanged(true);
             }
         }
         
@@ -680,6 +762,7 @@ public abstract class WallpaperService extends Service {
                         // If becoming visible, in preview mode the surface
                         // may have been destroyed so now we need to make
                         // sure it is re-created.
+                        doOffsetsChanged(false);
                         updateSurface(false, false, false);
                     }
                     onVisibilityChanged(visible);
@@ -687,11 +770,15 @@ public abstract class WallpaperService extends Service {
             }
         }
         
-        void doOffsetsChanged() {
+        void doOffsetsChanged(boolean always) {
             if (mDestroyed) {
                 return;
             }
-            
+
+            if (!always && !mOffsetsChanged) {
+                return;
+            }
+
             float xOffset;
             float yOffset;
             float xOffsetStep;
@@ -706,15 +793,19 @@ public abstract class WallpaperService extends Service {
                 mPendingSync = false;
                 mOffsetMessageEnqueued = false;
             }
-            
+
             if (mSurfaceCreated) {
-                if (DEBUG) Log.v(TAG, "Offsets change in " + this
-                        + ": " + xOffset + "," + yOffset);
-                final int availw = mIWallpaperEngine.mReqWidth-mCurWidth;
-                final int xPixels = availw > 0 ? -(int)(availw*xOffset+.5f) : 0;
-                final int availh = mIWallpaperEngine.mReqHeight-mCurHeight;
-                final int yPixels = availh > 0 ? -(int)(availh*yOffset+.5f) : 0;
-                onOffsetsChanged(xOffset, yOffset, xOffsetStep, yOffsetStep, xPixels, yPixels);
+                if (mReportedVisible) {
+                    if (DEBUG) Log.v(TAG, "Offsets change in " + this
+                            + ": " + xOffset + "," + yOffset);
+                    final int availw = mIWallpaperEngine.mReqWidth-mCurWidth;
+                    final int xPixels = availw > 0 ? -(int)(availw*xOffset+.5f) : 0;
+                    final int availh = mIWallpaperEngine.mReqHeight-mCurHeight;
+                    final int yPixels = availh > 0 ? -(int)(availh*yOffset+.5f) : 0;
+                    onOffsetsChanged(xOffset, yOffset, xOffsetStep, yOffsetStep, xPixels, yPixels);
+                } else {
+                    mOffsetsChanged = true;
+                }
             }
             
             if (sync) {
@@ -854,7 +945,14 @@ public abstract class WallpaperService extends Service {
                 mEngine.dispatchPointer(event);
             }
         }
-        
+
+        public void dispatchWallpaperCommand(String action, int x, int y,
+                int z, Bundle extras) {
+            if (mEngine != null) {
+                mEngine.mWindow.dispatchWallpaperCommand(action, x, y, z, extras, false);
+            }
+        }
+
         public void destroy() {
             Message msg = mCaller.obtainMessage(DO_DETACH);
             mCaller.sendMessage(msg);
@@ -893,7 +991,7 @@ public abstract class WallpaperService extends Service {
                     mEngine.doVisibilityChanged(message.arg1 != 0);
                     break;
                 case MSG_WALLPAPER_OFFSETS: {
-                    mEngine.doOffsetsChanged();
+                    mEngine.doOffsetsChanged(true);
                 } break;
                 case MSG_WALLPAPER_COMMAND: {
                     WallpaperCommand cmd = (WallpaperCommand)message.obj;
@@ -902,7 +1000,7 @@ public abstract class WallpaperService extends Service {
                 case MSG_WINDOW_RESIZED: {
                     final boolean reportDraw = message.arg1 != 0;
                     mEngine.updateSurface(true, false, reportDraw);
-                    mEngine.doOffsetsChanged();
+                    mEngine.doOffsetsChanged(true);
                 } break;
                 case MSG_TOUCH_EVENT: {
                     boolean skip = false;
@@ -990,4 +1088,14 @@ public abstract class WallpaperService extends Service {
      * is in the wallpaper picker viewing a preview of it as well.
      */
     public abstract Engine onCreateEngine();
+
+    @Override
+    protected void dump(FileDescriptor fd, PrintWriter out, String[] args) {
+        out.print("State of wallpaper "); out.print(this); out.println(":");
+        for (int i=0; i<mActiveEngines.size(); i++) {
+            Engine engine = mActiveEngines.get(i);
+            out.print("  Engine "); out.print(engine); out.println(":");
+            engine.dump("    ", fd, out, args);
+        }
+    }
 }

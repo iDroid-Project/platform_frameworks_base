@@ -21,6 +21,7 @@
 #include <utils/ObbFile.h>
 
 #include "jni.h"
+#include "JNIHelp.h"
 #include "utils/misc.h"
 #include "android_runtime/AndroidRuntime.h"
 
@@ -35,25 +36,15 @@ static struct {
     jfieldID salt;
 } gObbInfoClassInfo;
 
-static void doThrow(JNIEnv* env, const char* exc, const char* msg = NULL)
-{
-    jclass npeClazz;
-
-    npeClazz = env->FindClass(exc);
-    LOG_FATAL_IF(npeClazz == NULL, "Unable to find class %s", exc);
-
-    env->ThrowNew(npeClazz, msg);
-}
-
 static void android_content_res_ObbScanner_getObbInfo(JNIEnv* env, jobject clazz, jstring file,
         jobject obbInfo)
 {
-    const char* filePath = env->GetStringUTFChars(file, JNI_FALSE);
+    const char* filePath = env->GetStringUTFChars(file, NULL);
 
     sp<ObbFile> obb = new ObbFile();
     if (!obb->readFrom(filePath)) {
         env->ReleaseStringUTFChars(file, filePath);
-        doThrow(env, "java/io/IOException", "Could not read OBB file");
+        jniThrowException(env, "java/io/IOException", "Could not read OBB file");
         return;
     }
 
@@ -63,7 +54,7 @@ static void android_content_res_ObbScanner_getObbInfo(JNIEnv* env, jobject clazz
 
     jstring packageName = env->NewStringUTF(packageNameStr);
     if (packageName == NULL) {
-        doThrow(env, "java/io/IOException", "Could not read OBB file");
+        jniThrowException(env, "java/io/IOException", "Could not read OBB file");
         return;
     }
 
@@ -91,8 +82,7 @@ static JNINativeMethod gMethods[] = {
 
 #define FIND_CLASS(var, className) \
         var = env->FindClass(className); \
-        LOG_FATAL_IF(! var, "Unable to find class " className); \
-        var = jclass(env->NewGlobalRef(var));
+        LOG_FATAL_IF(! var, "Unable to find class " className);
 
 #define GET_FIELD_ID(var, clazz, fieldName, fieldDescriptor) \
         var = env->GetFieldID(clazz, fieldName, fieldDescriptor); \
@@ -100,15 +90,16 @@ static JNINativeMethod gMethods[] = {
 
 int register_android_content_res_ObbScanner(JNIEnv* env)
 {
-    FIND_CLASS(gObbInfoClassInfo.clazz, "android/content/res/ObbInfo");
+    jclass clazz;
+    FIND_CLASS(clazz, "android/content/res/ObbInfo");
 
-    GET_FIELD_ID(gObbInfoClassInfo.packageName, gObbInfoClassInfo.clazz,
+    GET_FIELD_ID(gObbInfoClassInfo.packageName, clazz,
             "packageName", "Ljava/lang/String;");
-    GET_FIELD_ID(gObbInfoClassInfo.version, gObbInfoClassInfo.clazz,
+    GET_FIELD_ID(gObbInfoClassInfo.version, clazz,
             "version", "I");
-    GET_FIELD_ID(gObbInfoClassInfo.flags, gObbInfoClassInfo.clazz,
+    GET_FIELD_ID(gObbInfoClassInfo.flags, clazz,
             "flags", "I");
-    GET_FIELD_ID(gObbInfoClassInfo.salt, gObbInfoClassInfo.clazz,
+    GET_FIELD_ID(gObbInfoClassInfo.salt, clazz,
             "salt", "[B");
 
     return AndroidRuntime::registerNativeMethods(env, "android/content/res/ObbScanner", gMethods,
@@ -116,4 +107,3 @@ int register_android_content_res_ObbScanner(JNIEnv* env)
 }
 
 }; // namespace android
-

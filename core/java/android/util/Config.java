@@ -17,27 +17,24 @@
 package android.util;
 
 /**
- * Build configuration.  The constants in this class vary depending
- * on release vs. debug build.
- * {@more}
+ * @deprecated This class is not useful, it just returns the same value for
+ * all constants, and has always done this.  Do not use it.
  */
-public final class Config
-{
-    /**
-     * If this is a debug build, this field will be true.
-     */
-    public static final boolean DEBUG = ConfigBuildFlags.DEBUG;
-
-    /*
-     * Deprecated fields
-     * TODO: Remove platform references to these and @hide them.
-     */
+@Deprecated
+public final class Config {
+    /** @hide */ public Config() {}
 
     /**
-     * @deprecated Use {@link #DEBUG} instead.
+     * @deprecated Always false.
      */
     @Deprecated
-    public static final boolean RELEASE = !DEBUG;
+    public static final boolean DEBUG = false;
+
+    /**
+     * @deprecated Always true.
+     */
+    @Deprecated
+    public static final boolean RELEASE = true;
 
     /**
      * @deprecated Always false.

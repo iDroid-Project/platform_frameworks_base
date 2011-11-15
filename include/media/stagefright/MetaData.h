@@ -30,23 +30,32 @@ namespace android {
 // The following keys map to int32_t data unless indicated otherwise.
 enum {
     kKeyMIMEType          = 'mime',  // cstring
-    kKeyWidth             = 'widt',  // int32_t
-    kKeyHeight            = 'heig',  // int32_t
+    kKeyWidth             = 'widt',  // int32_t, image pixel
+    kKeyHeight            = 'heig',  // int32_t, image pixel
+    kKeyDisplayWidth      = 'dWid',  // int32_t, display/presentation
+    kKeyDisplayHeight     = 'dHgt',  // int32_t, display/presentation
+
+    // a rectangle, if absent assumed to be (0, 0, width - 1, height - 1)
+    kKeyCropRect          = 'crop',
+
     kKeyRotation          = 'rotA',  // int32_t (angle in degrees)
     kKeyIFramesInterval   = 'ifiv',  // int32_t
     kKeyStride            = 'strd',  // int32_t
     kKeySliceHeight       = 'slht',  // int32_t
     kKeyChannelCount      = '#chn',  // int32_t
-    kKeySampleRate        = 'srte',  // int32_t (also video frame rate)
+    kKeySampleRate        = 'srte',  // int32_t (audio sampling rate Hz)
+    kKeyFrameRate         = 'frmR',  // int32_t (video frame rate fps)
     kKeyBitRate           = 'brte',  // int32_t (bps)
     kKeyESDS              = 'esds',  // raw data
     kKeyAVCC              = 'avcc',  // raw data
+    kKeyD263              = 'd263',  // raw data
     kKeyVorbisInfo        = 'vinf',  // raw data
     kKeyVorbisBooks       = 'vboo',  // raw data
     kKeyWantsNALFragments = 'NALf',
     kKeyIsSyncFrame       = 'sync',  // int32_t (bool)
     kKeyIsCodecConfig     = 'conf',  // int32_t (bool)
     kKeyTime              = 'time',  // int64_t (usecs)
+    kKeyDecodingTime      = 'decT',  // int64_t (decoding timestamp in usecs)
     kKeyNTPTime           = 'ntpT',  // uint64_t (ntp-timestamp)
     kKeyTargetTime        = 'tarT',  // int64_t (usecs)
     kKeyDriftTime         = 'dftT',  // int64_t (usecs)
@@ -58,6 +67,8 @@ enum {
     kKeyBufferID          = 'bfID',
     kKeyMaxInputSize      = 'inpS',
     kKeyThumbnailTime     = 'thbT',  // int64_t (usecs)
+    kKeyTrackID           = 'trID',
+    kKeyIsDRM             = 'idrm',  // int32_t (bool)
 
     kKeyAlbum             = 'albu',  // cstring
     kKeyArtist            = 'arti',  // cstring
@@ -92,7 +103,6 @@ enum {
     // Track authoring progress status
     // kKeyTrackTimeStatus is used to track progress in elapsed time
     kKeyTrackTimeStatus   = 'tktm',  // int64_t
-    kKeyRotationDegree    = 'rdge',  // int32_t (clockwise, in degree)
 
     kKeyNotRealTime       = 'ntrt',  // bool (int32_t)
 
@@ -102,11 +112,23 @@ enum {
     kKeyValidSamples      = 'valD',  // int32_t
 
     kKeyIsUnreadable      = 'unre',  // bool (int32_t)
+
+    // An indication that a video buffer has been rendered.
+    kKeyRendered          = 'rend',  // bool (int32_t)
+
+    // The language code for this media
+    kKeyMediaLanguage     = 'lang',  // cstring
+
+    // To store the timed text format data
+    kKeyTextFormatData    = 'text',  // raw data
+
+    kKeyRequiresSecureBuffers = 'secu',  // bool (int32_t)
 };
 
 enum {
     kTypeESDS        = 'esds',
     kTypeAVCC        = 'avcc',
+    kTypeD263        = 'd263',
 };
 
 class MetaData : public RefBase {
@@ -121,6 +143,7 @@ public:
         TYPE_INT64    = 'in64',
         TYPE_FLOAT    = 'floa',
         TYPE_POINTER  = 'ptr ',
+        TYPE_RECT     = 'rect',
     };
 
     void clear();
@@ -132,11 +155,21 @@ public:
     bool setFloat(uint32_t key, float value);
     bool setPointer(uint32_t key, void *value);
 
+    bool setRect(
+            uint32_t key,
+            int32_t left, int32_t top,
+            int32_t right, int32_t bottom);
+
     bool findCString(uint32_t key, const char **value);
     bool findInt32(uint32_t key, int32_t *value);
     bool findInt64(uint32_t key, int64_t *value);
     bool findFloat(uint32_t key, float *value);
     bool findPointer(uint32_t key, void **value);
+
+    bool findRect(
+            uint32_t key,
+            int32_t *left, int32_t *top,
+            int32_t *right, int32_t *bottom);
 
     bool setData(uint32_t key, uint32_t type, const void *data, size_t size);
 
@@ -181,6 +214,10 @@ private:
         const void *storage() const {
             return usesReservoir() ? &u.reservoir : u.ext_data;
         }
+    };
+
+    struct Rect {
+        int32_t mLeft, mTop, mRight, mBottom;
     };
 
     KeyedVector<uint32_t, typed_data> mItems;

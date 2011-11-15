@@ -35,6 +35,7 @@ import android.os.Handler;
 import android.os.Message;
 import android.util.Log;
 import android.webkit.CacheManager.CacheResult;
+import android.webkit.JniUtil;
 
 import com.android.internal.R;
 
@@ -74,14 +75,6 @@ class LoadListener extends Handler implements EventHandler {
     private static final int HTTP_NOT_FOUND = 404;
     private static final int HTTP_PROXY_AUTH = 407;
 
-    private static HashMap<String, String> sCertificateTypeMap;
-    static {
-        sCertificateTypeMap = new HashMap<String, String>();
-        sCertificateTypeMap.put("application/x-x509-ca-cert", CertTool.CERT);
-        sCertificateTypeMap.put("application/x-x509-user-cert", CertTool.CERT);
-        sCertificateTypeMap.put("application/x-pkcs12", CertTool.PKCS12);
-    }
-
     private static int sNativeLoaderCount;
 
     private final ByteArrayBuilder mDataBuilder = new ByteArrayBuilder();
@@ -110,6 +103,7 @@ class LoadListener extends Handler implements EventHandler {
     private RequestHandle mRequestHandle;
     private RequestHandle mSslErrorRequestHandle;
     private long     mPostIdentifier;
+    private boolean  mSetNativeResponse;
 
     // Request data. It is only valid when we are doing a load from the
     // cache. It is needed if the cache returns a redirect
@@ -155,6 +149,8 @@ class LoadListener extends Handler implements EventHandler {
             int nativeLoader, boolean synchronous, boolean isMainPageLoader,
             boolean isMainResource, boolean userGesture, long postIdentifier,
             String username, String password) {
+        assert !JniUtil.useChromiumHttpStack();
+
         if (DebugFlags.LOAD_LISTENER) {
             Log.v(LOGTAG, "LoadListener constructor url=" + url);
         }
@@ -181,6 +177,7 @@ class LoadListener extends Handler implements EventHandler {
     private void clearNativeLoader() {
         sNativeLoaderCount -= 1;
         mNativeLoader = 0;
+        mSetNativeResponse = false;
     }
 
     /*
@@ -352,36 +349,8 @@ class LoadListener extends Handler implements EventHandler {
         String contentType = headers.getContentType();
         if (contentType != null) {
             parseContentTypeHeader(contentType);
-
-            // If we have one of "generic" MIME types, try to deduce
-            // the right MIME type from the file extension (if any):
-            if (mMimeType.equals("text/plain") ||
-                    mMimeType.equals("application/octet-stream")) {
-
-                // for attachment, use the filename in the Content-Disposition
-                // to guess the mimetype
-                String contentDisposition = headers.getContentDisposition();
-                String url = null;
-                if (contentDisposition != null) {
-                    url = URLUtil.parseContentDisposition(contentDisposition);
-                }
-                if (url == null) {
-                    url = mUrl;
-                }
-                String newMimeType = guessMimeTypeFromExtension(url);
-                if (newMimeType != null) {
-                    mMimeType = newMimeType;
-                }
-            } else if (mMimeType.equals("text/vnd.wap.wml")) {
-                // As we don't support wml, render it as plain text
-                mMimeType = "text/plain";
-            } else {
-                // It seems that xhtml+xml and vnd.wap.xhtml+xml mime
-                // subtypes are used interchangeably. So treat them the same.
-                if (mMimeType.equals("application/vnd.wap.xhtml+xml")) {
-                    mMimeType = "application/xhtml+xml";
-                }
-            }
+            mMimeType = MimeTypeMap.getSingleton().remapGenericMimeType(
+                    mMimeType, mUrl, headers.getContentDisposition());
         } else {
             /* Often when servers respond with 304 Not Modified or a
                Redirect, then they don't specify a MIMEType. When this
@@ -680,8 +649,8 @@ class LoadListener extends Handler implements EventHandler {
                     if (!mAuthFailed && mUsername != null && mPassword != null) {
                         String host = mAuthHeader.isProxy() ?
                                 Network.getInstance(mContext).getProxyHostname() :
-                                mUri.mHost;
-                        HttpAuthHandler.onReceivedCredentials(this, host,
+                                mUri.getHost();
+                        HttpAuthHandlerImpl.onReceivedCredentials(this, host,
                                 mAuthHeader.getRealm(), mUsername, mPassword);
                         makeAuthResponse(mUsername, mPassword);
                     } else {
@@ -862,8 +831,7 @@ class LoadListener extends Handler implements EventHandler {
             mRequestHandle.handleSslErrorResponse(proceed);
         }
         if (!proceed) {
-            // Commit whatever data we have and tear down the loader.
-            commitLoad();
+            mBrowserFrame.stopLoading();
             tearDown();
         }
     }
@@ -950,7 +918,7 @@ class LoadListener extends Handler implements EventHandler {
      */
     String host() {
         if (mUri != null) {
-            return mUri.mHost;
+            return mUri.getHost();
         }
 
         return null;
@@ -1018,6 +986,7 @@ class LoadListener extends Handler implements EventHandler {
      * URL.
      */
     static boolean willLoadFromCache(String url, long identifier) {
+        assert !JniUtil.useChromiumHttpStack();
         boolean inCache =
                 CacheManager.getCacheFile(url, identifier, null) != null;
         if (DebugFlags.LOAD_LISTENER) {
@@ -1076,7 +1045,7 @@ class LoadListener extends Handler implements EventHandler {
 
     // This commits the headers without checking the response status code.
     private void commitHeaders() {
-        if (mIsMainPageLoader && sCertificateTypeMap.containsKey(mMimeType)) {
+        if (mIsMainPageLoader && CertTool.getCertType(mMimeType) != null) {
             // In the case of downloading certificate, we will save it to the
             // KeyStore in commitLoad. Do not call webcore.
             return;
@@ -1086,13 +1055,18 @@ class LoadListener extends Handler implements EventHandler {
         // request with some credentials then don't commit the headers
         // of this response; wait for the response to the request with the
         // credentials.
-        if (mAuthHeader != null)
+        if (mAuthHeader != null) {
             return;
+        }
 
-        // Commit the headers to WebCore
+        setNativeResponse();
+    }
+
+    private void setNativeResponse() {
         int nativeResponse = createNativeResponse();
         // The native code deletes the native response object.
         nativeReceivedResponse(nativeResponse);
+        mSetNativeResponse = true;
     }
 
     /**
@@ -1127,9 +1101,12 @@ class LoadListener extends Handler implements EventHandler {
      */
     private void commitLoad() {
         if (mCancelled) return;
+        if (!mSetNativeResponse) {
+            setNativeResponse();
+        }
 
         if (mIsMainPageLoader) {
-            String type = sCertificateTypeMap.get(mMimeType);
+            String type = CertTool.getCertType(mMimeType);
             if (type != null) {
                 // This must be synchronized so that no more data can be added
                 // after getByteSize returns.
@@ -1197,6 +1174,10 @@ class LoadListener extends Handler implements EventHandler {
         }
         if (mNativeLoader != 0) {
             PerfChecker checker = new PerfChecker();
+            if (!mSetNativeResponse) {
+                setNativeResponse();
+            }
+
             nativeFinished();
             checker.responseAlert("res nativeFinished");
             clearNativeLoader();
@@ -1312,6 +1293,9 @@ class LoadListener extends Handler implements EventHandler {
                 final String text = mContext
                         .getString(R.string.open_permission_deny)
                         + "\n" + redirectTo;
+                if (!mSetNativeResponse) {
+                    setNativeResponse();
+                }
                 nativeAddData(text.getBytes(), text.length());
                 nativeFinished();
                 clearNativeLoader();

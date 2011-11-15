@@ -22,23 +22,23 @@
 
 namespace android {
 
-struct MediaMetadataRetriever;
-
 struct StagefrightMediaScanner : public MediaScanner {
     StagefrightMediaScanner();
     virtual ~StagefrightMediaScanner();
 
-    virtual status_t processFile(
+    virtual MediaScanResult processFile(
             const char *path, const char *mimeType,
             MediaScannerClient &client);
 
     virtual char *extractAlbumArt(int fd);
 
 private:
-    sp<MediaMetadataRetriever> mRetriever;
-
     StagefrightMediaScanner(const StagefrightMediaScanner &);
     StagefrightMediaScanner &operator=(const StagefrightMediaScanner &);
+
+    MediaScanResult processFileInternal(
+            const char *path, const char *mimeType,
+            MediaScannerClient &client);
 };
 
 }  // namespace android

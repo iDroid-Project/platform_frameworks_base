@@ -26,6 +26,7 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.hardware.usb.IUsbManager;
+import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbAccessory;
 import android.hardware.usb.UsbManager;
 import android.os.Bundle;
@@ -51,6 +52,7 @@ public class UsbConfirmActivity extends AlertActivity
 
     private CheckBox mAlwaysUse;
     private TextView mClearDefaultHint;
+    private UsbDevice mDevice;
     private UsbAccessory mAccessory;
     private ResolveInfo mResolveInfo;
     private boolean mPermissionGranted;
@@ -60,9 +62,9 @@ public class UsbConfirmActivity extends AlertActivity
     public void onCreate(Bundle icicle) {
         super.onCreate(icicle);
 
-        Intent intent = getIntent();
+       Intent intent = getIntent();
+        mDevice = (UsbDevice)intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
         mAccessory = (UsbAccessory)intent.getParcelableExtra(UsbManager.EXTRA_ACCESSORY);
-        mDisconnectedReceiver = new UsbDisconnectedReceiver(this, mAccessory);
         mResolveInfo = (ResolveInfo)intent.getParcelableExtra("rinfo");
 
         PackageManager packageManager = getPackageManager();
@@ -71,7 +73,13 @@ public class UsbConfirmActivity extends AlertActivity
         final AlertController.AlertParams ap = mAlertParams;
         ap.mIcon = mResolveInfo.loadIcon(packageManager);
         ap.mTitle = appName;
-        ap.mMessage = getString(R.string.usb_accessory_confirm_prompt, appName);
+        if (mDevice == null) {
+            ap.mMessage = getString(R.string.usb_accessory_confirm_prompt, appName);
+            mDisconnectedReceiver = new UsbDisconnectedReceiver(this, mAccessory);
+        } else {
+            ap.mMessage = getString(R.string.usb_device_confirm_prompt, appName);
+            mDisconnectedReceiver = new UsbDisconnectedReceiver(this, mDevice);
+        }
         ap.mPositiveButtonText = getString(android.R.string.ok);
         ap.mNegativeButtonText = getString(android.R.string.cancel);
         ap.mPositiveButtonListener = this;
@@ -82,7 +90,11 @@ public class UsbConfirmActivity extends AlertActivity
                 Context.LAYOUT_INFLATER_SERVICE);
         ap.mView = inflater.inflate(com.android.internal.R.layout.always_use_checkbox, null);
         mAlwaysUse = (CheckBox)ap.mView.findViewById(com.android.internal.R.id.alwaysUse);
-        mAlwaysUse.setText(R.string.always_use_accessory);
+        if (mDevice == null) {
+            mAlwaysUse.setText(R.string.always_use_accessory);
+        } else {
+            mAlwaysUse.setText(R.string.always_use_device);
+        }
         mAlwaysUse.setOnCheckedChangeListener(this);
         mClearDefaultHint = (TextView)ap.mView.findViewById(
                                                     com.android.internal.R.id.clearDefaultHint);
@@ -107,22 +119,39 @@ public class UsbConfirmActivity extends AlertActivity
                 IUsbManager service = IUsbManager.Stub.asInterface(b);
                 int uid = mResolveInfo.activityInfo.applicationInfo.uid;
                 boolean alwaysUse = mAlwaysUse.isChecked();
-                Intent intent = new Intent(UsbManager.ACTION_USB_ACCESSORY_ATTACHED);
-                intent.putExtra(UsbManager.EXTRA_ACCESSORY, mAccessory);
+                Intent intent = null;
+
+                if (mDevice != null) {
+                    intent = new Intent(UsbManager.ACTION_USB_DEVICE_ATTACHED);
+                    intent.putExtra(UsbManager.EXTRA_DEVICE, mDevice);
+
+                    // grant permission for the device
+                    service.grantDevicePermission(mDevice, uid);
+                    // set or clear default setting
+                    if (alwaysUse) {
+                        service.setDevicePackage(mDevice, mResolveInfo.activityInfo.packageName);
+                    } else {
+                        service.setDevicePackage(mDevice, null);
+                    }
+                } else if (mAccessory != null) {
+                    intent = new Intent(UsbManager.ACTION_USB_ACCESSORY_ATTACHED);
+                    intent.putExtra(UsbManager.EXTRA_ACCESSORY, mAccessory);
+
+                    // grant permission for the accessory
+                    service.grantAccessoryPermission(mAccessory, uid);
+                    // set or clear default setting
+                    if (alwaysUse) {
+                        service.setAccessoryPackage(mAccessory,
+                                mResolveInfo.activityInfo.packageName);
+                    } else {
+                        service.setAccessoryPackage(mAccessory, null);
+                    }
+                }
+
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 intent.setComponent(
                     new ComponentName(mResolveInfo.activityInfo.packageName,
                             mResolveInfo.activityInfo.name));
-
-                // grant permission for the accessory
-                service.grantAccessoryPermission(mAccessory, uid);
-                // set or clear default setting
-                if (alwaysUse) {
-                    service.setAccessoryPackage(mAccessory,
-                            mResolveInfo.activityInfo.packageName);
-                } else {
-                    service.setAccessoryPackage(mAccessory, null);
-                }
                 startActivity(intent);
             } catch (Exception e) {
                 Log.e(TAG, "Unable to start activity", e);

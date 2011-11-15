@@ -150,6 +150,28 @@ public class ActivityInfo extends ComponentInfo
      */
     public static final int FLAG_FINISH_ON_CLOSE_SYSTEM_DIALOGS = 0x0100;
     /**
+     * Value for {@link #flags}: true when the application's rendering should
+     * be hardware accelerated.
+     */
+    public static final int FLAG_HARDWARE_ACCELERATED = 0x0200;
+    /**
+     * @hide
+     * Bit in {@link #flags} corresponding to an immersive activity
+     * that wishes not to be interrupted by notifications.
+     * Applications that hide the system notification bar with
+     * {@link android.view.WindowManager.LayoutParams#FLAG_FULLSCREEN}
+     * may still be interrupted by high-priority notifications; for example, an
+     * incoming phone call may use
+     * {@link android.app.Notification#fullScreenIntent fullScreenIntent}
+     * to present a full-screen in-call activity to the user, pausing the
+     * current activity as a side-effect. An activity with
+     * {@link #FLAG_IMMERSIVE} set, however, will not be interrupted; the
+     * notification may be shown in some other way (such as a small floating
+     * "toast" window).
+     * {@see android.app.Notification#FLAG_HIGH_PRIORITY}
+     */
+    public static final int FLAG_IMMERSIVE = 0x0400;
+    /**
      * Options that have been set in the activity declaration in the
      * manifest.
      * These include:
@@ -159,6 +181,7 @@ public class ActivityInfo extends ComponentInfo
      * {@link #FLAG_STATE_NOT_NEEDED}, {@link #FLAG_EXCLUDE_FROM_RECENTS},
      * {@link #FLAG_ALLOW_TASK_REPARENTING}, {@link #FLAG_NO_HISTORY},
      * {@link #FLAG_FINISH_ON_CLOSE_SYSTEM_DIALOGS},
+     * {@link #FLAG_HARDWARE_ACCELERATED}
      */
     public int flags;
 
@@ -311,6 +334,30 @@ public class ActivityInfo extends ComponentInfo
     public static final int CONFIG_UI_MODE = 0x0200;
     /**
      * Bit in {@link #configChanges} that indicates that the activity
+     * can itself handle the screen size. Set from the
+     * {@link android.R.attr#configChanges} attribute.  This will be
+     * set by default for applications that target an earlier version
+     * than {@link android.os.Build.VERSION_CODES#HONEYCOMB_MR2}...
+     * <b>however</b>, you will not see the bit set here becomes some
+     * applications incorrectly compare {@link #configChanges} against
+     * an absolute value rather than correctly masking out the bits
+     * they are interested in.  Please don't do that, thanks.
+     */
+    public static final int CONFIG_SCREEN_SIZE = 0x0400;
+    /**
+     * Bit in {@link #configChanges} that indicates that the activity
+     * can itself handle the smallest screen size. Set from the
+     * {@link android.R.attr#configChanges} attribute.  This will be
+     * set by default for applications that target an earlier version
+     * than {@link android.os.Build.VERSION_CODES#HONEYCOMB_MR2}...
+     * <b>however</b>, you will not see the bit set here becomes some
+     * applications incorrectly compare {@link #configChanges} against
+     * an absolute value rather than correctly masking out the bits
+     * they are interested in.  Please don't do that, thanks.
+     */
+    public static final int CONFIG_SMALLEST_SCREEN_SIZE = 0x0800;
+    /**
+     * Bit in {@link #configChanges} that indicates that the activity
      * can itself handle changes to the font scaling factor.  Set from the
      * {@link android.R.attr#configChanges} attribute.  This is
      * not a core resource configutation, but a higher-level value, so its
@@ -318,6 +365,53 @@ public class ActivityInfo extends ComponentInfo
      */
     public static final int CONFIG_FONT_SCALE = 0x40000000;
     
+    /** @hide
+     * Unfortunately the constants for config changes in native code are
+     * different from ActivityInfo. :(  Here are the values we should use for the
+     * native side given the bit we have assigned in ActivityInfo.
+     */
+    public static int[] CONFIG_NATIVE_BITS = new int[] {
+        0x0001, // MNC
+        0x0002, // MCC
+        0x0004, // LOCALE
+        0x0008, // TOUCH SCREEN
+        0x0010, // KEYBOARD
+        0x0020, // KEYBOARD HIDDEN
+        0x0040, // NAVIGATION
+        0x0080, // ORIENTATION
+        0x0800, // SCREEN LAYOUT
+        0x1000, // UI MODE
+        0x0200, // SCREEN SIZE
+        0x2000, // SMALLEST SCREEN SIZE
+    };
+    /** @hide
+     * Convert Java change bits to native.
+     */
+    public static int activityInfoConfigToNative(int input) {
+        int output = 0;
+        for (int i=0; i<CONFIG_NATIVE_BITS.length; i++) {
+            if ((input&(1<<i)) != 0) {
+                output |= CONFIG_NATIVE_BITS[i];
+            }
+        }
+        return output;
+    }
+
+    /**
+     * @hide
+     * Unfortunately some developers (OpenFeint I am looking at you) have
+     * compared the configChanges bit field against absolute values, so if we
+     * introduce a new bit they break.  To deal with that, we will make sure
+     * the public field will not have a value that breaks them, and let the
+     * framework call here to get the real value.
+     */
+    public int getRealConfigChanged() {
+        return applicationInfo.targetSdkVersion < android.os.Build.VERSION_CODES.HONEYCOMB_MR2
+                ? (configChanges | ActivityInfo.CONFIG_SCREEN_SIZE
+                        | ActivityInfo.CONFIG_SMALLEST_SCREEN_SIZE)
+                : configChanges;
+    }
+
     /**
      * Bit mask of kinds of configuration changes that this activity
      * can handle itself (without being restarted by the system).
@@ -339,7 +433,23 @@ public class ActivityInfo extends ComponentInfo
      * the mode from the theme will be used.
      */
     public int softInputMode;
-    
+
+    /**
+     * The desired extra UI options for this activity and its main window.
+     * Set from the {@link android.R.attr#uiOptions} attribute in the
+     * activity's manifest.
+     */
+    public int uiOptions = 0;
+
+    /**
+     * Flag for use with {@link #uiOptions}.
+     * Indicates that the action bar should put all action items in a separate bar when
+     * the screen is narrow.
+     * <p>This value corresponds to "splitActionBarWhenNarrow" for the {@link #uiOptions} XML
+     * attribute.
+     */
+    public static final int UIOPTION_SPLIT_ACTION_BAR_WHEN_NARROW = 1;
+
     public ActivityInfo() {
     }
 
@@ -354,6 +464,7 @@ public class ActivityInfo extends ComponentInfo
         screenOrientation = orig.screenOrientation;
         configChanges = orig.configChanges;
         softInputMode = orig.softInputMode;
+        uiOptions = orig.uiOptions;
     }
     
     /**
@@ -385,6 +496,9 @@ public class ActivityInfo extends ComponentInfo
                     + " configChanges=0x" + Integer.toHexString(configChanges)
                     + " softInputMode=0x" + Integer.toHexString(softInputMode));
         }
+        if (uiOptions != 0) {
+            pw.println(prefix + " uiOptions=0x" + Integer.toHexString(uiOptions));
+        }
         super.dumpBack(pw, prefix);
     }
     
@@ -409,6 +523,7 @@ public class ActivityInfo extends ComponentInfo
         dest.writeInt(screenOrientation);
         dest.writeInt(configChanges);
         dest.writeInt(softInputMode);
+        dest.writeInt(uiOptions);
     }
 
     public static final Parcelable.Creator<ActivityInfo> CREATOR
@@ -432,5 +547,6 @@ public class ActivityInfo extends ComponentInfo
         screenOrientation = source.readInt();
         configChanges = source.readInt();
         softInputMode = source.readInt();
+        uiOptions = source.readInt();
     }
 }

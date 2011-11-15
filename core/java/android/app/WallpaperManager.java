@@ -25,6 +25,8 @@ import android.graphics.Canvas;
 import android.graphics.ColorFilter;
 import android.graphics.Paint;
 import android.graphics.PixelFormat;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffXfermode;
 import android.graphics.Rect;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
@@ -38,7 +40,7 @@ import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.util.DisplayMetrics;
 import android.util.Log;
-import android.view.ViewRoot;
+import android.view.ViewRootImpl;
 
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -62,7 +64,13 @@ public class WallpaperManager {
      */
     public static final String ACTION_LIVE_WALLPAPER_CHOOSER
             = "android.service.wallpaper.LIVE_WALLPAPER_CHOOSER";
-    
+
+    /**
+     * Manifest entry for activities that respond to {@link Intent#ACTION_SET_WALLPAPER}
+     * which allows them to provide a custom large icon associated with this action.
+     */
+    public static final String WALLPAPER_PREVIEW_META_DATA = "android.wallpaper.preview";
+
     /**
      * Command for {@link #sendWallpaperCommand}: reported by the wallpaper
      * host when the user taps on an empty area (not performing an action
@@ -71,6 +79,14 @@ public class WallpaperManager {
      */
     public static final String COMMAND_TAP = "android.wallpaper.tap";
     
+    /**
+     * Command for {@link #sendWallpaperCommand}: reported by the wallpaper
+     * host when the user releases a secondary pointer on an empty area
+     * (not performing an action in the host).  The x and y arguments are
+     * the location of the secondary tap in screen coordinates.
+     */
+    public static final String COMMAND_SECONDARY_TAP = "android.wallpaper.secondaryTap";
+
     /**
      * Command for {@link #sendWallpaperCommand}: reported by the wallpaper
      * host when the user drops an object into an area of the host.  The x
@@ -91,17 +107,22 @@ public class WallpaperManager {
         private final int mHeight;
         private int mDrawLeft;
         private int mDrawTop;
+        private final Paint mPaint;
 
         private FastBitmapDrawable(Bitmap bitmap) {
             mBitmap = bitmap;
             mWidth = bitmap.getWidth();
             mHeight = bitmap.getHeight();
+
             setBounds(0, 0, mWidth, mHeight);
+
+            mPaint = new Paint();
+            mPaint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.SRC));
         }
 
         @Override
         public void draw(Canvas canvas) {
-            canvas.drawBitmap(mBitmap, mDrawLeft, mDrawTop, null);
+            canvas.drawBitmap(mBitmap, mDrawLeft, mDrawTop, mPaint);
         }
 
         @Override
@@ -116,33 +137,23 @@ public class WallpaperManager {
         }
 
         @Override
-        public void setBounds(Rect bounds) {
-            // TODO Auto-generated method stub
-            super.setBounds(bounds);
-        }
-
-        @Override
         public void setAlpha(int alpha) {
-            throw new UnsupportedOperationException(
-                    "Not supported with this drawable");
+            throw new UnsupportedOperationException("Not supported with this drawable");
         }
 
         @Override
         public void setColorFilter(ColorFilter cf) {
-            throw new UnsupportedOperationException(
-                    "Not supported with this drawable");
+            throw new UnsupportedOperationException("Not supported with this drawable");
         }
 
         @Override
         public void setDither(boolean dither) {
-            throw new UnsupportedOperationException(
-                    "Not supported with this drawable");
+            throw new UnsupportedOperationException("Not supported with this drawable");
         }
 
         @Override
         public void setFilterBitmap(boolean filter) {
-            throw new UnsupportedOperationException(
-                    "Not supported with this drawable");
+            throw new UnsupportedOperationException("Not supported with this drawable");
         }
 
         @Override
@@ -212,56 +223,54 @@ public class WallpaperManager {
                 }
                 mWallpaper = null;
                 try {
-                    mWallpaper = getCurrentWallpaperLocked(context);
+                    mWallpaper = getCurrentWallpaperLocked();
                 } catch (OutOfMemoryError e) {
                     Log.w(TAG, "No memory load current wallpaper", e);
                 }
-                if (mWallpaper == null && returnDefault) {
-                    mDefaultWallpaper = getDefaultWallpaperLocked(context);
-                    return mDefaultWallpaper;
+                if (returnDefault) {
+                    if (mWallpaper == null) {
+                        mDefaultWallpaper = getDefaultWallpaperLocked(context);
+                        return mDefaultWallpaper;
+                    } else {
+                        mDefaultWallpaper = null;
+                    }
                 }
                 return mWallpaper;
             }
         }
-        
-        private Bitmap getCurrentWallpaperLocked(Context context) {
+
+        public void forgetLoadedWallpaper() {
+            synchronized (this) {
+                mWallpaper = null;
+                mDefaultWallpaper = null;
+            }
+        }
+
+        private Bitmap getCurrentWallpaperLocked() {
             try {
                 Bundle params = new Bundle();
                 ParcelFileDescriptor fd = mService.getWallpaper(this, params);
                 if (fd != null) {
                     int width = params.getInt("width", 0);
                     int height = params.getInt("height", 0);
-                    
-                    if (width <= 0 || height <= 0) {
-                        // Degenerate case: no size requested, just load
-                        // bitmap as-is.
+
+                    try {
+                        BitmapFactory.Options options = new BitmapFactory.Options();
                         Bitmap bm = BitmapFactory.decodeFileDescriptor(
-                                fd.getFileDescriptor(), null, null);
+                                fd.getFileDescriptor(), null, options);
+                        return generateBitmap(bm, width, height);
+                    } catch (OutOfMemoryError e) {
+                        Log.w(TAG, "Can't decode file", e);
+                    } finally {
                         try {
                             fd.close();
                         } catch (IOException e) {
+                            // Ignore
                         }
-                        if (bm != null) {
-                            bm.setDensity(DisplayMetrics.DENSITY_DEVICE);
-                        }
-                        return bm;
                     }
-                    
-                    // Load the bitmap with full color depth, to preserve
-                    // quality for later processing.
-                    BitmapFactory.Options options = new BitmapFactory.Options();
-                    options.inDither = false;
-                    options.inPreferredConfig = Bitmap.Config.ARGB_8888;
-                    Bitmap bm = BitmapFactory.decodeFileDescriptor(
-                            fd.getFileDescriptor(), null, options);
-                    try {
-                        fd.close();
-                    } catch (IOException e) {
-                    }
-                    
-                    return generateBitmap(context, bm, width, height);
                 }
             } catch (RemoteException e) {
+                // Ignore
             }
             return null;
         }
@@ -273,50 +282,33 @@ public class WallpaperManager {
                 if (is != null) {
                     int width = mService.getWidthHint();
                     int height = mService.getHeightHint();
-                    
-                    if (width <= 0 || height <= 0) {
-                        // Degenerate case: no size requested, just load
-                        // bitmap as-is.
-                        Bitmap bm = BitmapFactory.decodeStream(is, null, null);
+
+                    try {
+                        BitmapFactory.Options options = new BitmapFactory.Options();
+                        Bitmap bm = BitmapFactory.decodeStream(is, null, options);
+                        return generateBitmap(bm, width, height);
+                    } catch (OutOfMemoryError e) {
+                        Log.w(TAG, "Can't decode stream", e);
+                    } finally {
                         try {
                             is.close();
                         } catch (IOException e) {
+                            // Ignore
                         }
-                        if (bm != null) {
-                            bm.setDensity(DisplayMetrics.DENSITY_DEVICE);
-                        }
-                        return bm;
-                    }
-                    
-                    // Load the bitmap with full color depth, to preserve
-                    // quality for later processing.
-                    BitmapFactory.Options options = new BitmapFactory.Options();
-                    options.inDither = false;
-                    options.inPreferredConfig = Bitmap.Config.ARGB_8888;
-                    Bitmap bm = BitmapFactory.decodeStream(is, null, options);
-                    try {
-                        is.close();
-                    } catch (IOException e) {
-                    }
-                    
-                    try {
-                        return generateBitmap(context, bm, width, height);
-                    } catch (OutOfMemoryError e) {
-                        Log.w(TAG, "Can't generate default bitmap", e);
-                        return bm;
                     }
                 }
             } catch (RemoteException e) {
+                // Ignore
             }
             return null;
         }
     }
     
-    private static Object mSync = new Object();
+    private static final Object sSync = new Object[0];
     private static Globals sGlobals;
 
     static void initGlobals(Looper looper) {
-        synchronized (mSync) {
+        synchronized (sSync) {
             if (sGlobals == null) {
                 sGlobals = new Globals(looper);
             }
@@ -395,8 +387,7 @@ public class WallpaperManager {
     public Drawable getFastDrawable() {
         Bitmap bm = sGlobals.peekWallpaperBitmap(mContext, true);
         if (bm != null) {
-            Drawable dr = new FastBitmapDrawable(bm);
-            return dr;
+            return new FastBitmapDrawable(bm);
         }
         return null;
     }
@@ -411,10 +402,28 @@ public class WallpaperManager {
     public Drawable peekFastDrawable() {
         Bitmap bm = sGlobals.peekWallpaperBitmap(mContext, false);
         if (bm != null) {
-            Drawable dr = new FastBitmapDrawable(bm);
-            return dr;
+            return new FastBitmapDrawable(bm);
         }
         return null;
+    }
+
+    /**
+     * Like {@link #getDrawable()} but returns a Bitmap.
+     * 
+     * @hide
+     */
+    public Bitmap getBitmap() {
+        return sGlobals.peekWallpaperBitmap(mContext, true);
+    }
+
+    /**
+     * Remove all internal references to the last loaded wallpaper.  Useful
+     * for apps that want to reduce memory usage when they only temporarily
+     * need to have the wallpaper.  After calling, the next request for the
+     * wallpaper will require reloading it again from disk.
+     */
+    public void forgetLoadedWallpaper() {
+        sGlobals.forgetLoadedWallpaper();
     }
 
     /**
@@ -459,6 +468,7 @@ public class WallpaperManager {
                 }
             }
         } catch (RemoteException e) {
+            // Ignore
         }
     }
     
@@ -488,6 +498,7 @@ public class WallpaperManager {
                 }
             }
         } catch (RemoteException e) {
+            // Ignore
         }
     }
 
@@ -519,6 +530,7 @@ public class WallpaperManager {
                 }
             }
         } catch (RemoteException e) {
+            // Ignore
         }
     }
 
@@ -589,6 +601,7 @@ public class WallpaperManager {
         try {
             sGlobals.mService.setDimensionHints(minimumWidth, minimumHeight);
         } catch (RemoteException e) {
+            // Ignore
         }
     }
     
@@ -608,7 +621,7 @@ public class WallpaperManager {
     public void setWallpaperOffsets(IBinder windowToken, float xOffset, float yOffset) {
         try {
             //Log.v(TAG, "Sending new wallpaper offsets from app...");
-            ViewRoot.getWindowSession(mContext.getMainLooper()).setWallpaperPosition(
+            ViewRootImpl.getWindowSession(mContext.getMainLooper()).setWallpaperPosition(
                     windowToken, xOffset, yOffset, mWallpaperXStep, mWallpaperYStep);
             //Log.v(TAG, "...app returning after sending offsets!");
         } catch (RemoteException e) {
@@ -646,7 +659,7 @@ public class WallpaperManager {
             int x, int y, int z, Bundle extras) {
         try {
             //Log.v(TAG, "Sending new wallpaper offsets from app...");
-            ViewRoot.getWindowSession(mContext.getMainLooper()).sendWallpaperCommand(
+            ViewRootImpl.getWindowSession(mContext.getMainLooper()).sendWallpaperCommand(
                     windowToken, action, x, y, z, extras, false);
             //Log.v(TAG, "...app returning after sending offsets!");
         } catch (RemoteException e) {
@@ -666,7 +679,7 @@ public class WallpaperManager {
      */
     public void clearWallpaperOffsets(IBinder windowToken) {
         try {
-            ViewRoot.getWindowSession(mContext.getMainLooper()).setWallpaperPosition(
+            ViewRootImpl.getWindowSession(mContext.getMainLooper()).setWallpaperPosition(
                     windowToken, -1, -1, -1, -1);
         } catch (RemoteException e) {
             // Ignore.
@@ -685,50 +698,58 @@ public class WallpaperManager {
         setResource(com.android.internal.R.drawable.default_wallpaper);
     }
     
-    static Bitmap generateBitmap(Context context, Bitmap bm, int width, int height) {
+    static Bitmap generateBitmap(Bitmap bm, int width, int height) {
         if (bm == null) {
+            return null;
+        }
+
+        bm.setDensity(DisplayMetrics.DENSITY_DEVICE);
+
+        if (width <= 0 || height <= 0
+                || (bm.getWidth() == width && bm.getHeight() == height)) {
             return bm;
         }
-        bm.setDensity(DisplayMetrics.DENSITY_DEVICE);
-        
+
         // This is the final bitmap we want to return.
-        // XXX We should get the pixel depth from the system (to match the
-        // physical display depth), when there is a way.
-        Bitmap newbm = Bitmap.createBitmap(width, height,
-                Bitmap.Config.RGB_565);
-        newbm.setDensity(DisplayMetrics.DENSITY_DEVICE);
-        Canvas c = new Canvas(newbm);
-        c.setDensity(DisplayMetrics.DENSITY_DEVICE);
-        Rect targetRect = new Rect();
-        targetRect.left = targetRect.top = 0;
-        targetRect.right = bm.getWidth();
-        targetRect.bottom = bm.getHeight();
-        
-        int deltaw = width - targetRect.right;
-        int deltah = height - targetRect.bottom;
-        
-        if (deltaw > 0 || deltah > 0) {
-            // We need to scale up so it covers the entire
-            // area.
-            float scale = 1.0f;
-            if (deltaw > deltah) {
-                scale = width / (float)targetRect.right;
-            } else {
-                scale = height / (float)targetRect.bottom;
+        try {
+            Bitmap newbm = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+            newbm.setDensity(DisplayMetrics.DENSITY_DEVICE);
+
+            Canvas c = new Canvas(newbm);
+            Rect targetRect = new Rect();
+            targetRect.right = bm.getWidth();
+            targetRect.bottom = bm.getHeight();
+
+            int deltaw = width - targetRect.right;
+            int deltah = height - targetRect.bottom;
+
+            if (deltaw > 0 || deltah > 0) {
+                // We need to scale up so it covers the entire area.
+                float scale;
+                if (deltaw > deltah) {
+                    scale = width / (float)targetRect.right;
+                } else {
+                    scale = height / (float)targetRect.bottom;
+                }
+                targetRect.right = (int)(targetRect.right*scale);
+                targetRect.bottom = (int)(targetRect.bottom*scale);
+                deltaw = width - targetRect.right;
+                deltah = height - targetRect.bottom;
             }
-            targetRect.right = (int)(targetRect.right*scale);
-            targetRect.bottom = (int)(targetRect.bottom*scale);
-            deltaw = width - targetRect.right;
-            deltah = height - targetRect.bottom;
+
+            targetRect.offset(deltaw/2, deltah/2);
+
+            Paint paint = new Paint();
+            paint.setFilterBitmap(true);
+            paint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.SRC));
+            c.drawBitmap(bm, null, targetRect, paint);
+
+            bm.recycle();
+            c.setBitmap(null);
+            return newbm;
+        } catch (OutOfMemoryError e) {
+            Log.w(TAG, "Can't generate default bitmap", e);
+            return bm;
         }
-        
-        targetRect.offset(deltaw/2, deltah/2);
-        Paint paint = new Paint();
-        paint.setFilterBitmap(true);
-        paint.setDither(true);
-        c.drawBitmap(bm, null, targetRect, paint);
-        
-        bm.recycle();
-        return newbm;
     }
 }

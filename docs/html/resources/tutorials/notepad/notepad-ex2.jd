@@ -87,8 +87,8 @@ Open the Notepadv2 class.</p>
     menu callback used for the options menu. Here, we add just one line, which will add a menu item
     to delete a note. Call <code>menu.add()</code> like so:
       <pre>
-public boolean onCreateContextMenu(Menu menu, View v
-        ContextMenuInfo menuInfo) {
+public void onCreateContextMenu(Menu menu, View v,
+        ContextMenu.ContextMenuInfo menuInfo) {
     super.onCreateContextMenu(menu, v, menuInfo);
     menu.add(0, DELETE_ID, 0, R.string.menu_delete);
 }</pre>
@@ -299,7 +299,8 @@ case ACTIVITY_EDIT:
     in real Android applications.</p>
     <p>Creating a
     good UI is part art and part science, and the rest is work. Mastery of <a
-    href="{@docRoot}guide/topics/ui/declaring-layout.html">Declaring Layout</a> is an essential part of creating
+    href="{@docRoot}guide/topics/ui/declaring-layout.html">XML Layouts</a> is an essential part of
+creating
     a good looking Android application.</p>
     <p>Take a look at the
     <a href="{@docRoot}resources/tutorials/views/index.html">Hello Views</a>

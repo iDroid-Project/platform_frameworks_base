@@ -44,14 +44,10 @@ public class AuthenticatorDescription implements Parcelable {
     /** The package name that can be used to lookup the resources from above. */
     final public String packageName;
 
-    /** Authenticator handles its own token caching and permission screen 
-      * @hide
-      */
+    /** Authenticator handles its own token caching and permission screen */
     final public boolean customTokens;
 
-    /** A constructor for a full AuthenticatorDescription
-     *  @hide 
-     */
+    /** A constructor for a full AuthenticatorDescription */
     public AuthenticatorDescription(String type, String packageName, int labelId, int iconId,
             int smallIconId, int prefId, boolean customTokens) {
         if (type == null) throw new IllegalArgumentException("type cannot be null");

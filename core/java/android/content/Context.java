@@ -21,10 +21,12 @@ import android.content.pm.PackageManager;
 import android.content.res.AssetManager;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
+import android.database.DatabaseErrorHandler;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteDatabase.CursorFactory;
 import android.graphics.Bitmap;
 import android.graphics.drawable.Drawable;
+import android.media.MediaScannerConnection.OnScanCompletedListener;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -78,6 +80,25 @@ public abstract class Context {
     public static final int MODE_APPEND = 0x8000;
 
     /**
+     * SharedPreference loading flag: when set, the file on disk will
+     * be checked for modification even if the shared preferences
+     * instance is already loaded in this process.  This behavior is
+     * sometimes desired in cases where the application has multiple
+     * processes, all writing to the same SharedPreferences file.
+     * Generally there are better forms of communication between
+     * processes, though.
+     *
+     * <p>This was the legacy (but undocumented) behavior in and
+     * before Gingerbread (Android 2.3) and this flag is implied when
+     * targetting such releases.  For applications targetting SDK
+     * versions <em>greater than</em> Android 2.3, this flag must be
+     * explicitly set if desired.
+     *
+     * @see #getSharedPreferences
+     */
+    public static final int MODE_MULTI_PROCESS = 0x0004;
+
+    /**
      * Flag for {@link #bindService}: automatically create the service as long
      * as the binding exists.  Note that while this will create the service,
      * its {@link android.app.Service#onStartCommand}
@@ -86,12 +107,17 @@ public abstract class Context {
      * this still provides you with access to the service object while the
      * service is created.
      *
-     * <p>Specifying this flag also tells the system to treat the service
-     * as being as important as your own process -- that is, when deciding
-     * which process should be killed to free memory, the service will only
-     * be considered a candidate as long as the processes of any such bindings
-     * is also a candidate to be killed.  This is to avoid situations where
-     * the service is being continually created and killed due to low memory.
+     * <p>Note that prior to {@link android.os.Build.VERSION_CODES#ICE_CREAM_SANDWICH},
+     * not supplying this flag would also impact how important the system
+     * consider's the target service's process to be.  When set, the only way
+     * for it to be raised was by binding from a service in which case it will
+     * only be important when that activity is in the foreground.  Now to
+     * achieve this behavior you must explicitly supply the new flag
+     * {@link #BIND_ADJUST_WITH_ACTIVITY}.  For compatibility, old applications
+     * that don't specify {@link #BIND_AUTO_CREATE} will automatically have
+     * the flags {@link #BIND_WAIVE_PRIORITY} and
+     * {@link #BIND_ADJUST_WITH_ACTIVITY} set for them in order to achieve
+     * the same result.
      */
     public static final int BIND_AUTO_CREATE = 0x0001;
 
@@ -108,7 +134,7 @@ public abstract class Context {
     /**
      * Flag for {@link #bindService}: don't allow this binding to raise
      * the target service's process to the foreground scheduling priority.
-     * It will still be raised to the at least the same memory priority
+     * It will still be raised to at least the same memory priority
      * as the client (so that its process will not be killable in any
      * situation where the client is not killable), but for CPU scheduling
      * purposes it may be left in the background.  This only has an impact
@@ -116,6 +142,50 @@ public abstract class Context {
      * and the target service is in a background process.
      */
     public static final int BIND_NOT_FOREGROUND = 0x0004;
+
+    /**
+     * Flag for {@link #bindService}: indicates that the client application
+     * binding to this service considers the service to be more important than
+     * the app itself.  When set, the platform will try to have the out of
+     * memory kill the app before it kills the service it is bound to, though
+     * this is not guaranteed to be the case.
+     */
+    public static final int BIND_ABOVE_CLIENT = 0x0008;
+
+    /**
+     * Flag for {@link #bindService}: allow the process hosting the bound
+     * service to go through its normal memory management.  It will be
+     * treated more like a running service, allowing the system to
+     * (temporarily) expunge the process if low on memory or for some other
+     * whim it may have, and being more aggressive about making it a candidate
+     * to be killed (and restarted) if running for a long time.
+     */
+    public static final int BIND_ALLOW_OOM_MANAGEMENT = 0x0010;
+
+    /**
+     * Flag for {@link #bindService}: don't impact the scheduling or
+     * memory management priority of the target service's hosting process.
+     * Allows the service's process to be managed on the background LRU list
+     * just like a regular application process in the background.
+     */
+    public static final int BIND_WAIVE_PRIORITY = 0x0020;
+
+    /**
+     * Flag for {@link #bindService}: this service is very important to
+     * the client, so should be brought to the foreground process level
+     * when the client is.  Normally a process can only be raised to the
+     * visibility level by a client, even if that client is in the foreground.
+     */
+    public static final int BIND_IMPORTANT = 0x0040;
+
+    /**
+     * Flag for {@link #bindService}: If binding from an activity, allow the
+     * target service's process importance to be raised based on whether the
+     * activity is visible to the user, regardless whether another flag is
+     * used to reduce the amount that the client process's overall importance
+     * is used to impact it.
+     */
+    public static final int BIND_ADJUST_WITH_ACTIVITY = 0x0040;
 
     /** Return an AssetManager instance for your application's package. */
     public abstract AssetManager getAssets();
@@ -164,6 +234,28 @@ public abstract class Context {
     public abstract Context getApplicationContext();
 
     /**
+     * Add a new {@link ComponentCallbacks} to the base application of the
+     * Context, which will be called at the same times as the ComponentCallbacks
+     * methods of activities and other components are called.  Note that you
+     * <em>must</em> be sure to use {@link #unregisterComponentCallbacks} when
+     * appropriate in the future; this will not be removed for you.
+     *
+     * @param callback The interface to call.  This can be either a
+     * {@link ComponentCallbacks} or {@link ComponentCallbacks2} interface.
+     */
+    public void registerComponentCallbacks(ComponentCallbacks callback) {
+        getApplicationContext().registerComponentCallbacks(callback);
+    }
+
+    /**
+     * Remove a {@link ComponentCallbacks} objec that was previously registered
+     * with {@link #registerComponentCallbacks(ComponentCallbacks)}.
+     */
+    public void unregisterComponentCallbacks(ComponentCallbacks callback) {
+        getApplicationContext().unregisterComponentCallbacks(callback);
+    }
+
+    /**
      * Return a localized, styled CharSequence from the application's package's
      * default string table.
      *
@@ -205,6 +297,12 @@ public abstract class Context {
      * @param resid The style resource describing the theme.
      */
     public abstract void setTheme(int resid);
+
+    /** @hide Needed for some internal implementation...  not public because
+     * you can't assume this actually means anything. */
+    public int getThemeResId() {
+        return 0;
+    }
 
     /**
      * Return the Theme object associated with this Context.
@@ -316,7 +414,11 @@ public abstract class Context {
      * editor (SharedPreferences.edit()) and then commit changes (Editor.commit()).
      * @param mode Operating mode.  Use 0 or {@link #MODE_PRIVATE} for the
      * default operation, {@link #MODE_WORLD_READABLE}
-     * and {@link #MODE_WORLD_WRITEABLE} to control permissions.
+     * and {@link #MODE_WORLD_WRITEABLE} to control permissions.  The bit
+     * {@link #MODE_MULTI_PROCESS} can also be used if multiple processes
+     * are mutating the same SharedPreferences file.  {@link #MODE_MULTI_PROCESS}
+     * is always on in apps targetting Gingerbread (Android 2.3) and below, and
+     * off by default in later versions.
      *
      * @return Returns the single SharedPreferences instance that can be used
      *         to retrieve and modify the preference values.
@@ -324,6 +426,7 @@ public abstract class Context {
      * @see #MODE_PRIVATE
      * @see #MODE_WORLD_READABLE
      * @see #MODE_WORLD_WRITEABLE
+     * @see #MODE_MULTI_PROCESS
      */
     public abstract SharedPreferences getSharedPreferences(String name,
             int mode);
@@ -484,6 +587,13 @@ public abstract class Context {
     public abstract File getExternalFilesDir(String type);
 
     /**
+     * Return the directory where this application's OBB files (if there
+     * are any) can be found.  Note if the application does not have any OBB
+     * files, this directory may not exist.
+     */
+    public abstract File getObbDir();
+
+    /**
      * Returns the absolute path to the application specific cache directory
      * on the filesystem. These files will be ones that get deleted first when the
      * device runs low on storage.
@@ -587,6 +697,32 @@ public abstract class Context {
      */
     public abstract SQLiteDatabase openOrCreateDatabase(String name,
             int mode, CursorFactory factory);
+
+    /**
+     * Open a new private SQLiteDatabase associated with this Context's
+     * application package.  Creates the database file if it doesn't exist.
+     *
+     * <p>Accepts input param: a concrete instance of {@link DatabaseErrorHandler} to be
+     * used to handle corruption when sqlite reports database corruption.</p>
+     *
+     * @param name The name (unique in the application package) of the database.
+     * @param mode Operating mode.  Use 0 or {@link #MODE_PRIVATE} for the
+     *     default operation, {@link #MODE_WORLD_READABLE}
+     *     and {@link #MODE_WORLD_WRITEABLE} to control permissions.
+     * @param factory An optional factory class that is called to instantiate a
+     *     cursor when query is called.
+     * @param errorHandler the {@link DatabaseErrorHandler} to be used when sqlite reports database
+     * corruption. if null, {@link android.database.DefaultDatabaseErrorHandler} is assumed.
+     * @return The contents of a newly created database with the given name.
+     * @throws android.database.sqlite.SQLiteException if the database file could not be opened.
+     *
+     * @see #MODE_PRIVATE
+     * @see #MODE_WORLD_READABLE
+     * @see #MODE_WORLD_WRITEABLE
+     * @see #deleteDatabase
+     */
+    public abstract SQLiteDatabase openOrCreateDatabase(String name,
+            int mode, CursorFactory factory, DatabaseErrorHandler errorHandler);
 
     /**
      * Delete an existing private SQLiteDatabase associated with this Context's
@@ -697,6 +833,28 @@ public abstract class Context {
     public abstract void startActivity(Intent intent);
 
     /**
+     * Launch multiple new activities.  This is generally the same as calling
+     * {@link #startActivity(Intent)} for the first Intent in the array,
+     * that activity during its creation calling {@link #startActivity(Intent)}
+     * for the second entry, etc.  Note that unlike that approach, generally
+     * none of the activities except the last in the array will be created
+     * at this point, but rather will be created when the user first visits
+     * them (due to pressing back from the activity on top).
+     *
+     * <p>This method throws {@link ActivityNotFoundException}
+     * if there was no Activity found for <em>any</em> given Intent.  In this
+     * case the state of the activity stack is undefined (some Intents in the
+     * list may be on it, some not), so you probably want to avoid such situations.
+     *
+     * @param intents An array of Intents to be started.
+     *
+     * @throws ActivityNotFoundException
+     *
+     * @see PackageManager#resolveActivity
+     */
+    public abstract void startActivities(Intent[] intents);
+
+    /**
      * Like {@link #startActivity(Intent)}, but taking a IntentSender
      * to start.  If the IntentSender is for an activity, that activity will be started
      * as if you had called the regular {@link #startActivity(Intent)}
@@ -753,7 +911,7 @@ public abstract class Context {
      *
      * @param intent The Intent to broadcast; all receivers matching this
      *               Intent will receive the broadcast.
-     * @param receiverPermission (optional) String naming a permissions that
+     * @param receiverPermission (optional) String naming a permission that
      *               a receiver must hold in order to receive your broadcast.
      *               If null, no permission is required.
      *
@@ -942,6 +1100,12 @@ public abstract class Context {
      *
      * <p>See {@link BroadcastReceiver} for more information on Intent broadcasts.
      *
+     * <p>As of {@link android.os.Build.VERSION_CODES#ICE_CREAM_SANDWICH}, receivers
+     * registered with this method will correctly respect the
+     * {@link Intent#setPackage(String)} specified for an Intent being broadcast.
+     * Prior to that, it would be ignored and delivered to all matching registered
+     * receivers.  Be careful if using this for security.</p>
+     *
      * <p class="note">Note: this method <em>cannot be called from a
      * {@link BroadcastReceiver} component;</em> that is, from a BroadcastReceiver
      * that is declared in an application's manifest.  It is okay, however, to call
@@ -971,6 +1135,12 @@ public abstract class Context {
      * a different thread than the main application thread.
      *
      * <p>See {@link BroadcastReceiver} for more information on Intent broadcasts.
+     *
+     * <p>As of {@link android.os.Build.VERSION_CODES#ICE_CREAM_SANDWICH}, receivers
+     * registered with this method will correctly respect the
+     * {@link Intent#setPackage(String)} specified for an Intent being broadcast.
+     * Prior to that, it would be ignored and delivered to all matching registered
+     * receivers.  Be careful if using this for security.</p>
      *
      * @param receiver The BroadcastReceiver to handle the broadcast.
      * @param filter Selects the Intent broadcasts to be received.
@@ -1110,8 +1280,10 @@ public abstract class Context {
      *      {@link IntentFilter} published by a service.
      * @param conn Receives information as the service is started and stopped.
      * @param flags Operation options for the binding.  May be 0,
-     *          {@link #BIND_AUTO_CREATE}, {@link #BIND_DEBUG_UNBIND}, or
-     *          {@link #BIND_NOT_FOREGROUND}.
+     *          {@link #BIND_AUTO_CREATE}, {@link #BIND_DEBUG_UNBIND},
+     *          {@link #BIND_NOT_FOREGROUND}, {@link #BIND_ABOVE_CLIENT},
+     *          {@link #BIND_ALLOW_OOM_MANAGEMENT}, or
+     *          {@link #BIND_WAIVE_PRIORITY}.
      * @return If you have successfully bound to the service, true is returned;
      *         false is returned if the connection is not made so you will not
      *         receive the service object.
@@ -1362,6 +1534,15 @@ public abstract class Context {
     public static final String LOCATION_SERVICE = "location";
 
     /**
+     * Use with {@link #getSystemService} to retrieve a
+     * {@link android.location.CountryDetector} for detecting the country that
+     * the user is in.
+     *
+     * @hide
+     */
+    public static final String COUNTRY_DETECTOR = "country_detector";
+
+    /**
      * Use with {@link #getSystemService} to retrieve a {@link
      * android.app.SearchManager} for handling searches.
      *
@@ -1448,6 +1629,11 @@ public abstract class Context {
      */
     public static final String NETWORKMANAGEMENT_SERVICE = "network_management";
 
+    /** {@hide} */
+    public static final String NETWORK_STATS_SERVICE = "netstats";
+    /** {@hide} */
+    public static final String NETWORK_POLICY_SERVICE = "netpolicy";
+
     /**
      * Use with {@link #getSystemService} to retrieve a {@link
      * android.net.wifi.WifiManager} for handling management of
@@ -1457,6 +1643,16 @@ public abstract class Context {
      * @see android.net.wifi.WifiManager
      */
     public static final String WIFI_SERVICE = "wifi";
+
+    /**
+     * Use with {@link #getSystemService} to retrieve a {@link
+     * android.net.wifi.p2p.WifiP2pManager} for handling management of
+     * Wi-Fi peer-to-peer connections.
+     *
+     * @see #getSystemService
+     * @see android.net.wifi.p2p.WifiP2pManager
+     */
+    public static final String WIFI_P2P_SERVICE = "wifip2p";
 
     /**
      * Use with {@link #getSystemService} to retrieve a
@@ -1496,6 +1692,15 @@ public abstract class Context {
      * @see #getSystemService
      */
     public static final String INPUT_METHOD_SERVICE = "input_method";
+
+    /**
+     * Use with {@link #getSystemService} to retrieve a
+     * {@link android.view.textservice.TextServicesManager} for accessing
+     * text services.
+     *
+     * @see #getSystemService
+     */
+    public static final String TEXT_SERVICES_MANAGER_SERVICE = "textservices";
 
     /**
      * Use with {@link #getSystemService} to retrieve a
@@ -1573,7 +1778,6 @@ public abstract class Context {
      *
      * @see #getSystemService
      * @see android.harware.usb.UsbManager
-     * @hide
      */
     public static final String USB_SERVICE = "usb";
 

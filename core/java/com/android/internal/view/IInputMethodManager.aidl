@@ -17,7 +17,9 @@
 package com.android.internal.view;
 
 import android.os.ResultReceiver;
+import android.text.style.SuggestionSpan;
 import android.view.inputmethod.InputMethodInfo;
+import android.view.inputmethod.InputMethodSubtype;
 import android.view.inputmethod.EditorInfo;
 import com.android.internal.view.InputBindResult;
 import com.android.internal.view.IInputContext;
@@ -30,7 +32,12 @@ import com.android.internal.view.IInputMethodClient;
 interface IInputMethodManager {
     List<InputMethodInfo> getInputMethodList();
     List<InputMethodInfo> getEnabledInputMethodList();
-    
+    List<InputMethodSubtype> getEnabledInputMethodSubtypeList(in InputMethodInfo imi,
+            boolean allowsImplicitlySelectedSubtypes);
+    InputMethodSubtype getLastInputMethodSubtype();
+    // TODO: We should change the return type from List to List<Parcelable>
+    // Currently there is a bug that aidl doesn't accept List<Parcelable>
+    List getShortcutInputMethodsAndSubtypes();
     void addClient(in IInputMethodClient client,
             in IInputContext inputContext, int uid, int pid);
     void removeClient(in IInputMethodClient client);
@@ -48,11 +55,18 @@ interface IInputMethodManager {
             int softInputMode, boolean first, int windowFlags);
             
     void showInputMethodPickerFromClient(in IInputMethodClient client);
+    void showInputMethodAndSubtypeEnablerFromClient(in IInputMethodClient client, String topId);
     void setInputMethod(in IBinder token, String id);
+    void setInputMethodAndSubtype(in IBinder token, String id, in InputMethodSubtype subtype);
     void hideMySoftInput(in IBinder token, int flags);
     void showMySoftInput(in IBinder token, int flags);
     void updateStatusIcon(in IBinder token, String packageName, int iconId);
-    
+    void setImeWindowStatus(in IBinder token, int vis, int backDisposition);
+    void registerSuggestionSpansForNotification(in SuggestionSpan[] spans);
+    boolean notifySuggestionPicked(in SuggestionSpan span, String originalString, int index);
+    InputMethodSubtype getCurrentInputMethodSubtype();
+    boolean setCurrentInputMethodSubtype(in InputMethodSubtype subtype);
+    boolean switchToLastInputMethod(in IBinder token);
     boolean setInputMethodEnabled(String id, boolean enabled);
+    oneway void setAdditionalInputMethodSubtypes(String id, in InputMethodSubtype[] subtypes);
 }
-

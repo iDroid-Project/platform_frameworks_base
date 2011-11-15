@@ -84,7 +84,6 @@ class ServiceRecord extends Binder {
     boolean startRequested; // someone explicitly called start?
     boolean stopIfKilled;   // last onStart() said to stop if service killed?
     boolean callStart;      // last onStart() has asked to alway be called on restart.
-    int lastStartId;        // identifier of most recent start request.
     int executeNesting;     // number of outstanding operations keeping foreground.
     long executingStart;    // start time of last execute request.
     int crashCount;         // number of times proc has crashed with service running
@@ -96,8 +95,11 @@ class ServiceRecord extends Binder {
 
     String stringName;      // caching of toString
     
+    private int lastStartId;    // identifier of most recent start request.
+
     static class StartItem {
         final ServiceRecord sr;
+        final boolean taskRemoved;
         final int id;
         final Intent intent;
         final int targetPermissionUid;
@@ -108,8 +110,10 @@ class ServiceRecord extends Binder {
 
         String stringName;      // caching of toString
 
-        StartItem(ServiceRecord _sr, int _id, Intent _intent, int _targetPermissionUid) {
+        StartItem(ServiceRecord _sr, boolean _taskRemoved, int _id, Intent _intent,
+                int _targetPermissionUid) {
             sr = _sr;
+            taskRemoved = _taskRemoved;
             id = _id;
             intent = _intent;
             targetPermissionUid = _targetPermissionUid;
@@ -188,7 +192,7 @@ class ServiceRecord extends Binder {
     
     void dump(PrintWriter pw, String prefix) {
         pw.print(prefix); pw.print("intent={");
-                pw.print(intent.getIntent().toShortString(true, false));
+                pw.print(intent.getIntent().toShortString(false, true, false));
                 pw.println('}');
         pw.print(prefix); pw.print("packageName="); pw.println(packageName);
         pw.print(prefix); pw.print("processName="); pw.println(processName);
@@ -198,7 +202,9 @@ class ServiceRecord extends Binder {
         long now = SystemClock.uptimeMillis();
         long nowReal = SystemClock.elapsedRealtime();
         pw.print(prefix); pw.print("baseDir="); pw.println(baseDir);
-        if (!resDir.equals(baseDir)) pw.print(prefix); pw.print("resDir="); pw.println(resDir);
+        if (!resDir.equals(baseDir)) {
+            pw.print(prefix); pw.print("resDir="); pw.println(resDir);
+        }
         pw.print(prefix); pw.print("dataDir="); pw.println(dataDir);
         pw.print(prefix); pw.print("app="); pw.println(app);
         if (isForeground || foregroundId != 0) {
@@ -211,7 +217,7 @@ class ServiceRecord extends Binder {
                 pw.print(" lastActivity=");
                 TimeUtils.formatDuration(lastActivity, now, pw);
                 pw.println("");
-        pw.print(prefix); pw.print(" executingStart=");
+        pw.print(prefix); pw.print("executingStart=");
                 TimeUtils.formatDuration(executingStart, now, pw);
                 pw.print(" restartTime=");
                 TimeUtils.formatDuration(restartTime, now, pw);
@@ -321,6 +327,18 @@ class ServiceRecord extends Binder {
         return null;
     }
     
+    public int getLastStartId() {
+        return lastStartId;
+    }
+
+    public int makeNextStartId() {
+        lastStartId++;
+        if (lastStartId < 1) {
+            lastStartId = 1;
+        }
+        return lastStartId;
+    }
+
     public void postNotification() {
         final int appUid = appInfo.uid;
         final int appPid = app.pid;

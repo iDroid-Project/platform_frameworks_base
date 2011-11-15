@@ -27,52 +27,69 @@ namespace renderscript {
 class ProgramVertex;
 class ProgramFragment;
 class ProgramRaster;
-class ProgramFragmentStore;
+class ProgramStore;
 
-#define MAX_SCRIPT_BANKS 16
-
-class Script : public ObjectBase
-{
+class Script : public ObjectBase {
 public:
+    struct Hal {
+        void * drv;
+
+        struct DriverInfo {
+            int mVersionMajor;
+            int mVersionMinor;
+
+            size_t exportedVariableCount;
+            size_t exportedFunctionCount;
+            size_t exportedPragmaCount;
+            char const **exportedPragmaKeyList;
+            char const **exportedPragmaValueList;
+
+            int (* root)();
+            bool isThreadable;
+        };
+        DriverInfo info;
+    };
+    Hal mHal;
+
     typedef void (* InvokeFunc_t)(void);
 
     Script(Context *);
     virtual ~Script();
 
-
     struct Enviroment_t {
-        bool mIsRoot;
-        float mClearColor[4];
-        float mClearDepth;
-        uint32_t mClearStencil;
-
-        uint32_t mStartTimeMillis;
+        int64_t mStartTimeMillis;
+        int64_t mLastDtTime;
         const char* mTimeZone;
 
         ObjectBaseRef<ProgramVertex> mVertex;
         ObjectBaseRef<ProgramFragment> mFragment;
         ObjectBaseRef<ProgramRaster> mRaster;
-        ObjectBaseRef<ProgramFragmentStore> mFragmentStore;
-        InvokeFunc_t mInvokables[MAX_SCRIPT_BANKS];
-        char * mScriptText;
-        uint32_t mScriptTextLength;
+        ObjectBaseRef<ProgramStore> mFragmentStore;
     };
     Enviroment_t mEnviroment;
 
-    uint32_t mCounstantBufferCount;
+    void initSlots();
+    void setSlot(uint32_t slot, Allocation *a);
+    void setVar(uint32_t slot, const void *val, size_t len);
+    void setVarObj(uint32_t slot, ObjectBase *val);
 
+    virtual bool freeChildren();
 
-    ObjectBaseRef<Allocation> mSlots[MAX_SCRIPT_BANKS];
-    ObjectBaseRef<const Type> mTypes[MAX_SCRIPT_BANKS];
-    String8 mSlotNames[MAX_SCRIPT_BANKS];
-    bool mSlotWritable[MAX_SCRIPT_BANKS];
+    virtual void runForEach(Context *rsc,
+                            const Allocation * ain,
+                            Allocation * aout,
+                            const void * usr,
+                            size_t usrBytes,
+                            const RsScriptCall *sc = NULL) = 0;
 
+    virtual void Invoke(Context *rsc, uint32_t slot, const void *data, size_t len) = 0;
+    virtual void setupScript(Context *rsc) = 0;
+    virtual uint32_t run(Context *) = 0;
+protected:
+    ObjectBaseRef<Allocation> *mSlots;
+    ObjectBaseRef<const Type> *mTypes;
 
-
-    virtual void setupScript() = 0;
-    virtual uint32_t run(Context *, uint32_t launchID) = 0;
 };
-
 
 
 }

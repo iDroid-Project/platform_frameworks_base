@@ -17,6 +17,7 @@
 package com.android.internal.telephony.sip;
 
 import android.content.Context;
+import android.net.LinkProperties;
 import android.os.AsyncResult;
 import android.os.Handler;
 import android.os.Message;
@@ -37,11 +38,13 @@ import com.android.internal.telephony.IccFileHandler;
 import com.android.internal.telephony.IccPhoneBookInterfaceManager;
 import com.android.internal.telephony.IccSmsInterfaceManager;
 import com.android.internal.telephony.MmiCode;
+import com.android.internal.telephony.OperatorInfo;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneBase;
 import com.android.internal.telephony.PhoneNotifier;
 import com.android.internal.telephony.PhoneSubInfo;
 import com.android.internal.telephony.TelephonyProperties;
+import com.android.internal.telephony.UUSInfo;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -61,6 +64,12 @@ abstract class SipPhoneBase extends PhoneBase {
     public abstract Call getBackgroundCall();
 
     public abstract Call getRingingCall();
+
+    public Connection dial(String dialString, UUSInfo uusInfo)
+            throws CallStateException {
+        // ignore UUSInfo
+        return dial(dialString);
+    }
 
     void migrateFrom(SipPhoneBase from) {
         migrate(mRingbackRegistrants, from.mRingbackRegistrants);
@@ -93,12 +102,12 @@ abstract class SipPhoneBase extends PhoneBase {
     }
 
     protected void startRingbackTone() {
-        AsyncResult result = new AsyncResult(null, new Boolean(true), null);
+        AsyncResult result = new AsyncResult(null, Boolean.TRUE, null);
         mRingbackRegistrants.notifyRegistrants(result);
     }
 
     protected void stopRingbackTone() {
-        AsyncResult result = new AsyncResult(null, new Boolean(false), null);
+        AsyncResult result = new AsyncResult(null, Boolean.FALSE, null);
         mRingbackRegistrants.notifyRegistrants(result);
     }
 
@@ -255,6 +264,10 @@ abstract class SipPhoneBase extends PhoneBase {
         return null;
     }
 
+    public String getImei() {
+        return null;
+    }
+
     public String getEsn() {
         Log.e(LOG_TAG, "[SipPhone] getEsn() is a CDMA method");
         return "0";
@@ -339,7 +352,7 @@ abstract class SipPhoneBase extends PhoneBase {
     }
 
     public void selectNetworkManually(
-            com.android.internal.telephony.gsm.NetworkInfo network,
+            OperatorInfo network,
             Message response) {
     }
 
@@ -417,6 +430,18 @@ abstract class SipPhoneBase extends PhoneBase {
 
     public void setCellBroadcastSmsConfig(int[] configValuesArray, Message response){
         Log.e(LOG_TAG, "Error! This functionality is not implemented for SIP.");
+    }
+
+    //@Override
+    public boolean needsOtaServiceProvisioning() {
+        // FIXME: what's this for SIP?
+        return false;
+    }
+
+    //@Override
+    public LinkProperties getLinkProperties(String apnType) {
+        // FIXME: what's this for SIP?
+        return null;
     }
 
     void updatePhoneState() {

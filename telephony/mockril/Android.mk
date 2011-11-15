@@ -25,7 +25,6 @@ LOCAL_JAVA_LIBRARIES := core framework
 
 LOCAL_STATIC_JAVA_LIBRARIES := librilproto-java
 
-LOCAL_MODULE_TAGS := debug
 LOCAL_MODULE := mockrilcontroller
 
 include $(BUILD_STATIC_JAVA_LIBRARY)

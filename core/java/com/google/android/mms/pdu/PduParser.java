@@ -20,7 +20,6 @@ package com.google.android.mms.pdu;
 import com.google.android.mms.ContentType;
 import com.google.android.mms.InvalidHeaderValueException;
 
-import android.util.Config;
 import android.util.Log;
 
 import java.io.ByteArrayInputStream;
@@ -86,7 +85,7 @@ public class PduParser {
      */
     private static final String LOG_TAG = "PduParser";
     private static final boolean DEBUG = false;
-    private static final boolean LOCAL_LOGV = DEBUG ? Config.LOGD : Config.LOGV;
+    private static final boolean LOCAL_LOGV = false;
 
     /**
      * Constructor.
@@ -164,6 +163,13 @@ public class PduParser {
                     // The MMS content type must be "application/vnd.wap.multipart.mixed"
                     // or "application/vnd.wap.multipart.related"
                     // or "application/vnd.wap.multipart.alternative"
+                    return retrieveConf;
+                } else if (ctTypeStr.equals(ContentType.MULTIPART_ALTERNATIVE)) {
+                    // "application/vnd.wap.multipart.alternative"
+                    // should take only the first part.
+                    PduPart firstPart = mBody.getPart(0);
+                    mBody.removeAll();
+                    mBody.addPart(0, firstPart);
                     return retrieveConf;
                 }
                 return null;

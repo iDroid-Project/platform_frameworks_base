@@ -1,4 +1,4 @@
-page.title=Creating Dialogs
+page.title=Dialogs
 parent.title=User Interface
 parent.link=index.html
 @jd:body
@@ -22,20 +22,32 @@ parent.link=index.html
       </li>
       <li><a href="#CustomDialog">Creating a Custom Dialog</a></li>
     </ol>
-    
+
     <h2>Key classes</h2>
     <ol>
       <li>{@link android.app.Dialog}</li>
+      <li>{@link android.app.AlertDialog}</li>
+      <li>{@link android.app.DialogFragment}</li>
+    </ol>
+
+    <h2>Related tutorials</h2>
+    <ol>
+      <li><a href="{@docRoot}resources/tutorials/views/hello-datepicker.html">Hello
+DatePicker</a></li>
+      <li><a href="{@docRoot}resources/tutorials/views/hello-timepicker.html">Hello
+TimePicker</a></li>
     </ol>
   </div>
 </div>
 
 <p>A dialog is usually a small window that appears in front of the current Activity.
-The underlying Activity loses focus and the dialog accepts all user interaction. 
-Dialogs are normally used
-for notifications and short activities that directly relate to the application in progress.</p>
+The underlying Activity loses focus and the dialog accepts all user interaction. Dialogs are
+normally used for notifications that should interupt the user and to perform short tasks that
+directly relate to the application in progress (such as a progress bar or a login prompt).</p>
 
-<p>The Android API supports the following types of {@link android.app.Dialog} objects:</p>
+<p>The {@link android.app.Dialog} class is the base class for creating dialogs. However, you
+typically should not instantiate a {@link android.app.Dialog} directly. Instead, you should use one
+of the following subclasses:</p>
 <dl>
   <dt>{@link android.app.AlertDialog}</dt>
   <dd>A dialog that can manage zero, one, two, or three buttons, and/or a list of
@@ -289,7 +301,7 @@ Activity, the selection is lost.
 
 <p class="note"><strong>Note:</strong> To save the selection when the user leaves or
 pauses the Activity, you must properly save and restore the setting throughout
-the <a href="{@docRoot}guide/topics/fundamentals.html#lcycles">Activity Lifecycle</a>. 
+the <a href="{@docRoot}guide/topics/fundamentals/activities.html#Lifecycle">activity lifecycle</a>. 
 To permanently save the selections, even when the Activity process is completely shutdown, 
 you need to save the settings
 with one of the <a href="{@docRoot}guide/topics/data/data-storage.html">Data
@@ -473,18 +485,25 @@ public class NotificationTest extends Activity {
             progressDialog = new ProgressDialog(NotificationTest.this);
             progressDialog.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);
             progressDialog.setMessage("Loading...");
-            progressThread = new ProgressThread(handler);
-            progressThread.start();
             return progressDialog;
         default:
             return null;
         }
     }
 
+    &#64;Override
+    protected void onPrepareDialog(int id, Dialog dialog) {
+        switch(id) {
+        case PROGRESS_DIALOG:
+            progressDialog.setProgress(0);
+            progressThread = new ProgressThread(handler);
+            progressThread.start();
+    }
+
     // Define the Handler that receives messages from the thread and update the progress
     final Handler handler = new Handler() {
         public void handleMessage(Message msg) {
-            int total = msg.getData().getInt("total");
+            int total = msg.arg1;
             progressDialog.setProgress(total);
             if (total >= 100){
                 dismissDialog(PROGRESS_DIALOG);
@@ -515,9 +534,7 @@ public class NotificationTest extends Activity {
                     Log.e("ERROR", "Thread Interrupted");
                 }
                 Message msg = mHandler.obtainMessage();
-                Bundle b = new Bundle();
-                b.putInt("total", total);
-                msg.setData(b);
+                msg.arg1 = total;
                 mHandler.sendMessage(msg);
                 total++;
             }

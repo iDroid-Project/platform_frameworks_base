@@ -26,6 +26,8 @@ import android.os.IBinder;
 import android.os.IPowerManager;
 import android.widget.ListView;
 import android.content.Intent;
+import android.content.ComponentName;
+import android.content.pm.PackageManager;
 import android.app.Notification;
 import android.app.NotificationManager;
 import android.app.StatusBarManager;
@@ -66,6 +68,24 @@ public class PowerTest extends TestActivity
         return mTests;
     }
     private Test[] mTests = new Test[] {
+        new Test("Enable settings widget") {
+            public void run() {
+                PackageManager pm = getPackageManager();
+                pm.setComponentEnabledSetting(new ComponentName("com.android.settings",
+                            "com.android.settings.widget.SettingsAppWidgetProvider"),
+                        PackageManager.COMPONENT_ENABLED_STATE_ENABLED, 0);
+
+            }
+        },
+        new Test("Disable settings widget") {
+            public void run() {
+                PackageManager pm = getPackageManager();
+                pm.setComponentEnabledSetting(new ComponentName("com.android.settings",
+                            "com.android.settings.widget.SettingsAppWidgetProvider"),
+                        PackageManager.COMPONENT_ENABLED_STATE_DISABLED, 0);
+
+            }
+        },
         new Test("Enable proximity") {
             public void run() {
                 mProx.acquire();
@@ -81,9 +101,9 @@ public class PowerTest extends TestActivity
                 mProx.release(PowerManager.WAIT_FOR_PROXIMITY_NEGATIVE);
             }
         },
-        new Test("Cheek events don't poke") {
+        new Test("Touch events don't poke") {
             public void run() {
-                mPokeState |= LocalPowerManager.POKE_LOCK_IGNORE_CHEEK_EVENTS;
+                mPokeState |= LocalPowerManager.POKE_LOCK_IGNORE_TOUCH_EVENTS;
                 try {
                     mPowerManager.setPokeLock(mPokeState, mPokeToken, TAG);
                 } catch (RemoteException e) {
@@ -92,29 +112,9 @@ public class PowerTest extends TestActivity
             }
         },
 
-        new Test("Cheek events poke") {
+        new Test("Touch events poke") {
             public void run() {
-                mPokeState &= ~LocalPowerManager.POKE_LOCK_IGNORE_CHEEK_EVENTS;
-                try {
-                    mPowerManager.setPokeLock(mPokeState, mPokeToken, TAG);
-                } catch (RemoteException e) {
-                    throw new RuntimeException(e);
-                }
-            }
-        },
-        new Test("Touch and Cheek events don't poke") {
-            public void run() {
-                mPokeState |= LocalPowerManager.POKE_LOCK_IGNORE_TOUCH_AND_CHEEK_EVENTS;
-                try {
-                    mPowerManager.setPokeLock(mPokeState, mPokeToken, TAG);
-                } catch (RemoteException e) {
-                    throw new RuntimeException(e);
-                }
-            }
-        },
-        new Test("Touch and Cheek events poke") {
-            public void run() {
-                mPokeState &= ~LocalPowerManager.POKE_LOCK_IGNORE_TOUCH_AND_CHEEK_EVENTS;
+                mPokeState &= ~LocalPowerManager.POKE_LOCK_IGNORE_TOUCH_EVENTS;
                 try {
                     mPowerManager.setPokeLock(mPokeState, mPokeToken, TAG);
                 } catch (RemoteException e) {

@@ -32,22 +32,44 @@ namespace android {
 
 class IMediaRecorder;
 class IOMX;
+struct IStreamSource;
 
 class IMediaPlayerService: public IInterface
 {
 public:
     DECLARE_META_INTERFACE(MediaPlayerService);
 
-    virtual sp<IMediaRecorder>  createMediaRecorder(pid_t pid) = 0;
+    virtual sp<IMediaRecorder> createMediaRecorder(pid_t pid) = 0;
     virtual sp<IMediaMetadataRetriever> createMetadataRetriever(pid_t pid) = 0;
-    virtual sp<IMediaPlayer> create(pid_t pid, const sp<IMediaPlayerClient>& client,
-            const char* url, const KeyedVector<String8, String8> *headers = NULL,
-            int audioSessionId = 0) = 0;
-    virtual sp<IMediaPlayer> create(pid_t pid, const sp<IMediaPlayerClient>& client,
-            int fd, int64_t offset, int64_t length, int audioSessionId) = 0;
+    virtual sp<IMediaPlayer> create(pid_t pid, const sp<IMediaPlayerClient>& client, int audioSessionId = 0) = 0;
+
     virtual sp<IMemory>         decode(const char* url, uint32_t *pSampleRate, int* pNumChannels, int* pFormat) = 0;
     virtual sp<IMemory>         decode(int fd, int64_t offset, int64_t length, uint32_t *pSampleRate, int* pNumChannels, int* pFormat) = 0;
     virtual sp<IOMX>            getOMX() = 0;
+
+    // codecs and audio devices usage tracking for the battery app
+    enum BatteryDataBits {
+        // tracking audio codec
+        kBatteryDataTrackAudio          = 0x1,
+        // tracking video codec
+        kBatteryDataTrackVideo          = 0x2,
+        // codec is started, otherwise codec is paused
+        kBatteryDataCodecStarted        = 0x4,
+        // tracking decoder (for media player),
+        // otherwise tracking encoder (for media recorder)
+        kBatteryDataTrackDecoder        = 0x8,
+        // start to play an audio on an audio device
+        kBatteryDataAudioFlingerStart   = 0x10,
+        // stop/pause the audio playback
+        kBatteryDataAudioFlingerStop    = 0x20,
+        // audio is rounted to speaker
+        kBatteryDataSpeakerOn           = 0x40,
+        // audio is rounted to devices other than speaker
+        kBatteryDataOtherAudioDeviceOn  = 0x80,
+    };
+
+    virtual void addBatteryData(uint32_t params) = 0;
+    virtual status_t pullBatteryData(Parcel* reply) = 0;
 };
 
 // ----------------------------------------------------------------------------

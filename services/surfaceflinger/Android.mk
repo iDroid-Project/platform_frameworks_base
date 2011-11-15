@@ -2,20 +2,20 @@ LOCAL_PATH:= $(call my-dir)
 include $(CLEAR_VARS)
 
 LOCAL_SRC_FILES:= \
-    clz.cpp.arm \
-    DisplayHardware/DisplayHardware.cpp \
+    Layer.cpp 								\
+    LayerBase.cpp 							\
+    LayerDim.cpp 							\
+    LayerScreenshot.cpp						\
+    DdmConnection.cpp						\
+    DisplayHardware/DisplayHardware.cpp 	\
     DisplayHardware/DisplayHardwareBase.cpp \
-    BlurFilter.cpp.arm \
-    GLExtensions.cpp \
-    Layer.cpp \
-    LayerBase.cpp \
-    LayerBuffer.cpp \
-    LayerBlur.cpp \
-    LayerDim.cpp \
-    MessageQueue.cpp \
-    SurfaceFlinger.cpp \
-    TextureManager.cpp \
-    Transform.cpp
+    DisplayHardware/HWComposer.cpp 			\
+    GLExtensions.cpp 						\
+    MessageQueue.cpp 						\
+    SurfaceFlinger.cpp 						\
+    SurfaceTextureLayer.cpp 				\
+    Transform.cpp 							\
+    
 
 LOCAL_CFLAGS:= -DLOG_TAG=\"SurfaceFlinger\"
 LOCAL_CFLAGS += -DGL_GLEXT_PROTOTYPES -DEGL_EGLEXT_PROTOTYPES
@@ -23,17 +23,17 @@ LOCAL_CFLAGS += -DGL_GLEXT_PROTOTYPES -DEGL_EGLEXT_PROTOTYPES
 ifeq ($(TARGET_BOARD_PLATFORM), omap3)
 	LOCAL_CFLAGS += -DNO_RGBX_8888
 endif
-ifeq ($(TARGET_BOARD_PLATFORM), s5pc110)
+ifeq ($(TARGET_BOARD_PLATFORM), omap4)
 	LOCAL_CFLAGS += -DHAS_CONTEXT_PRIORITY
 endif
-
-
-# need "-lrt" on Linux simulator to pick up clock_gettime
-ifeq ($(TARGET_SIMULATOR),true)
-	ifeq ($(HOST_OS),linux)
-		LOCAL_LDLIBS += -lrt -lpthread
-	endif
+ifeq ($(TARGET_BOARD_PLATFORM), s5pc110)
+	LOCAL_CFLAGS += -DHAS_CONTEXT_PRIORITY -DNEVER_DEFAULT_TO_ASYNC_MODE
 endif
+
+ifneq (,$(findstring $(TARGET_DEVICE),tuna toro maguro))
+	LOCAL_CFLAGS += -DREFRESH_RATE=59
+endif
+
 
 LOCAL_SHARED_LIBRARIES := \
 	libcutils \
@@ -43,7 +43,10 @@ LOCAL_SHARED_LIBRARIES := \
 	libGLESv1_CM \
 	libbinder \
 	libui \
-	libsurfaceflinger_client
+	libgui
+
+# this is only needed for DDMS debugging
+LOCAL_SHARED_LIBRARIES += libdvm libandroid_runtime
 
 LOCAL_C_INCLUDES := \
 	$(call include-path-for, corecg graphics)

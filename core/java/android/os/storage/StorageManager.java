@@ -19,10 +19,10 @@ package android.os.storage;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.os.Parcelable;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.util.Log;
-import android.util.Slog;
 import android.util.SparseArray;
 
 import java.lang.ref.WeakReference;
@@ -99,10 +99,11 @@ public class StorageManager
     private final ObbActionListener mObbActionListener = new ObbActionListener();
 
     private class ObbActionListener extends IObbActionListener.Stub {
+        @SuppressWarnings("hiding")
         private SparseArray<ObbListenerDelegate> mListeners = new SparseArray<ObbListenerDelegate>();
 
         @Override
-        public void onObbResult(String filename, int nonce, int status) throws RemoteException {
+        public void onObbResult(String filename, int nonce, int status) {
             final ObbListenerDelegate delegate;
             synchronized (mListeners) {
                 delegate = mListeners.get(nonce);
@@ -146,8 +147,8 @@ public class StorageManager
             mHandler = new Handler(mTgtLooper) {
                 @Override
                 public void handleMessage(Message msg) {
-                    final OnObbStateChangeListener listener = getListener();
-                    if (listener == null) {
+                    final OnObbStateChangeListener changeListener = getListener();
+                    if (changeListener == null) {
                         return;
                     }
 
@@ -155,7 +156,7 @@ public class StorageManager
 
                     if (msg.what == StorageEvent.EVENT_OBB_STATE_CHANGED) {
                         ObbStateChangedStorageEvent ev = (ObbStateChangedStorageEvent) e;
-                        listener.onObbStateChange(ev.path, ev.state);
+                        changeListener.onObbStateChange(ev.path, ev.state);
                     } else {
                         Log.e(TAG, "Unsupported event " + msg.what);
                     }
@@ -526,5 +527,53 @@ public class StorageManager
         }
 
         return null;
+    }
+
+    /**
+     * Gets the state of a volume via its mountpoint.
+     * @hide
+     */
+    public String getVolumeState(String mountPoint) {
+        try {
+            return mMountService.getVolumeState(mountPoint);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to get volume state", e);
+            return null;
+        }
+    }
+
+    /**
+     * Returns list of all mountable volumes.
+     * @hide
+     */
+    public StorageVolume[] getVolumeList() {
+        try {
+            Parcelable[] list = mMountService.getVolumeList();
+            if (list == null) return new StorageVolume[0];
+            int length = list.length;
+            StorageVolume[] result = new StorageVolume[length];
+            for (int i = 0; i < length; i++) {
+                result[i] = (StorageVolume)list[i];
+            }
+            return result;
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to get volume list", e);
+            return null;
+        }
+    }
+
+    /**
+     * Returns list of paths for all mountable volumes.
+     * @hide
+     */
+    public String[] getVolumePaths() {
+        StorageVolume[] volumes = getVolumeList();
+        if (volumes == null) return null;
+        int count = volumes.length;
+        String[] paths = new String[count];
+        for (int i = 0; i < count; i++) {
+            paths[i] = volumes[i].getPath();
+        }
+        return paths;
     }
 }

@@ -33,8 +33,8 @@ import java.util.List;
 import java.util.Map;
 
 
-import org.bouncycastle.crypto.Digest;
-import org.bouncycastle.crypto.digests.SHA1Digest;
+import com.android.org.bouncycastle.crypto.Digest;
+import com.android.org.bouncycastle.crypto.digests.SHA1Digest;
 
 /**
  * The class CacheManager provides the persistent cache of content that is
@@ -44,7 +44,12 @@ import org.bouncycastle.crypto.digests.SHA1Digest;
  * this component and if they can not be resolved by the cache, the HTTP headers
  * are attached, as appropriate, to the request for revalidation of content. The
  * class also manages the cache size.
+ *
+ * CacheManager may only be used if your activity contains a WebView.
+ *
+ * @deprecated Access to the HTTP cache will be removed in a future release.
  */
+@Deprecated
 public final class CacheManager {
 
     private static final String LOGTAG = "cache";
@@ -85,7 +90,10 @@ public final class CacheManager {
      * This class represents a resource retrieved from the HTTP cache.
      * Instances of this class can be obtained by invoking the
      * CacheManager.getCacheFile() method.
+     *
+     * @deprecated Access to the HTTP cache will be removed in a future release.
      */
+    @Deprecated
     public static class CacheResult {
         // these fields are saved to the database
         int httpStatusCode;
@@ -167,14 +175,33 @@ public final class CacheManager {
         public void setEncoding(String encoding) {
             this.encoding = encoding;
         }
+
+        /**
+         * @hide
+         */
+        public void setContentLength(long contentLength) {
+            this.contentLength = contentLength;
+        }
     }
 
     /**
-     * initialize the CacheManager. WebView should handle this for each process.
-     * 
+     * Initialize the CacheManager.
+     *
+     * Note that this is called automatically when a {@link android.webkit.WebView} is created.
+     *
      * @param context The application context.
      */
     static void init(Context context) {
+        if (JniUtil.useChromiumHttpStack()) {
+            // This isn't actually where the real cache lives, but where we put files for the
+            // purpose of getCacheFile().
+            mBaseDir = new File(context.getCacheDir(), "webviewCacheChromiumStaging");
+            if (!mBaseDir.exists()) {
+                mBaseDir.mkdirs();
+            }
+            return;
+        }
+
         mDataBase = WebViewDatabase.getInstance(context.getApplicationContext());
         mBaseDir = new File(context.getCacheDir(), "webviewCache");
         if (createCacheDirectory() && mClearCacheOnInit) {
@@ -182,13 +209,15 @@ public final class CacheManager {
             mClearCacheOnInit = false;
         }
     }
-    
+
     /**
      * Create the cache directory if it does not already exist.
-     * 
+     *
      * @return true if the cache directory didn't exist and was created.
      */
     static private boolean createCacheDirectory() {
+        assert !JniUtil.useChromiumHttpStack();
+
         if (!mBaseDir.exists()) {
             if(!mBaseDir.mkdirs()) {
                 Log.w(LOGTAG, "Unable to create webviewCache directory");
@@ -196,9 +225,9 @@ public final class CacheManager {
             }
             FileUtils.setPermissions(
                     mBaseDir.toString(),
-                    FileUtils.S_IRWXU|FileUtils.S_IRWXG|FileUtils.S_IXOTH,
+                    FileUtils.S_IRWXU | FileUtils.S_IRWXG,
                     -1, -1);
-            // If we did create the directory, we need to flush 
+            // If we did create the directory, we need to flush
             // the cache database. The directory could be recreated
             // because the system flushed all the data/cache directories
             // to free up disk space.
@@ -211,21 +240,30 @@ public final class CacheManager {
     }
 
     /**
-     * get the base directory of the cache. With localPath of the CacheResult,
-     * it identifies the cache file.
-     * 
+     * Get the base directory of the cache. Together with the local path of the CacheResult,
+     * obtained from {@link android.webkit.CacheManager.CacheResult#getLocalPath}, this
+     * identifies the cache file.
+     *
+     * Cache files are not guaranteed to be in this directory before
+     * CacheManager#getCacheFile(String, Map<String, String>) is called.
+     *
      * @return File The base directory of the cache.
+     *
+     * @deprecated Access to the HTTP cache will be removed in a future release.
      */
+    @Deprecated
     public static File getCacheFileBaseDir() {
         return mBaseDir;
     }
 
     /**
-     * set the flag to control whether cache is enabled or disabled
-     * 
-     * @param disabled true to disable the cache
+     * Sets whether the cache is disabled.
+     *
+     * @param disabled Whether the cache should be disabled
      */
     static void setCacheDisabled(boolean disabled) {
+        assert !JniUtil.useChromiumHttpStack();
+
         if (disabled == mDisabled) {
             return;
         }
@@ -236,10 +274,13 @@ public final class CacheManager {
     }
 
     /**
-     * get the state of the current cache, enabled or disabled
-     * 
-     * @return return if it is disabled
+     * Whether the cache is disabled.
+     *
+     * @return return Whether the cache is disabled
+     *
+     * @deprecated Access to the HTTP cache will be removed in a future release.
      */
+    @Deprecated
     public static boolean cacheDisabled() {
         return mDisabled;
     }
@@ -247,6 +288,8 @@ public final class CacheManager {
     // only called from WebViewWorkerThread
     // make sure to call enableTransaction/disableTransaction in pair
     static boolean enableTransaction() {
+        assert !JniUtil.useChromiumHttpStack();
+
         if (++mRefCount == 1) {
             mDataBase.startCacheTransaction();
             return true;
@@ -257,6 +300,8 @@ public final class CacheManager {
     // only called from WebViewWorkerThread
     // make sure to call enableTransaction/disableTransaction in pair
     static boolean disableTransaction() {
+        assert !JniUtil.useChromiumHttpStack();
+
         if (--mRefCount == 0) {
             mDataBase.endCacheTransaction();
             return true;
@@ -267,12 +312,16 @@ public final class CacheManager {
     // only called from WebViewWorkerThread
     // make sure to call startTransaction/endTransaction in pair
     static boolean startTransaction() {
+        assert !JniUtil.useChromiumHttpStack();
+
         return mDataBase.startCacheTransaction();
     }
 
     // only called from WebViewWorkerThread
     // make sure to call startTransaction/endTransaction in pair
     static boolean endTransaction() {
+        assert !JniUtil.useChromiumHttpStack();
+
         boolean ret = mDataBase.endCacheTransaction();
         if (++mTrimCacheCount >= TRIM_CACHE_INTERVAL) {
             mTrimCacheCount = 0;
@@ -302,13 +351,18 @@ public final class CacheManager {
     }
 
     /**
-     * Given a url, returns the CacheResult if exists. Otherwise returns null.
-     * If headers are provided and a cache needs validation,
-     * HEADER_KEY_IFNONEMATCH or HEADER_KEY_IFMODIFIEDSINCE will be set in the
-     * cached headers.
-     * 
-     * @return the CacheResult for a given url
+     * Given a URL, returns the corresponding CacheResult if it exists, or null otherwise.
+     *
+     * The input stream of the CacheEntry object is initialized and opened and should be closed by
+     * the caller when access to the underlying file is no longer required.
+     * If a non-zero value is provided for the headers map, and the cache entry needs validation,
+     * HEADER_KEY_IFNONEMATCH or HEADER_KEY_IFMODIFIEDSINCE will be set in headers.
+     *
+     * @return The CacheResult for the given URL
+     *
+     * @deprecated Access to the HTTP cache will be removed in a future release.
      */
+    @Deprecated
     public static CacheResult getCacheFile(String url,
             Map<String, String> headers) {
         return getCacheFile(url, 0, headers);
@@ -320,43 +374,62 @@ public final class CacheManager {
             return null;
         }
 
-        String databaseKey = getDatabaseKey(url, postIdentifier);
-
-        CacheResult result = mDataBase.getCache(databaseKey);
-        if (result != null) {
-            if (result.contentLength == 0) {
-                if (!checkCacheRedirect(result.httpStatusCode)) {
-                    // this should not happen. If it does, remove it.
-                    mDataBase.removeCache(databaseKey);
-                    return null;
-                }
-            } else {
-                File src = new File(mBaseDir, result.localPath);
-                try {
-                    // open here so that even the file is deleted, the content
-                    // is still readable by the caller until close() is called
-                    result.inStream = new FileInputStream(src);
-                } catch (FileNotFoundException e) {
-                    // the files in the cache directory can be removed by the
-                    // system. If it is gone, clean up the database
-                    mDataBase.removeCache(databaseKey);
-                    return null;
-                }
+        if (JniUtil.useChromiumHttpStack()) {
+            CacheResult result = nativeGetCacheResult(url);
+            if (result == null) {
+                return null;
             }
-        } else {
-            return null;
+            // A temporary local file will have been created native side and localPath set
+            // appropriately.
+            File src = new File(mBaseDir, result.localPath);
+            try {
+                // Open the file here so that even if it is deleted, the content
+                // is still readable by the caller until close() is called.
+                result.inStream = new FileInputStream(src);
+            } catch (FileNotFoundException e) {
+                Log.v(LOGTAG, "getCacheFile(): Failed to open file: " + e);
+                // TODO: The files in the cache directory can be removed by the
+                // system. If it is gone, what should we do?
+                return null;
+            }
+            return result;
         }
 
-        // null headers request coming from CACHE_MODE_CACHE_ONLY
-        // which implies that it needs cache even it is expired.
-        // negative expires means time in the far future.
+        String databaseKey = getDatabaseKey(url, postIdentifier);
+        CacheResult result = mDataBase.getCache(databaseKey);
+        if (result == null) {
+            return null;
+        }
+        if (result.contentLength == 0) {
+            if (!isCachableRedirect(result.httpStatusCode)) {
+                // This should not happen. If it does, remove it.
+                mDataBase.removeCache(databaseKey);
+                return null;
+            }
+        } else {
+            File src = new File(mBaseDir, result.localPath);
+            try {
+                // Open the file here so that even if it is deleted, the content
+                // is still readable by the caller until close() is called.
+                result.inStream = new FileInputStream(src);
+            } catch (FileNotFoundException e) {
+                // The files in the cache directory can be removed by the
+                // system. If it is gone, clean up the database.
+                mDataBase.removeCache(databaseKey);
+                return null;
+            }
+        }
+
+        // A null value for headers is used by CACHE_MODE_CACHE_ONLY to imply
+        // that we should provide the cache result even if it is expired.
+        // Note that a negative expires value means a time in the far future.
         if (headers != null && result.expires >= 0
                 && result.expires <= System.currentTimeMillis()) {
             if (result.lastModified == null && result.etag == null) {
                 return null;
             }
-            // return HEADER_KEY_IFNONEMATCH or HEADER_KEY_IFMODIFIEDSINCE
-            // for requesting validation
+            // Return HEADER_KEY_IFNONEMATCH or HEADER_KEY_IFMODIFIEDSINCE
+            // for requesting validation.
             if (result.etag != null) {
                 headers.put(HEADER_KEY_IFNONEMATCH, result.etag);
             }
@@ -383,9 +456,17 @@ public final class CacheManager {
      * @return CacheResult for a given url
      * @hide - hide createCacheFile since it has a parameter of type headers, which is
      * in a hidden package.
+     *
+     * @deprecated Access to the HTTP cache will be removed in a future release.
      */
+    @Deprecated
     public static CacheResult createCacheFile(String url, int statusCode,
             Headers headers, String mimeType, boolean forceCache) {
+        if (JniUtil.useChromiumHttpStack()) {
+            // This method is public but hidden. We break functionality.
+            return null;
+        }
+
         return createCacheFile(url, statusCode, headers, mimeType, 0,
                 forceCache);
     }
@@ -393,6 +474,8 @@ public final class CacheManager {
     static CacheResult createCacheFile(String url, int statusCode,
             Headers headers, String mimeType, long postIdentifier,
             boolean forceCache) {
+        assert !JniUtil.useChromiumHttpStack();
+
         if (!forceCache && mDisabled) {
             return null;
         }
@@ -408,7 +491,7 @@ public final class CacheManager {
 
         // like the other browsers, do not cache redirects containing a cookie
         // header.
-        if (checkCacheRedirect(statusCode) && !headers.getSetCookie().isEmpty()) {
+        if (isCachableRedirect(statusCode) && !headers.getSetCookie().isEmpty()) {
             // remove the saved cache if there is any
             mDataBase.removeCache(databaseKey);
             return null;
@@ -448,7 +531,10 @@ public final class CacheManager {
     /**
      * Save the info of a cache file for a given url to the CacheMap so that it
      * can be reused later
+     *
+     * @deprecated Access to the HTTP cache will be removed in a future release.
      */
+    @Deprecated
     public static void saveCacheFile(String url, CacheResult cacheRet) {
         saveCacheFile(url, 0, cacheRet);
     }
@@ -461,12 +547,25 @@ public final class CacheManager {
             return;
         }
 
+        if (JniUtil.useChromiumHttpStack()) {
+            // This method is exposed in the public API but the API provides no way to obtain a
+            // new CacheResult object with a non-null output stream ...
+            // - CacheResult objects returned by getCacheFile() have a null output stream.
+            // - new CacheResult objects have a null output stream and no setter is provided.
+            // Since for the Android HTTP stack this method throws a null pointer exception in this
+            // case, this method is effectively useless from the point of view of the public API.
+
+            // We should already have thrown an exception above, to maintain 'backward
+            // compatibility' with the Android HTTP stack.
+            assert false;
+        }
+
         if (!cacheRet.outFile.exists()) {
             // the file in the cache directory can be removed by the system
             return;
         }
 
-        boolean redirect = checkCacheRedirect(cacheRet.httpStatusCode);
+        boolean redirect = isCachableRedirect(cacheRet.httpStatusCode);
         if (redirect) {
             // location is in database, no need to keep the file
             cacheRet.contentLength = 0;
@@ -488,6 +587,8 @@ public final class CacheManager {
     }
 
     static boolean cleanupCacheFile(CacheResult cacheRet) {
+        assert !JniUtil.useChromiumHttpStack();
+
         try {
             cacheRet.outStream.close();
         } catch (IOException e) {
@@ -497,22 +598,26 @@ public final class CacheManager {
     }
 
     /**
-     * remove all cache files
-     * 
-     * @return true if it succeeds
+     * Remove all cache files.
+     *
+     * @return Whether the removal succeeded.
      */
     static boolean removeAllCacheFiles() {
         // Note, this is called before init() when the database is
         // created or upgraded.
         if (mBaseDir == null) {
+            // This method should not be called before init() when using the
+            // chrome http stack
+            assert !JniUtil.useChromiumHttpStack();
             // Init() has not been called yet, so just flag that
             // we need to clear the cache when init() is called.
             mClearCacheOnInit = true;
             return true;
         }
         // delete rows in the cache database
-        WebViewWorker.getHandler().sendEmptyMessage(
-                WebViewWorker.MSG_CLEAR_CACHE);
+        if (!JniUtil.useChromiumHttpStack())
+            WebViewWorker.getHandler().sendEmptyMessage(WebViewWorker.MSG_CLEAR_CACHE);
+
         // delete cache files in a separate thread to not block UI.
         final Runnable clearCache = new Runnable() {
             public void run() {
@@ -537,14 +642,9 @@ public final class CacheManager {
         return true;
     }
 
-    /**
-     * Return true if the cache is empty.
-     */
-    static boolean cacheEmpty() {
-        return mDataBase.hasCache();
-    }
-
     static void trimCacheIfNeeded() {
+        assert !JniUtil.useChromiumHttpStack();
+
         if (mDataBase.getCacheTotalSize() > CACHE_THRESHOLD) {
             List<String> pathList = mDataBase.trimCache(CACHE_TRIM_AMOUNT);
             int size = pathList.size();
@@ -578,11 +678,13 @@ public final class CacheManager {
     }
 
     static void clearCache() {
+        assert !JniUtil.useChromiumHttpStack();
+
         // delete database
         mDataBase.clearCache();
     }
 
-    private static boolean checkCacheRedirect(int statusCode) {
+    private static boolean isCachableRedirect(int statusCode) {
         if (statusCode == 301 || statusCode == 302 || statusCode == 307) {
             // as 303 can't be cached, we do not return true
             return true;
@@ -592,12 +694,16 @@ public final class CacheManager {
     }
 
     private static String getDatabaseKey(String url, long postIdentifier) {
+        assert !JniUtil.useChromiumHttpStack();
+
         if (postIdentifier == 0) return url;
         return postIdentifier + url;
     }
 
     @SuppressWarnings("deprecation")
     private static void setupFiles(String url, CacheResult cacheRet) {
+        assert !JniUtil.useChromiumHttpStack();
+
         if (true) {
             // Note: SHA1 is much stronger hash. But the cost of setupFiles() is
             // 3.2% cpu time for a fresh load of nytimes.com. While a simple
@@ -664,6 +770,8 @@ public final class CacheManager {
     }
 
     private static void appendAsHex(int i, StringBuffer ret) {
+        assert !JniUtil.useChromiumHttpStack();
+
         String hex = Integer.toHexString(i);
         switch (hex.length()) {
             case 1:
@@ -693,6 +801,8 @@ public final class CacheManager {
 
     private static CacheResult parseHeaders(int statusCode, Headers headers,
             String mimeType) {
+        assert !JniUtil.useChromiumHttpStack();
+
         // if the contentLength is already larger than CACHE_MAX_SIZE, skip it
         if (headers.getContentLength() > CACHE_MAX_SIZE) return null;
 
@@ -709,8 +819,7 @@ public final class CacheManager {
         CacheResult ret = new CacheResult();
         ret.httpStatusCode = statusCode;
 
-        String location = headers.getLocation();
-        if (location != null) ret.location = location;
+        ret.location = headers.getLocation();
 
         ret.expires = -1;
         ret.expiresString = headers.getExpires();
@@ -729,15 +838,9 @@ public final class CacheManager {
             }
         }
 
-        String contentDisposition = headers.getContentDisposition();
-        if (contentDisposition != null) {
-            ret.contentdisposition = contentDisposition;
-        }
+        ret.contentdisposition = headers.getContentDisposition();
 
-        String crossDomain = headers.getXPermittedCrossDomainPolicies();
-        if (crossDomain != null) {
-            ret.crossDomain = crossDomain;
-        }
+        ret.crossDomain = headers.getXPermittedCrossDomainPolicies();
 
         // lastModified and etag may be set back to http header. So they can't
         // be empty string.
@@ -747,11 +850,14 @@ public final class CacheManager {
         }
 
         String etag = headers.getEtag();
-        if (etag != null && etag.length() > 0) ret.etag = etag;
+        if (etag != null && etag.length() > 0) {
+            ret.etag = etag;
+        }
 
         String cacheControl = headers.getCacheControl();
         if (cacheControl != null) {
             String[] controls = cacheControl.toLowerCase().split("[ ,;]");
+            boolean noCache = false;
             for (int i = 0; i < controls.length; i++) {
                 if (NO_STORE.equals(controls[i])) {
                     return null;
@@ -762,7 +868,12 @@ public final class CacheManager {
                 // can only be used in CACHE_MODE_CACHE_ONLY case
                 if (NO_CACHE.equals(controls[i])) {
                     ret.expires = 0;
-                } else if (controls[i].startsWith(MAX_AGE)) {
+                    noCache = true;
+                // if cache control = no-cache has been received, ignore max-age
+                // header, according to http spec:
+                // If a request includes the no-cache directive, it SHOULD NOT
+                // include min-fresh, max-stale, or max-age.
+                } else if (controls[i].startsWith(MAX_AGE) && !noCache) {
                     int separator = controls[i].indexOf('=');
                     if (separator < 0) {
                         separator = controls[i].indexOf(':');
@@ -848,4 +959,6 @@ public final class CacheManager {
 
         return ret;
     }
+
+    private static native CacheResult nativeGetCacheResult(String url);
 }

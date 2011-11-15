@@ -39,14 +39,12 @@ page.title=Android 3.0 Platform Highlights
 </style>
 
 
-
-
-
-
 <p>Welcome to Android 3.0!</p>
 
 <p>The Android 3.0 platform introduces many new and exciting features for users and developers. 
-This document provides a glimpse of some of the new features and technologies, as delivered in the Android 3.0 Preview SDK. For more information about the SDK or how to download it, please see the <a href="{@docRoot}sdk/preview/index.html">Preview SDK</a> document.</p>
+This document provides a glimpse of some of the new features and technologies, as delivered in
+Android 3.0. For a more detailed look at new developer APIs, see the <a
+href="{@docRoot}sdk/android-3.0.html">Android 3.0 Platform</a> document.</p>
 
 <ul>
   <li><a href="#UserFeatures">New User Features</a></li>
@@ -112,14 +110,14 @@ This document provides a glimpse of some of the new features and technologies, a
 
 <h3>New connectivity options</h3>
 
-<p>Android 3.0 includes new connectivity features that add versatility and convenience for users. Built-in support for Media/Photo Transfer Protocol lets users instantly sync media files with a USB-connected camera or desktop computer, without needing to mount a USB mass-storage device. Users can also connect full keyboards over either USB or Bluetooth, for a familiar text-input environment. For improved wi-fi connectivity, a new combo scan reduces scan times across bands and filters. New support for Bluetooth tethering means that more types of devices can share the network connection of an Android-powered device.</p>
+<p>Android 3.0 includes new connectivity features that add versatility and convenience for users. Built-in support for Media/Picture Transfer Protocol lets users instantly sync media files with a USB-connected camera or desktop computer, without needing to mount a USB mass-storage device. Users can also connect full keyboards over either USB or Bluetooth, for a familiar text-input environment. For improved wi-fi connectivity, a new combo scan reduces scan times across bands and filters. New support for Bluetooth tethering means that more types of devices can share the network connection of an Android-powered device.</p>
 
 
 <h3>Updated set of standard apps</h3>
 
 <div  style="padding-top:0em;">
 <div style="margin-right:1em;float:right;;padding-top:0em;margin-left:1em;"><a href="images/3.0/browser_full.png" target="_android"><img src="images/3.0/browser.png" alt="" height="200" /></a><br>
-<a href="images/3.0/camera_full.png" target="_android"><img src="images/3.0/camera_full.png" alt="" height="200" /></a></div>
+<a href="images/3.0/camera_full.png" target="_android"><img src="images/3.0/camera.png" alt="" height="200" /></a></div>
 
 <p>The Android 3.0 platform includes an updated set of standard applications that are designed for use on larger screen devices. The sections below highlight some of the new features. </p>
 
@@ -259,8 +257,7 @@ allowscriptaccess="always" allowfullscreen="true" width="278" height="180"></emb
 </object>
 </div>
 
-<p>For more information about the new developer APIs, see the Android 3.0 Platform notes in the SDK Preview documentation, available by download through the Android SDK Manager.</p>
+<p>For more information about the new developer APIs, see the <a
+href="{@docRoot}sdk/android-3.0.html">Android 3.0 Platform</a> document.</p>
 
 <p>For a video overview of platform features, see the Android 3.0 Sneak Peek. </p>
-
-

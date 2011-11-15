@@ -65,6 +65,7 @@ public:
     bool reachedEOS(status_t *finalStatus);
 
 private:
+    friend class VideoEditorAudioPlayer;
     sp<MediaSource> mSource;
     AudioTrack *mAudioTrack;
 
@@ -106,6 +107,8 @@ private:
     int64_t getRealTimeUsLocked() const;
 
     void reset();
+
+    uint32_t getNumFramesPendingPlayout() const;
 
     AudioPlayer(const AudioPlayer &);
     AudioPlayer &operator=(const AudioPlayer &);

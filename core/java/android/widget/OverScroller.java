@@ -19,6 +19,7 @@ package android.widget;
 import android.content.Context;
 import android.hardware.SensorManager;
 import android.util.FloatMath;
+import android.util.Log;
 import android.view.ViewConfiguration;
 import android.view.animation.AnimationUtils;
 import android.view.animation.Interpolator;
@@ -31,17 +32,19 @@ import android.view.animation.Interpolator;
 public class OverScroller {
     private int mMode;
 
-    private MagneticOverScroller mScrollerX;
-    private MagneticOverScroller mScrollerY;
+    private final SplineOverScroller mScrollerX;
+    private final SplineOverScroller mScrollerY;
 
     private final Interpolator mInterpolator;
+
+    private final boolean mFlywheel;
 
     private static final int DEFAULT_DURATION = 250;
     private static final int SCROLL_MODE = 0;
     private static final int FLING_MODE = 1;
 
     /**
-     * Creates an OverScroller with a viscous fluid scroll interpolator.
+     * Creates an OverScroller with a viscous fluid scroll interpolator and flywheel.
      * @param context
      */
     public OverScroller(Context context) {
@@ -49,14 +52,47 @@ public class OverScroller {
     }
 
     /**
-     * Creates an OverScroller with default edge bounce coefficients.
+     * Creates an OverScroller with flywheel enabled.
      * @param context The context of this application.
      * @param interpolator The scroll interpolator. If null, a default (viscous) interpolator will
      * be used.
      */
     public OverScroller(Context context, Interpolator interpolator) {
-        this(context, interpolator, MagneticOverScroller.DEFAULT_BOUNCE_COEFFICIENT,
-                MagneticOverScroller.DEFAULT_BOUNCE_COEFFICIENT);
+        this(context, interpolator, true);
+    }
+
+    /**
+     * Creates an OverScroller.
+     * @param context The context of this application.
+     * @param interpolator The scroll interpolator. If null, a default (viscous) interpolator will
+     * be used.
+     * @param flywheel If true, successive fling motions will keep on increasing scroll speed.
+     * @hide
+     */
+    public OverScroller(Context context, Interpolator interpolator, boolean flywheel) {
+        mInterpolator = interpolator;
+        mFlywheel = flywheel;
+        mScrollerX = new SplineOverScroller();
+        mScrollerY = new SplineOverScroller();
+
+        SplineOverScroller.initFromContext(context);
+    }
+
+    /**
+     * Creates an OverScroller with flywheel enabled.
+     * @param context The context of this application.
+     * @param interpolator The scroll interpolator. If null, a default (viscous) interpolator will
+     * be used.
+     * @param bounceCoefficientX A value between 0 and 1 that will determine the proportion of the
+     * velocity which is preserved in the bounce when the horizontal edge is reached. A null value
+     * means no bounce. This behavior is no longer supported and this coefficient has no effect.
+     * @param bounceCoefficientY Same as bounceCoefficientX but for the vertical direction. This
+     * behavior is no longer supported and this coefficient has no effect.
+     * !deprecated Use {!link #OverScroller(Context, Interpolator, boolean)} instead.
+     */
+    public OverScroller(Context context, Interpolator interpolator,
+            float bounceCoefficientX, float bounceCoefficientY) {
+        this(context, interpolator, true);
     }
 
     /**
@@ -66,18 +102,27 @@ public class OverScroller {
      * be used.
      * @param bounceCoefficientX A value between 0 and 1 that will determine the proportion of the
      * velocity which is preserved in the bounce when the horizontal edge is reached. A null value
-     * means no bounce.
-     * @param bounceCoefficientY Same as bounceCoefficientX but for the vertical direction.
+     * means no bounce. This behavior is no longer supported and this coefficient has no effect.
+     * @param bounceCoefficientY Same as bounceCoefficientX but for the vertical direction. This
+     * behavior is no longer supported and this coefficient has no effect.
+     * @param flywheel If true, successive fling motions will keep on increasing scroll speed.
+     * !deprecated Use {!link OverScroller(Context, Interpolator, boolean)} instead.
      */
     public OverScroller(Context context, Interpolator interpolator,
-            float bounceCoefficientX, float bounceCoefficientY) {
-        mInterpolator = interpolator;
-        mScrollerX = new MagneticOverScroller();
-        mScrollerY = new MagneticOverScroller();
-        MagneticOverScroller.initializeFromContext(context);
+            float bounceCoefficientX, float bounceCoefficientY, boolean flywheel) {
+        this(context, interpolator, flywheel);
+    }
 
-        mScrollerX.setBounceCoefficient(bounceCoefficientX);
-        mScrollerY.setBounceCoefficient(bounceCoefficientY);
+    /**
+     * The amount of friction applied to flings. The default value
+     * is {@link ViewConfiguration#getScrollFriction}.
+     *
+     * @param friction A scalar dimension-less value representing the coefficient of
+     *         friction.
+     */
+    public final void setFriction(float friction) {
+        mScrollerX.setFriction(friction);
+        mScrollerY.setFriction(friction);
     }
 
     /**
@@ -121,8 +166,7 @@ public class OverScroller {
     }
 
     /**
-     * @hide
-     * Returns the current velocity.
+     * Returns the absolute value of the current velocity.
      *
      * @return The original velocity less the deceleration, norm of the X and Y velocity vector.
      */
@@ -177,6 +221,7 @@ public class OverScroller {
      * @deprecated OverScrollers don't necessarily have a fixed duration.
      *             This function will lie to the best of its ability.
      */
+    @Deprecated
     public final int getDuration() {
         return Math.max(mScrollerX.mDuration, mScrollerY.mDuration);
     }
@@ -195,6 +240,7 @@ public class OverScroller {
      *             the duration of an existing scroll, use startScroll
      *             to begin a new animation.
      */
+    @Deprecated
     public void extendDuration(int extend) {
         mScrollerX.extendDuration(extend);
         mScrollerY.extendDuration(extend);
@@ -213,6 +259,7 @@ public class OverScroller {
      *             the duration of an existing scroll, use startScroll
      *             to begin a new animation.
      */
+    @Deprecated
     public void setFinalX(int newX) {
         mScrollerX.setFinalPosition(newX);
     }
@@ -230,6 +277,7 @@ public class OverScroller {
      *             the duration of an existing scroll, use startScroll
      *             to begin a new animation.
      */
+    @Deprecated
     public void setFinalY(int newY) {
         mScrollerY.setFinalPosition(newY);
     }
@@ -254,10 +302,11 @@ public class OverScroller {
                 if (elapsedTime < duration) {
                     float q = (float) (elapsedTime) / duration;
 
-                    if (mInterpolator == null)
+                    if (mInterpolator == null) {
                         q = Scroller.viscousFluid(q);
-                    else
+                    } else {
                         q = mInterpolator.getInterpolation(q);
+                    }
 
                     mScrollerX.updateScroll(q);
                     mScrollerY.updateScroll(q);
@@ -381,6 +430,17 @@ public class OverScroller {
      */
     public void fling(int startX, int startY, int velocityX, int velocityY,
             int minX, int maxX, int minY, int maxY, int overX, int overY) {
+        // Continue a scroll or fling in progress
+        if (mFlywheel && !isFinished()) {
+            float oldVelocityX = mScrollerX.mCurrVelocity;
+            float oldVelocityY = mScrollerY.mCurrVelocity;
+            if (Math.signum(velocityX) == Math.signum(oldVelocityX) &&
+                    Math.signum(velocityY) == Math.signum(oldVelocityY)) {
+                velocityX += oldVelocityX;
+                velocityY += oldVelocityY;
+            }
+        }
+
         mMode = FLING_MODE;
         mScrollerX.fling(startX, velocityX, minX, maxX, overX);
         mScrollerY.fling(startY, velocityY, minY, maxY, overY);
@@ -414,7 +474,7 @@ public class OverScroller {
      * @param startY Starting/current Y position
      * @param finalY Desired final Y position
      * @param overY Magnitude of overscroll allowed. This should be the maximum
-     *              desired distance from finalY.
+     *              desired distance from finalY. Absolute value - must be positive.
      */
     public void notifyVerticalEdgeReached(int startY, int finalY, int overY) {
         mScrollerY.notifyEdgeReached(startY, finalY, overY);
@@ -435,9 +495,9 @@ public class OverScroller {
      */
     public boolean isOverScrolled() {
         return ((!mScrollerX.mFinished &&
-                mScrollerX.mState != MagneticOverScroller.TO_EDGE) ||
+                mScrollerX.mState != SplineOverScroller.SPLINE) ||
                 (!mScrollerY.mFinished &&
-                        mScrollerY.mState != MagneticOverScroller.TO_EDGE));
+                        mScrollerY.mState != SplineOverScroller.SPLINE));
     }
 
     /**
@@ -465,72 +525,126 @@ public class OverScroller {
         return (int) (time - startTime);
     }
 
-    static class MagneticOverScroller {
+    /**
+     * @hide
+     */
+    public boolean isScrollingInDirection(float xvel, float yvel) {
+        final int dx = mScrollerX.mFinal - mScrollerX.mStart;
+        final int dy = mScrollerY.mFinal - mScrollerY.mStart;
+        return !isFinished() && Math.signum(xvel) == Math.signum(dx) &&
+                Math.signum(yvel) == Math.signum(dy);
+    }
+
+    static class SplineOverScroller {
         // Initial position
-        int mStart;
+        private int mStart;
 
         // Current position
-        int mCurrentPosition;
+        private int mCurrentPosition;
 
         // Final position
-        int mFinal;
+        private int mFinal;
 
         // Initial velocity
-        int mVelocity;
+        private int mVelocity;
 
         // Current velocity
-        float mCurrVelocity;
+        private float mCurrVelocity;
 
         // Constant current deceleration
-        float mDeceleration;
+        private float mDeceleration;
 
         // Animation starting time, in system milliseconds
-        long mStartTime;
+        private long mStartTime;
 
         // Animation duration, in milliseconds
-        int mDuration;
+        private int mDuration;
+
+        // Duration to complete spline component of animation
+        private int mSplineDuration;
+
+        // Distance to travel along spline animation
+        private int mSplineDistance;
 
         // Whether the animation is currently in progress
-        boolean mFinished;
-
-        // Constant gravity value, used to scale deceleration
-        static float GRAVITY;
-
-        static void initializeFromContext(Context context) {
-            final float ppi = context.getResources().getDisplayMetrics().density * 160.0f;
-            GRAVITY = SensorManager.GRAVITY_EARTH // g (m/s^2)
-                    * 39.37f // inch/meter
-                    * ppi // pixels per inch
-                    * ViewConfiguration.getScrollFriction();
-        }
-
-        private static final int TO_EDGE = 0;
-        private static final int TO_BOUNDARY = 1;
-        private static final int TO_BOUNCE = 2;
-
-        private int mState = TO_EDGE;
+        private boolean mFinished;
 
         // The allowed overshot distance before boundary is reached.
         private int mOver;
 
-        // Duration in milliseconds to go back from edge to edge. Springback is half of it.
-        private static final int OVERSCROLL_SPRINGBACK_DURATION = 200;
+        // Fling friction
+        private float mFlingFriction = ViewConfiguration.getScrollFriction();
 
-        // Oscillation period
-        private static final float TIME_COEF =
-            1000.0f * (float) Math.PI / OVERSCROLL_SPRINGBACK_DURATION;
+        // Current state of the animation.
+        private int mState = SPLINE;
 
-        // If the velocity is smaller than this value, no bounce is triggered
-        // when the edge limits are reached (would result in a zero pixels
-        // displacement anyway).
-        private static final float MINIMUM_VELOCITY_FOR_BOUNCE = Float.MAX_VALUE;//140.0f;
+        // Constant gravity value, used in the deceleration phase.
+        private static final float GRAVITY = 2000.0f;
 
-        // Proportion of the velocity that is preserved when the edge is reached.
-        private static final float DEFAULT_BOUNCE_COEFFICIENT = 0.16f;
+        // A device specific coefficient adjusted to physical values.
+        private static float PHYSICAL_COEF;
 
-        private float mBounceCoefficient = DEFAULT_BOUNCE_COEFFICIENT;
+        private static float DECELERATION_RATE = (float) (Math.log(0.78) / Math.log(0.9));
+        private static final float INFLEXION = 0.35f; // Tension lines cross at (INFLEXION, 1)
+        private static final float START_TENSION = 0.5f;
+        private static final float END_TENSION = 1.0f;
+        private static final float P1 = START_TENSION * INFLEXION;
+        private static final float P2 = 1.0f - END_TENSION * (1.0f - INFLEXION);
 
-        MagneticOverScroller() {
+        private static final int NB_SAMPLES = 100;
+        private static final float[] SPLINE_POSITION = new float[NB_SAMPLES + 1];
+        private static final float[] SPLINE_TIME = new float[NB_SAMPLES + 1];
+
+        private static final int SPLINE = 0;
+        private static final int CUBIC = 1;
+        private static final int BALLISTIC = 2;
+
+        static {
+            float x_min = 0.0f;
+            float y_min = 0.0f;
+            for (int i = 0; i < NB_SAMPLES; i++) {
+                final float alpha = (float) i / NB_SAMPLES;
+
+                float x_max = 1.0f;
+                float x, tx, coef;
+                while (true) {
+                    x = x_min + (x_max - x_min) / 2.0f;
+                    coef = 3.0f * x * (1.0f - x);
+                    tx = coef * ((1.0f - x) * P1 + x * P2) + x * x * x;
+                    if (Math.abs(tx - alpha) < 1E-5) break;
+                    if (tx > alpha) x_max = x;
+                    else x_min = x;
+                }
+                SPLINE_POSITION[i] = coef * ((1.0f - x) * START_TENSION + x) + x * x * x;
+
+                float y_max = 1.0f;
+                float y, dy;
+                while (true) {
+                    y = y_min + (y_max - y_min) / 2.0f;
+                    coef = 3.0f * y * (1.0f - y);
+                    dy = coef * ((1.0f - y) * START_TENSION + y) + y * y * y;
+                    if (Math.abs(dy - alpha) < 1E-5) break;
+                    if (dy > alpha) y_max = y;
+                    else y_min = y;
+                }
+                SPLINE_TIME[i] = coef * ((1.0f - y) * P1 + y * P2) + y * y * y;
+            }
+            SPLINE_POSITION[NB_SAMPLES] = SPLINE_TIME[NB_SAMPLES] = 1.0f;
+        }
+
+        static void initFromContext(Context context) {
+            final float ppi = context.getResources().getDisplayMetrics().density * 160.0f;
+            PHYSICAL_COEF = SensorManager.GRAVITY_EARTH // g (m/s^2)
+                    * 39.37f // inch/meter
+                    * ppi
+                    * 0.84f; // look and feel tuning
+        }
+
+        void setFriction(float friction) {
+            mFlingFriction = friction;
+        }
+
+        SplineOverScroller() {
             mFinished = true;
         }
 
@@ -541,27 +655,27 @@ public class OverScroller {
         /*
          * Get a signed deceleration that will reduce the velocity.
          */
-        static float getDeceleration(int velocity) {
+        static private float getDeceleration(int velocity) {
             return velocity > 0 ? -GRAVITY : GRAVITY;
         }
 
         /*
-         * Returns the time (in milliseconds) it will take to go from start to end.
+         * Modifies mDuration to the duration it takes to get from start to newFinal using the
+         * spline interpolation. The previous duration was needed to get to oldFinal.
          */
-        static int computeDuration(int start, int end, float initialVelocity, float deceleration) {
-            final int distance = start - end;
-            final float discriminant = initialVelocity * initialVelocity - 2.0f * deceleration
-                    * distance;
-            if (discriminant >= 0.0f) {
-                float delta = (float) Math.sqrt(discriminant);
-                if (deceleration < 0.0f) {
-                    delta = -delta;
-                }
-                return (int) (1000.0f * (-initialVelocity - delta) / deceleration);
+        private void adjustDuration(int start, int oldFinal, int newFinal) {
+            final int oldDistance = oldFinal - start;
+            final int newDistance = newFinal - start;
+            final float x = Math.abs((float) newDistance / oldDistance);
+            final int index = (int) (NB_SAMPLES * x);
+            if (index < NB_SAMPLES) {
+                final float x_inf = (float) index / NB_SAMPLES;
+                final float x_sup = (float) (index + 1) / NB_SAMPLES;
+                final float t_inf = SPLINE_TIME[index];
+                final float t_sup = SPLINE_TIME[index + 1];
+                final float timeCoef = t_inf + (x - x_inf) / (x_sup - x_inf) * (t_sup - t_inf);
+                mDuration *= timeCoef;
             }
-
-            // End position can not be reached
-            return 0;
         }
 
         void startScroll(int start, int distance, int duration) {
@@ -578,49 +692,10 @@ public class OverScroller {
             mVelocity = 0;
         }
 
-        void fling(int start, int velocity, int min, int max) {
-            mFinished = false;
-
-            mStart = start;
-            mStartTime = AnimationUtils.currentAnimationTimeMillis();
-
-            mVelocity = velocity;
-
-            mDeceleration = getDeceleration(velocity);
-
-            // A start from an invalid position immediately brings back to a valid position
-            if (mStart < min) {
-                mDuration = 0;
-                mFinal = min;
-                return;
-            }
-
-            if (mStart > max) {
-                mDuration = 0;
-                mFinal = max;
-                return;
-            }
-
-            // Duration are expressed in milliseconds
-            mDuration = (int) (-1000.0f * velocity / mDeceleration);
-
-            mFinal = start - Math.round((velocity * velocity) / (2.0f * mDeceleration));
-
-            // Clamp to a valid final position
-            if (mFinal < min) {
-                mFinal = min;
-                mDuration = computeDuration(mStart, min, mVelocity, mDeceleration);
-            }
-
-            if (mFinal > max) {
-                mFinal = max;
-                mDuration = computeDuration(mStart, max, mVelocity, mDeceleration);
-            }
-        }
-
         void finish() {
             mCurrentPosition = mFinal;
             // Not reset since WebView relies on this value for fast fling.
+            // TODO: restore when WebView uses the fast fling implemented in this class.
             // mCurrVelocity = 0.0f;
             mFinished = true;
         }
@@ -637,162 +712,170 @@ public class OverScroller {
             mFinished = false;
         }
 
-        void setBounceCoefficient(float coefficient) {
-            mBounceCoefficient = coefficient;
-        }
-
         boolean springback(int start, int min, int max) {
             mFinished = true;
 
-            mStart = start;
+            mStart = mFinal = start;
             mVelocity = 0;
 
             mStartTime = AnimationUtils.currentAnimationTimeMillis();
             mDuration = 0;
 
             if (start < min) {
-                startSpringback(start, min, false);
+                startSpringback(start, min, 0);
             } else if (start > max) {
-                startSpringback(start, max, true);
+                startSpringback(start, max, 0);
             }
 
             return !mFinished;
         }
 
-        private void startSpringback(int start, int end, boolean positive) {
+        private void startSpringback(int start, int end, int velocity) {
+            // mStartTime has been set
             mFinished = false;
-            mState = TO_BOUNCE;
-            mStart = mFinal = end;
-            mDuration = OVERSCROLL_SPRINGBACK_DURATION;
-            mStartTime -= OVERSCROLL_SPRINGBACK_DURATION / 2;
-            mVelocity = (int) (Math.abs(end - start) * TIME_COEF * (positive ? 1.0 : -1.0f));
+            mState = CUBIC;
+            mStart = start;
+            mFinal = end;
+            final int delta = start - end;
+            mDeceleration = getDeceleration(delta);
+            // TODO take velocity into account
+            mVelocity = -delta; // only sign is used
+            mOver = Math.abs(delta);
+            mDuration = (int) (1000.0 * Math.sqrt(-2.0 * delta / mDeceleration));
         }
 
         void fling(int start, int velocity, int min, int max, int over) {
-            mState = TO_EDGE;
             mOver = over;
-
             mFinished = false;
-
-            mStart = start;
+            mCurrVelocity = mVelocity = velocity;
+            mDuration = mSplineDuration = 0;
             mStartTime = AnimationUtils.currentAnimationTimeMillis();
+            mCurrentPosition = mStart = start;
 
-            mVelocity = velocity;
+            if (start > max || start < min) {
+                startAfterEdge(start, min, max, velocity);
+                return;
+            }
 
-            mDeceleration = getDeceleration(velocity);
+            mState = SPLINE;
+            double totalDistance = 0.0;
 
-            // Duration are expressed in milliseconds
-            mDuration = (int) (-1000.0f * velocity / mDeceleration);
+            if (velocity != 0) {
+                mDuration = mSplineDuration = getSplineFlingDuration(velocity);
+                totalDistance = getSplineFlingDistance(velocity);
+            }
 
-            mFinal = start - Math.round((velocity * velocity) / (2.0f * mDeceleration));
+            mSplineDistance = (int) (totalDistance * Math.signum(velocity));
+            mFinal = start + mSplineDistance;
 
             // Clamp to a valid final position
             if (mFinal < min) {
+                adjustDuration(mStart, mFinal, min);
                 mFinal = min;
-                mDuration = computeDuration(mStart, min, mVelocity, mDeceleration);
             }
 
             if (mFinal > max) {
+                adjustDuration(mStart, mFinal, max);
                 mFinal = max;
-                mDuration = computeDuration(mStart, max, mVelocity, mDeceleration);
             }
+        }
 
-            if (start > max) {
-                if (start >= max + over) {
-                    springback(max + over, min, max);
-                } else {
-                    if (velocity <= 0) {
-                        springback(start, min, max);
-                    } else {
-                        long time = AnimationUtils.currentAnimationTimeMillis();
-                        final double durationSinceEdge =
-                            Math.atan((start-max) * TIME_COEF / velocity) / TIME_COEF;
-                        mStartTime = (int) (time - 1000.0f * durationSinceEdge);
+        private double getSplineDeceleration(int velocity) {
+            return Math.log(INFLEXION * Math.abs(velocity) / (mFlingFriction * PHYSICAL_COEF));
+        }
 
-                        // Simulate a bounce that started from edge
-                        mStart = max;
+        private double getSplineFlingDistance(int velocity) {
+            final double l = getSplineDeceleration(velocity);
+            final double decelMinusOne = DECELERATION_RATE - 1.0;
+            return mFlingFriction * PHYSICAL_COEF * Math.exp(DECELERATION_RATE / decelMinusOne * l);
+        }
 
-                        mVelocity = (int) (velocity / Math.cos(durationSinceEdge * TIME_COEF));
+        /* Returns the duration, expressed in milliseconds */
+        private int getSplineFlingDuration(int velocity) {
+            final double l = getSplineDeceleration(velocity);
+            final double decelMinusOne = DECELERATION_RATE - 1.0;
+            return (int) (1000.0 * Math.exp(l / decelMinusOne));
+        }
 
-                        onEdgeReached();
-                    }
-                }
+        private void fitOnBounceCurve(int start, int end, int velocity) {
+            // Simulate a bounce that started from edge
+            final float durationToApex = - velocity / mDeceleration;
+            final float distanceToApex = velocity * velocity / 2.0f / Math.abs(mDeceleration);
+            final float distanceToEdge = Math.abs(end - start);
+            final float totalDuration = (float) Math.sqrt(
+                    2.0 * (distanceToApex + distanceToEdge) / Math.abs(mDeceleration));
+            mStartTime -= (int) (1000.0f * (totalDuration - durationToApex));
+            mStart = end;
+            mVelocity = (int) (- mDeceleration * totalDuration);
+        }
+
+        private void startBounceAfterEdge(int start, int end, int velocity) {
+            mDeceleration = getDeceleration(velocity == 0 ? start - end : velocity);
+            fitOnBounceCurve(start, end, velocity);
+            onEdgeReached();
+        }
+
+        private void startAfterEdge(int start, int min, int max, int velocity) {
+            if (start > min && start < max) {
+                Log.e("OverScroller", "startAfterEdge called from a valid position");
+                mFinished = true;
+                return;
+            }
+            final boolean positive = start > max;
+            final int edge = positive ? max : min;
+            final int overDistance = start - edge;
+            boolean keepIncreasing = overDistance * velocity >= 0;
+            if (keepIncreasing) {
+                // Will result in a bounce or a to_boundary depending on velocity.
+                startBounceAfterEdge(start, edge, velocity);
             } else {
-                if (start < min) {
-                    if (start <= min - over) {
-                        springback(min - over, min, max);
-                    } else {
-                        if (velocity >= 0) {
-                            springback(start, min, max);
-                        } else {
-                            long time = AnimationUtils.currentAnimationTimeMillis();
-                            final double durationSinceEdge =
-                                Math.atan((start-min) * TIME_COEF / velocity) / TIME_COEF;
-                            mStartTime = (int) (time - 1000.0f * durationSinceEdge);
-
-                            // Simulate a bounce that started from edge
-                            mStart = min;
-
-                            mVelocity = (int) (velocity / Math.cos(durationSinceEdge * TIME_COEF));
-
-                            onEdgeReached();
-                        }
-
-                    }
+                final double totalDistance = getSplineFlingDistance(velocity);
+                if (totalDistance > Math.abs(overDistance)) {
+                    fling(start, velocity, positive ? min : start, positive ? start : max, mOver);
+                } else {
+                    startSpringback(start, edge, velocity);
                 }
             }
         }
 
         void notifyEdgeReached(int start, int end, int over) {
-            mDeceleration = getDeceleration(mVelocity);
-
-            // Local time, used to compute edge crossing time.
-            float timeCurrent = mCurrVelocity / mDeceleration;
-            final int distance = end - start;
-            float timeEdge = -(float) Math.sqrt((2.0f * distance / mDeceleration)
-                    + (timeCurrent * timeCurrent));
-
-            mVelocity = (int) (mDeceleration * timeEdge);
-
-            // Simulate a symmetric bounce that started from edge
-            mStart = end;
-
-            mOver = over;
-
-            long time = AnimationUtils.currentAnimationTimeMillis();
-            mStartTime = (int) (time - 1000.0f * (timeCurrent - timeEdge));
-
-            onEdgeReached();
+            // mState is used to detect successive notifications 
+            if (mState == SPLINE) {
+                mOver = over;
+                mStartTime = AnimationUtils.currentAnimationTimeMillis();
+                // We were in fling/scroll mode before: current velocity is such that distance to
+                // edge is increasing. This ensures that startAfterEdge will not start a new fling.
+                startAfterEdge(start, end, end, (int) mCurrVelocity);
+            }
         }
 
         private void onEdgeReached() {
             // mStart, mVelocity and mStartTime were adjusted to their values when edge was reached.
-            final float distance = mVelocity / TIME_COEF;
+            float distance = mVelocity * mVelocity / (2.0f * Math.abs(mDeceleration));
+            final float sign = Math.signum(mVelocity);
 
-            if (Math.abs(distance) < mOver) {
-                // Spring force will bring us back to final position
-                mState = TO_BOUNCE;
-                mFinal = mStart;
-                mDuration = OVERSCROLL_SPRINGBACK_DURATION;
-            } else {
-                // Velocity is too high, we will hit the boundary limit
-                mState = TO_BOUNDARY;
-                int over = mVelocity > 0 ? mOver : -mOver;
-                mFinal = mStart + over;
-                mDuration = (int) (1000.0f * Math.asin(over / distance) / TIME_COEF);
+            if (distance > mOver) {
+                // Default deceleration is not sufficient to slow us down before boundary
+                 mDeceleration = - sign * mVelocity * mVelocity / (2.0f * mOver);
+                 distance = mOver;
             }
+
+            mOver = (int) distance;
+            mState = BALLISTIC;
+            mFinal = mStart + (int) (mVelocity > 0 ? distance : -distance);
+            mDuration = - (int) (1000.0f * mVelocity / mDeceleration);
         }
 
         boolean continueWhenFinished() {
             switch (mState) {
-                case TO_EDGE:
+                case SPLINE:
                     // Duration from start to null velocity
-                    int duration = (int) (-1000.0f * mVelocity / mDeceleration);
-                    if (mDuration < duration) {
+                    if (mDuration < mSplineDuration) {
                         // If the animation was clamped, we reached the edge
                         mStart = mFinal;
-                        // Speed when edge was reached
-                        mVelocity = (int) (mVelocity + mDeceleration * mDuration / 1000.0f);
+                        // TODO Better compute speed when edge was reached
+                        mVelocity = (int) mCurrVelocity;
+                        mDeceleration = getDeceleration(mVelocity);
                         mStartTime += mDuration;
                         onEdgeReached();
                     } else {
@@ -800,18 +883,12 @@ public class OverScroller {
                         return false;
                     }
                     break;
-                case TO_BOUNDARY:
+                case BALLISTIC:
                     mStartTime += mDuration;
-                    startSpringback(mFinal, mFinal - (mVelocity > 0 ? mOver:-mOver), mVelocity > 0);
+                    startSpringback(mFinal, mStart, 0);
                     break;
-                case TO_BOUNCE:
-                    //mVelocity = (int) (mVelocity * BOUNCE_COEFFICIENT);
-                    mVelocity = (int) (mVelocity * mBounceCoefficient);
-                    if (Math.abs(mVelocity) < MINIMUM_VELOCITY_FOR_BOUNCE) {
-                        return false;
-                    }
-                    mStartTime += mDuration;
-                    break;
+                case CUBIC:
+                    return false;
             }
 
             update();
@@ -825,24 +902,52 @@ public class OverScroller {
          */
         boolean update() {
             final long time = AnimationUtils.currentAnimationTimeMillis();
-            final long duration = time - mStartTime;
+            final long currentTime = time - mStartTime;
 
-            if (duration > mDuration) {
+            if (currentTime > mDuration) {
                 return false;
             }
 
-            double distance;
-            final float t = duration / 1000.0f;
-            if (mState == TO_EDGE) {
-                mCurrVelocity = mVelocity + mDeceleration * t;
-                distance = mVelocity * t + mDeceleration * t * t / 2.0f;
-            } else {
-                final float d = t * TIME_COEF;
-                mCurrVelocity = mVelocity * (float)Math.cos(d);
-                distance = mVelocity / TIME_COEF * Math.sin(d);
+            double distance = 0.0;
+            switch (mState) {
+                case SPLINE: {
+                    final float t = (float) currentTime / mSplineDuration;
+                    final int index = (int) (NB_SAMPLES * t);
+                    float distanceCoef = 1.f;
+                    float velocityCoef = 0.f;
+                    if (index < NB_SAMPLES) {
+                        final float t_inf = (float) index / NB_SAMPLES;
+                        final float t_sup = (float) (index + 1) / NB_SAMPLES;
+                        final float d_inf = SPLINE_POSITION[index];
+                        final float d_sup = SPLINE_POSITION[index + 1];
+                        velocityCoef = (d_sup - d_inf) / (t_sup - t_inf);
+                        distanceCoef = d_inf + (t - t_inf) * velocityCoef;
+                    }
+
+                    distance = distanceCoef * mSplineDistance;
+                    mCurrVelocity = velocityCoef * mSplineDistance / mSplineDuration * 1000.0f;
+                    break;
+                }
+
+                case BALLISTIC: {
+                    final float t = currentTime / 1000.0f;
+                    mCurrVelocity = mVelocity + mDeceleration * t;
+                    distance = mVelocity * t + mDeceleration * t * t / 2.0f;
+                    break;
+                }
+
+                case CUBIC: {
+                    final float t = (float) (currentTime) / mDuration;
+                    final float t2 = t * t;
+                    final float sign = Math.signum(mVelocity);
+                    distance = sign * mOver * (3.0f * t2 - 2.0f * t * t2); 
+                    mCurrVelocity = sign * mOver * 6.0f * (- t + t2); 
+                    break;
+                }
             }
 
-            mCurrentPosition = mStart + (int) distance;
+            mCurrentPosition = mStart + (int) Math.round(distance);
+
             return true;
         }
     }

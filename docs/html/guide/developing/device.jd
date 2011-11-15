@@ -1,4 +1,4 @@
-page.title=Developing on a Device
+page.title=Using Hardware Devices
 @jd:body
 
 <div id="qv-wrapper">
@@ -15,10 +15,6 @@ page.title=Developing on a Device
   <ol>
     <li><a href="{@docRoot}sdk/win-usb.html">Google USB Driver</a></li>
     <li><a href="{@docRoot}sdk/oem-usb.html">OEM USB Drivers</a></li>
-    <li><a
-href="{@docRoot}guide/developing/eclipse-adt.html">Developing in Eclipse, with ADT</a></li>
-    <li><a
-href="{@docRoot}guide/developing/other-ide.html">Developing in other IDEs</a></li>
   </ol>
 </div>
 </div>
@@ -30,25 +26,18 @@ environment and Android-powered device for testing and debugging on the device.<
 <p>You can use any Android-powered device as an environment for running,
 debugging, and testing your applications. The tools included in the SDK make it easy to install and
 run your application on the device each time you compile. You can install your application on the
-device <a
-href="{@docRoot}guide/developing/eclipse-adt.html#RunningOnDevice">directly from
-Eclipse</a> or <a href="{@docRoot}guide/developing/other-ide.html#RunningOnDevice">from the
-command line</a>. If
+device directly from Eclipse or from the command line with ADB. If
 you don't yet have a device, check with the service providers in your area to determine which
 Android-powered devices are available.</p>
 
-<p>If you want a SIM-unlocked phone, then you might consider either an Android Dev Phone or the
-Google Nexus S. These are SIM-unlocked so that you can use them on any GSM network using a SIM
-card. The Android Dev Phones also feature an unlocked bootloader so you can install custom system
-images (great for developing and installing custom versions of the Android platform). To find a
-a place you can purchase the Nexus S, visit <a
-href="http://www.google.com/phone/detail/nexus-s">google.com/phone</a>. To purchase an Android
-Dev Phone, see the <a href="http://market.android.com/publish">Android Market</a> site
-(requires a developer account).</p>
+<p>If you want a SIM-unlocked phone, then you might consider the Google Nexus S. To find a place
+to purchase the Nexus S and other Android-powered devices, visit <a
+href="http://www.google.com/phone/detail/nexus-s">google.com/phone</a>.</p>
 
 <p class="note"><strong>Note:</strong> When developing on a device, keep in mind that you should
 still use the <a
-href="{@docRoot}guide/developing/tools/emulator.html">Android emulator</a> to test your application
+href="{@docRoot}guide/developing/devices/emulator.html">Android emulator</a> to test your
+application
 on configurations that are not equivalent to those of your real device. Although the emulator
 does not allow you to test every device feature (such as the accelerometer), it does
 allow you to verify that your application functions properly on different versions of the Android
@@ -63,14 +52,25 @@ would on the emulator. Before you can start, there are just a few things to do:<
 <ol>
   <li>Declare your application as "debuggable" in your Android Manifest.
     <p>In Eclipse, you can do this from the <b>Application</b> tab when viewing the Manifest
-    (on the right side, set <b>Debuggable</b> to <em>true</em>). Otherwise, in the <code>AndroidManifest.xml</code>
-    file, add <code>android:debuggable="true"</code> to the <code>&lt;application></code> element.</p>
+    (on the right side, set <b>Debuggable</b> to <em>true</em>). Otherwise, in the
+<code>AndroidManifest.xml</code>
+    file, add <code>android:debuggable="true"</code> to the <code>&lt;application></code>
+element.</p>
+  </li>
+  <li>Set up your device to allow installation of non-Market applications. <p>On
+the device, go to <strong>Settings > Applications</strong> and enable 
+
+<strong>Unknown sources</strong> (on an Android 4.0 device, the setting is
+located in <strong>Settings > Security</strong>).</p>
+  
   </li>
   <li>Turn on "USB Debugging" on your device.
-    <p>On the device, go to the home screen, press <b>MENU</b>, select <b>Applications</b> > <b>Development</b>,
-    then enable <b>USB debugging</b>.</p>
+    <p>On the device, go to <strong>Settings > Applications > Development</strong> 
+    and enable <strong>USB debugging</strong> 
+    (on an Android 4.0 device, the setting is 
+located in <strong>Settings > Developer options</strong>).</p>
   </li>
-  <li>Setup your system to detect your device.
+  <li>Set up your system to detect your device.
     <ul>
       <li>If you're developing on Windows, you need to install a USB driver
       for adb. If you're using an Android Developer Phone (ADP), Nexus One, or Nexus S,
@@ -78,27 +78,37 @@ would on the emulator. Before you can start, there are just a few things to do:<
       Driver</a>. Otherwise, you can find a link to the appropriate OEM driver in the
   <a href="{@docRoot}sdk/oem-usb.html">OEM USB Drivers</a> document.</li>
       <li>If you're developing on Mac OS X, it just works. Skip this step.</li>
-      <li>If you're developing on Ubuntu Linux, you need to add a rules file
-that contains a USB configuration for each type of device you want to use for
-development. Each device manufacturer uses a different vendor ID. The
-example rules files below show how to add an entry for a single vendor ID
-(the HTC vendor ID). In order to support more devices, you will need additional
-lines of the same format that provide a different value for the
-<code>SYSFS{idVendor}</code> property. For other IDs, see the table of <a
-href="#VendorIds">USB Vendor IDs</a>, below.
-        <ol>
-          <li>Log in as root and create this file:
-            <code>/etc/udev/rules.d/51-android.rules</code>.
-            <p>For Gusty/Hardy, edit the file to read:<br/>
-            <code>SUBSYSTEM=="usb", SYSFS{idVendor}=="0bb4",
-            MODE="0666"</code></p>
+      
+      <li>If you're developing on Ubuntu Linux, you need to add a <a
+href="http://www.kernel.org/pub/linux/utils/kernel/hotplug/udev.html">
+<code>udev</code></a> 
+rules file that contains a USB configuration for each type of device
+you want to use for development. In the rules file, each device manufacturer
+is identified by a unique vendor ID, as specified by the
+<code>ATTR{idVendor}</code> property. For a list of vendor IDs, see  <a
+href="#VendorIds">USB Vendor IDs</a>, below. To set up device detection on
+Ubuntu Linux:
 
-            <p>For Dapper, edit the file to read:<br/>
-            <code>SUBSYSTEM=="usb_device", SYSFS{idVendor}=="0bb4",
-            MODE="0666"</code></p>
+        <ol type="a">
+          <li>Log in as root and create this file:
+            <code>/etc/udev/rules.d/51-android.rules</code></span>.
+            <p>Use this format to add each vendor to the file:<br/>
+              <code>SUBSYSTEM==&quot;usb&quot;, ATTR{idVendor}==&quot;0bb4&quot;, MODE=&quot;0666&quot;, GROUP=&quot;plugdev&quot;</code>
+              <br /><br />
+              
+              In this example, the vendor ID is for HTC. The <code>MODE</code>
+assignment specifies read/write permissions, and <code>GROUP</code> defines
+which Unix group  owns the device node. </p>
+            
+            <p class="note"><strong>Note:</strong> The rule syntax
+may vary slightly depending on your  environment. Consult the <code>udev</code>
+documentation for your system as needed. For an overview of rule syntax, see
+this guide to <a
+href="http://www.reactivated.net/writing_udev_rules.html">writing udev
+rules</a>.</p>
           </li>
           <li>Now execute:<br/>
-              <code>chmod a+r /etc/udev/rules.d/51-android.rules</code>
+            <code>chmod a+r /etc/udev/rules.d/51-android.rules</code>
           </li>
         </ol>
       </li>
@@ -106,70 +116,143 @@ href="#VendorIds">USB Vendor IDs</a>, below.
   </li>
 </ol>
 
-<p>You can verify that your device is connected by executing <code>adb devices</code> from your 
-SDK {@code platform-tools/} directory. If connected, you'll see the device name listed as a
-"device."</p>
+<p>You can verify that your device is connected by executing <code>adb
+devices</code> from your SDK {@code platform-tools/} directory. If connected,
+you'll see the device name listed as a "device."</p>
 
-<p>If using Eclipse, run or debug as usual. You will be presented
-with a <b>Device Chooser</b> dialog that lists the available emulator(s) and connected device(s).
-Select the device upon which you want to install and run the application.</p>
+<p>If using Eclipse, run or debug your application as usual. You will be
+presented with a <b>Device Chooser</b> dialog that lists the available
+emulator(s) and connected device(s). Select the device upon which you want to
+install and run the application.</p>
 
-<p>If using the <a href="{@docRoot}guide/developing/tools/adb.html">Android Debug Bridge</a> (adb),
-you can issue commands with the <code>-d</code> flag to target your
-connected device.</p>
-
+<p>If using the <a href="{@docRoot}guide/developing/tools/adb.html">Android
+Debug Bridge</a> (adb), you can issue commands with the <code>-d</code> flag to
+target your connected device.</p>
 
 <h3 id="VendorIds">USB Vendor IDs</h3>
-<p>This table provides a reference to the vendor IDs needed in order to add
-USB device support on Linux. The USB Vendor ID is the value given to the
-<code>SYSFS{idVendor}</code> property in the rules file, as described in step 3, above.</p>
+
+<p>This table provides a reference to the vendor IDs needed in order to add USB
+device support on Linux. The USB Vendor ID is the value given to the
+<code>ATTR{idVendor}</code> property in the rules file, as described 
+above.</p>
 
 <table>
   <tr>
-    <th>Manufacturer</th><th>USB Vendor ID</th></tr>
+    <th>Company</th><th>USB Vendor ID</th></tr>
   <tr>
     <td>Acer</td>
-    <td><code>0502</code></td></tr>
+    <td><code>0502</code></td>
+  </tr>
+  <tr>
+    <td>ASUS</td>
+    <td><code>0B05</code></td>
+  </tr>
   <tr>
     <td>Dell</td>
-    <td><code>413c</code></td></tr>
+    <td><code>413C</code></td>
+  </tr>
   <tr>
     <td>Foxconn</td>
-    <td><code>0489</code></td></tr>
+    <td><code>0489</code></td>
+  </tr>
   <tr>
     <td>Garmin-Asus</td>
-    <td><code>091E</code></td></tr>
+    <td><code>091E</code></td>
+  </tr>
+  <tr>
+    <td>Google</td>
+    <td><code>18D1</code></td>
+  </tr>
   <tr>
     <td>HTC</td>
-    <td><code>0bb4</code></td></tr>
+    <td><code>0BB4</code></td>
+  </tr>
   <tr>
     <td>Huawei</td>
-    <td><code>12d1</code></td></tr>
+    <td><code>12D1</code></td>
+  </tr>
+  <tr>
+    <td>K-Touch</td>
+    <td><code>24E3</code></td>
+  </tr>
+  <tr>
+    <td>KT Tech</td>
+    <td><code>2116</code></td>
+  </tr>
   <tr>
     <td>Kyocera</td>
-    <td><code>0482</code></td></tr>
+    <td><code>0482</code></td>
+  </tr>
+  <tr>
+    <td>Lenevo</td>
+    <td><code>17EF</code></td>
+  </tr>
   <tr>
     <td>LG</td>
-    <td><code>1004</code></td></tr>
+    <td><code>1004</code></td>
+  </tr>
   <tr>
     <td>Motorola</td>
-    <td><code>22b8</code></td></tr>
+    <td><code>22B8</code></td>
+  </tr>
+  <tr>
+    <td>NEC</td>
+    <td><code>0409</code></td>
+  </tr>
+  <tr>
+    <td>Nook</td>
+    <td><code>2080</code></td>
+  </tr>
   <tr>
     <td>Nvidia</td>
-    <td><code>0955</code></td></tr>
+    <td><code>0955</code></td>
+  </tr>
+  <tr>
+    <td>OTGV</td>
+    <td><code>2257</code></td>
+  </tr>
   <tr>
     <td>Pantech</td>
-    <td><code>10A9</code></td></tr>
+    <td><code>10A9</code></td>
+  </tr>
+  <tr>
+    <td>Pegatron</td>
+    <td><code>1D4D</code></td>
+  </tr>
+  <tr>
+    <td>Philips</td>
+    <td><code>0471</code></td>
+  </tr>
+  <tr>
+    <td>PMC-Sierra</td>
+    <td><code>04DA</code></td>
+  </tr>
+  <tr>
+    <td>Qualcomm</td>
+    <td><code>05C6</code></td>
+  </tr>
+  <tr>
+    <td>SK Telesys</td>
+    <td><code>1F53</code></td>
+  </tr>
   <tr>
     <td>Samsung</td>
-    <td><code>04e8</code></td></tr>
+    <td><code>04E8</code></td>
+  </tr>
   <tr>
     <td>Sharp</td>
-    <td><code>04dd</code></td></tr>
+    <td><code>04DD</code></td>
+  </tr>
   <tr>
     <td>Sony Ericsson</td>
-    <td><code>0fce</code></td></tr>
+    <td><code>0FCE</code></td>
+  </tr>
+  <tr>
+    <td>Toshiba</td>
+    <td><code>0930</code></td>
+  </tr>
   <tr>
     <td>ZTE</td>
-    <td><code>19D2</code></td></tr>
+    <td><code>19D2</code></td>
+  </tr>
 </table>

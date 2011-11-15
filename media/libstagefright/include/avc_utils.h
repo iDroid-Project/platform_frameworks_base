@@ -19,10 +19,22 @@
 #define AVC_UTILS_H_
 
 #include <media/stagefright/foundation/ABuffer.h>
+#include <utils/Errors.h>
 
 namespace android {
 
 struct ABitReader;
+
+enum {
+    kAVCProfileBaseline      = 0x42,
+    kAVCProfileMain          = 0x4d,
+    kAVCProfileExtended      = 0x58,
+    kAVCProfileHigh          = 0x64,
+    kAVCProfileHigh10        = 0x6e,
+    kAVCProfileHigh422       = 0x7a,
+    kAVCProfileHigh444       = 0xf4,
+    kAVCProfileCAVLC444Intra = 0x2c
+};
 
 void FindAVCDimensions(
         const sp<ABuffer> &seqParamSet, int32_t *width, int32_t *height);
@@ -38,6 +50,23 @@ struct MetaData;
 sp<MetaData> MakeAVCCodecSpecificData(const sp<ABuffer> &accessUnit);
 
 bool IsIDR(const sp<ABuffer> &accessUnit);
+bool IsAVCReferenceFrame(const sp<ABuffer> &accessUnit);
+
+const char *AVCProfileToString(uint8_t profile);
+
+sp<MetaData> MakeAACCodecSpecificData(
+        unsigned profile, unsigned sampling_freq_index,
+        unsigned channel_configuration);
+
+// Given an MPEG4 video VOL-header chunk (starting with 0x00 0x00 0x01 0x2?)
+// parse it and fill in dimensions, returns true iff successful.
+bool ExtractDimensionsFromVOLHeader(
+        const uint8_t *data, size_t size, int32_t *width, int32_t *height);
+
+bool GetMPEGAudioFrameSize(
+        uint32_t header, size_t *frame_size,
+        int *out_sampling_rate = NULL, int *out_channels = NULL,
+        int *out_bitrate = NULL, int *out_num_samples = NULL);
 
 }  // namespace android
 

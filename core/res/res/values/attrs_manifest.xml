@@ -75,8 +75,7 @@
          header in the Action Bar. The primary differences between an icon
          and a logo are that logos are often wider and more detailed, and are
          used without an accompanying text caption. This must be a reference
-         to a Drawable resource containing the image definition.
-         @hide -->
+         to a Drawable resource containing the image definition. -->
     <attr name="logo" format="reference" />
 
     <!-- Name of the activity to be launched to manage application's space on
@@ -234,6 +233,23 @@
     <!-- Flag indicating whether the application requests the VM to operate in
          the safe mode.  -->
     <attr name="vmSafeMode" format="boolean" />
+
+    <!-- <p>Flag indicating whether the application's rendering should be hardware
+         accelerated if possible. This flag is turned on by default for applications
+         that are targeting {@link android.os.Build.VERSION_CODES#ICE_CREAM_SANDWICH}
+         or later.</p>
+         <p>This flag can be set on the application and any activity declared
+         in the manifest. When enabled for the application, each activity is
+         automatically assumed to be hardware accelerated. This flag can be
+         overridden in the activity tags, either turning it off (if on for the
+         application) or on (if off for the application.)</p>
+         <p>When this flag is turned on for an activity (either directly or via
+         the application tag), every window created from the activity, including
+         the activity's own window, will be hardware accelerated, if possible.</p>
+         <p>Please refer to the documentation of
+         {@link android.view.WindowManager.LayoutParams#FLAG_HARDWARE_ACCELERATED}
+         for more information on how to control this flag programmatically.</p> -->
+    <attr name="hardwareAccelerated" format="boolean" />
 
     <!-- Flag indicating whether the given application component is available
          to other applications.  If false, it can only be accessed by
@@ -399,8 +415,7 @@
     <attr name="syncable" format="boolean" />
     
     <!-- Flag declaring this activity to be 'immersive'; immersive activities
-         should not be interrupted with other activities or notifications.
-         @hide -->
+         should not be interrupted with other activities or notifications. -->
     <attr name="immersive" format="boolean" />
 
     <!-- Specify the order in which content providers hosted by a process
@@ -427,8 +442,8 @@
     <attr name="priority" format="integer" />
     
     <!-- Specify how an activity should be launched.  See the
-         <a href="{@docRoot}guide/topics/fundamentals.html#acttask">Application Fundamentals</a>
-         documentation for important information on how these options impact
+         <a href="{@docRoot}guide/topics/fundamentals/tasks-and-back-stack.html">Tasks and Back
+         Stack</a> document for important information on how these options impact
          the behavior of your application.
          
          <p>If this attribute is not specified, <code>standard</code> launch
@@ -464,8 +479,8 @@
             of the activity being started at the top of the stack, it will
             receive the Intent as described there (without the
             FLAG_ACTIVITY_BROUGHT_TO_FRONT flag set).  See the
-            <a href="{@docRoot}guide/topics/fundamentals.html#acttask">Application Fundamentals</a>
-            documentation for more details on tasks.-->
+            <a href="{@docRoot}guide/topics/fundamentals/tasks-and-back-stack.html">Tasks and Back
+            Stack</a> document for more details about tasks.-->
         <enum name="singleTask" value="2" />
         <!-- Only allow one instance of this activity to ever be 
             running.  This activity gets a unique task with only itself running 
@@ -475,8 +490,8 @@
             method called.  If this 
             activity tries to start a new activity, that new activity will be 
             launched in a separate task.  See the
-            <a href="{@docRoot}guide/topics/fundamentals.html#acttask">Application Fundamentals</a>
-            documentation for more details on tasks. -->
+            <a href="{@docRoot}guide/topics/fundamentals/tasks-and-back-stack.html">Tasks and Back
+            Stack</a> document for more details about tasks.-->
         <enum name="singleInstance" value="3" />
     </attr>
     
@@ -576,6 +591,21 @@
         <!-- The global user interface mode has changed.  For example,
              going in or out of car mode, night mode changing, etc. -->
         <flag name="uiMode" value="0x0200" />
+        <!-- The current available screen size has changed.  If applications don't
+             target at least {@link android.os.Build.VERSION_CODES#HONEYCOMB_MR2}
+             then the activity will always handle this itself (the change
+             will not result in a restart).  This represents a change in the
+             currently available size, so will change when the user switches
+             between landscape and portrait. -->
+        <flag name="screenSize" value="0x0400" />
+        <!-- The physical screen size has changed.  If applications don't
+             target at least {@link android.os.Build.VERSION_CODES#HONEYCOMB_MR2}
+             then the activity will always handle this itself (the change
+             will not result in a restart).  This represents a change in size
+             regardless of orientation, so will only change when the actual
+             physical screen size has changed such as switching to an external
+             display. -->
+        <flag name="smallestScreenSize" value="0x0800" />
         <!-- The font scaling factor has changed, that is the user has
              selected a new global font size. -->
         <flag name="fontScale" value="0x40000000" />
@@ -680,6 +710,23 @@
         <enum name="preferExternal" value="2" />
     </attr>
 
+    <!-- Extra options for an activity's UI. Applies to either the {@code &lt;activity&gt;} or
+         {@code &lt;application&gt;} tag. If specified on the {@code &lt;application&gt;}
+         tag these will be considered defaults for all activities in the
+         application. -->
+    <attr name="uiOptions">
+        <!-- No extra UI options. This is the default. -->
+        <flag name="none" value="0" />
+        <!-- Split the options menu into a separate bar at the bottom of
+             the screen when severely constrained for horizontal space.
+             (e.g. portrait mode on a phone.) Instead of a small number
+             of action buttons appearing in the action bar at the top
+             of the screen, the action bar will split into the top navigation
+             section and the bottom menu section. Menu items will not be
+             split across the two bars; they will always appear together. -->
+        <flag name="splitActionBarWhenNarrow" value="1" />
+    </attr>
+
     <!-- The <code>manifest</code> tag is the root of an
          <code>AndroidManifest.xml</code> file,
          describing the contents of an Android package (.apk) file.  One
@@ -734,6 +781,7 @@
         <attr name="theme" />
         <attr name="label" />
         <attr name="icon" />
+        <attr name="logo" />
         <attr name="description" />
         <attr name="permission" />
         <attr name="process" />
@@ -752,6 +800,7 @@
         <attr name="enabled" />
         <attr name="debuggable" />
         <attr name="vmSafeMode" />
+        <attr name="hardwareAccelerated" />
         <!-- Name of activity to be launched for managing the application's space on the device. -->
         <attr name="manageSpaceActivity" />
         <attr name="allowClearUserData" />
@@ -762,7 +811,14 @@
         <attr name="restoreNeedsApplication" />
         <attr name="restoreAnyVersion" />
         <attr name="neverEncrypt" />
-        <!-- Declare that this applicationn can't participate in the normal
+        <!-- Request that your application's processes be created with
+             a large Dalvik heap.  This applies to <em>all</em> processes
+             created for the application.  It only applies to the first
+             application loaded into a process; if using a sharedUserId
+             to allow multiple applications to use a process, they all must
+             use this option consistently or will get unpredictable results. -->
+        <attr name="largeHeap" format="boolean" />
+        <!-- Declare that this application can't participate in the normal
              state save/restore mechanism.  Since it is not able to save and
              restore its state on demand,
              it can not participate in the normal activity lifecycle.  It will
@@ -773,6 +829,7 @@
              application is running, the user will be informed of this.
              @hide -->
         <attr name="cantSaveState" format="boolean" />
+        <attr name="uiOptions" />
     </declare-styleable>
     
     <!-- The <code>permission</code> tag declares a security permission that can be
@@ -792,6 +849,7 @@
         <attr name="name" />
         <attr name="label" />
         <attr name="icon" />
+        <attr name="logo" />
         <attr name="permissionGroup" />
         <attr name="description" />
         <attr name="protectionLevel" />
@@ -816,6 +874,7 @@
         <attr name="name" />
         <attr name="label" />
         <attr name="icon" />
+        <attr name="logo" />
         <attr name="description" />
     </declare-styleable>
     
@@ -845,6 +904,7 @@
         <attr name="name" />
         <attr name="label" />
         <attr name="icon" />
+        <attr name="logo" />
     </declare-styleable>
     
     <!-- The <code>uses-permission</code> tag requests a
@@ -970,6 +1030,39 @@
          <p>This appears as a child tag of the
          {@link #AndroidManifest manifest} tag. -->
     <declare-styleable name="AndroidManifestSupportsScreens" parent="AndroidManifest">
+        <!-- Starting with {@link android.os.Build.VERSION_CODES#HONEYCOMB_MR2},
+             this is the new way to specify the minimum screen size an application is
+             compatible with.  This attribute provides the required minimum
+             "smallest screen width" (as per the -swNNNdp resource configuration)
+             that the application can run on.  For example, a typical phone
+             screen is 320, a 7" tablet 600, and a 10" tablet 720.  If the
+             smallest screen width of the device is below the value supplied here,
+             then the application is considered incompatible with that device.
+             If not supplied, then any old smallScreens, normalScreens, largeScreens,
+             or xlargeScreens attributes will be used instead. -->
+        <attr name="requiresSmallestWidthDp" format="integer" />
+        <!-- Starting with {@link android.os.Build.VERSION_CODES#HONEYCOMB_MR2},
+             this is the new way to specify the largest screens an application is
+             compatible with.  This attribute provides the maximum
+             "smallest screen width" (as per the -swNNNdp resource configuration)
+             that the application is designed for.  If this value is smaller than
+             the "smallest screen width" of the device it is running on, the user
+             is offered to run it in a compatibility mode that emulates a
+             smaller screen and zooms it to fit the screen. Currently the compatibility mode only
+             emulates phone screens with a 320dp width, so compatibility mode is not applied if the
+             value for compatibleWidthLimitDp is larger than 320. -->
+        <attr name="compatibleWidthLimitDp" format="integer" />
+        <!-- Starting with {@link android.os.Build.VERSION_CODES#HONEYCOMB_MR2},
+             this is the new way to specify the screens an application is
+             compatible with.  This attribute provides the maximum
+             "smallest screen width" (as per the -swNNNdp resource configuration)
+             that the application can work well on.  If this value is smaller than
+             the "smallest screen width" of the device it is running on, the
+             application will be forced in to screen compatibility mode with
+             no way for the user to turn it off. Currently the compatibility mode only
+             emulates phone screens with a 320dp width, so compatibility mode is not applied if the
+             value for largestWidthLimitDp is larger than 320. -->
+        <attr name="largestWidthLimitDp" format="integer" />
         <!-- Indicates whether the application supports smaller screen form-factors.
              A small screen is defined as one with a smaller aspect ratio than
              the traditional HVGA screen; that is, for a portrait screen, less
@@ -1049,6 +1142,7 @@
         <attr name="label" />
         <attr name="description" />
         <attr name="icon" />
+        <attr name="logo" />
         <attr name="process" />
         <attr name="authorities" />
         <attr name="syncable" />
@@ -1128,6 +1222,7 @@
         <attr name="label" />
         <attr name="description" />
         <attr name="icon" />
+        <attr name="logo" />
         <attr name="permission" />
         <attr name="process" />
         <!-- Specify whether the service is enabled or not (that is, can be instantiated by the system).
@@ -1136,6 +1231,10 @@
              component specific values). -->
         <attr name="enabled" />
         <attr name="exported" />
+        <!-- If set to true, this service with be automatically stopped
+             when the user remove a task rooted in an activity owned by
+             the application.  The default is false. -->
+        <attr name="stopWithTask" format="boolean" />
     </declare-styleable>
     
     <!-- The <code>receiver</code> tag declares an
@@ -1160,6 +1259,7 @@
         <attr name="label" />
         <attr name="description" />
         <attr name="icon" />
+        <attr name="logo" />
         <attr name="permission" />
         <attr name="process" />
         <!-- Specify whether the receiver is enabled or not (that is, can be instantiated by the system).
@@ -1192,6 +1292,7 @@
         <attr name="label" />
         <attr name="description" />
         <attr name="icon" />
+        <attr name="logo" />
         <attr name="launchMode" />
         <attr name="screenOrientation" />
         <attr name="configChanges" />
@@ -1217,6 +1318,9 @@
              this activity.  A value besides "unspecified" here overrides
              any value in the theme. -->
         <attr name="windowSoftInputMode" />
+        <attr name="immersive" />
+        <attr name="hardwareAccelerated" />
+        <attr name="uiOptions" />
     </declare-styleable>
     
     <!-- The <code>activity-alias</code> tag declares a new
@@ -1245,6 +1349,7 @@
         <attr name="label" />
         <attr name="description" />
         <attr name="icon" />
+        <attr name="logo" />
         <attr name="permission" />
         <!-- Specify whether the activity-alias is enabled or not (that is, can be instantiated by the system).
              It can also be specified for an application as a whole, in which case a value of "false"
@@ -1314,6 +1419,7 @@
          parent="AndroidManifestActivity AndroidManifestReceiver AndroidManifestService">
         <attr name="label" />
         <attr name="icon" />
+        <attr name="logo" />
         <attr name="priority" />
     </declare-styleable>
     
@@ -1420,6 +1526,7 @@
         <attr name="targetPackage" />
         <attr name="label" />
         <attr name="icon" />
+        <attr name="logo" />
         <attr name="handleProfiling" />
         <attr name="functionalTest" />
     </declare-styleable>
@@ -1455,8 +1562,21 @@
             <enum name="xhdpi" value="320" />
         </attr>
     </declare-styleable>
-    
-    
+
+    <!-- The attribute that holds a Base64-encoded public key. -->
+    <attr name="publicKey" format="string" />
+
+    <!-- Attributes relating to a package verifier. -->
+    <declare-styleable name="AndroidManifestPackageVerifier" parent="AndroidManifest">
+        <!-- Specifies the Java-style package name that defines this
+             package verifier. -->
+        <attr name="name" />
+
+        <!-- The Base64 encoded public key of the package verifier's
+             signature. -->
+        <attr name="publicKey" />
+    </declare-styleable>
+
     <!-- Declaration of an {@link android.content.Intent} object in XML.  May
          also include zero or more {@link #IntentCategory <category> and
          {@link #Extra <extra>} tags. -->

@@ -2,22 +2,19 @@ LOCAL_PATH:= $(call my-dir)
 include $(CLEAR_VARS)
 
 LOCAL_SRC_FILES:= \
-	GravitySensor.cpp \
-	LinearAccelerationSensor.cpp \
-	RotationVectorSensor.cpp \
-    SensorService.cpp \
-    SensorInterface.cpp \
+	CorrectedGyroSensor.cpp \
+    Fusion.cpp \
+    GravitySensor.cpp \
+    LinearAccelerationSensor.cpp \
+    OrientationSensor.cpp \
+    RotationVectorSensor.cpp \
     SensorDevice.cpp \
-    SecondOrderLowPassFilter.cpp
+    SensorFusion.cpp \
+    SensorInterface.cpp \
+    SensorService.cpp \
+
 
 LOCAL_CFLAGS:= -DLOG_TAG=\"SensorService\"
-
-# need "-lrt" on Linux simulator to pick up clock_gettime
-ifeq ($(TARGET_SIMULATOR),true)
-	ifeq ($(HOST_OS),linux)
-		LOCAL_LDLIBS += -lrt -lpthread
-	endif
-endif
 
 LOCAL_SHARED_LIBRARIES := \
 	libcutils \
@@ -27,7 +24,7 @@ LOCAL_SHARED_LIBRARIES := \
 	libui \
 	libgui
 
-LOCAL_PRELINK_MODULE := false
+
 
 LOCAL_MODULE:= libsensorservice
 

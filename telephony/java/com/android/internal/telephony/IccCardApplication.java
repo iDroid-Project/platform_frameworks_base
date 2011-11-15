@@ -16,6 +16,8 @@
 
 package com.android.internal.telephony;
 
+import com.android.internal.telephony.IccCardStatus.PinState;
+
 
 /**
  * See also RIL_AppStatus in include/telephony/ril.h
@@ -28,7 +30,8 @@ public class IccCardApplication {
         APPTYPE_SIM,
         APPTYPE_USIM,
         APPTYPE_RUIM,
-        APPTYPE_CSIM
+        APPTYPE_CSIM,
+        APPTYPE_ISIM
     };
 
     public enum AppState{
@@ -103,8 +106,8 @@ public class IccCardApplication {
     public String         app_label;
     // applicable to USIM and CSIM
     public int            pin1_replaced;
-    public int            pin1;
-    public int            pin2;
+    public PinState            pin1;
+    public PinState            pin2;
 
     AppType AppTypeFromRILInt(int type) {
         AppType newType;
@@ -115,6 +118,7 @@ public class IccCardApplication {
             case 2: newType = AppType.APPTYPE_USIM;    break;
             case 3: newType = AppType.APPTYPE_RUIM;    break;
             case 4: newType = AppType.APPTYPE_CSIM;    break;
+            case 5: newType = AppType.APPTYPE_ISIM;    break;
             default:
                 throw new RuntimeException(
                             "Unrecognized RIL_AppType: " +type);
@@ -175,4 +179,48 @@ public class IccCardApplication {
         return newSubState;
     }
 
+    PinState PinStateFromRILInt(int state) {
+        PinState newPinState;
+        switch(state) {
+            case 0:
+                newPinState = PinState.PINSTATE_UNKNOWN;
+                break;
+            case 1:
+                newPinState = PinState.PINSTATE_ENABLED_NOT_VERIFIED;
+                break;
+            case 2:
+                newPinState = PinState.PINSTATE_ENABLED_VERIFIED;
+                break;
+            case 3:
+                newPinState = PinState.PINSTATE_DISABLED;
+                break;
+            case 4:
+                newPinState = PinState.PINSTATE_ENABLED_BLOCKED;
+                break;
+            case 5:
+                newPinState = PinState.PINSTATE_ENABLED_PERM_BLOCKED;
+                break;
+            default:
+                throw new RuntimeException("Unrecognized RIL_PinState: " + state);
+        }
+        return newPinState;
+    }
+
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder();
+
+        sb.append("{").append(app_type).append(",").append(app_state);
+        if (app_state == AppState.APPSTATE_SUBSCRIPTION_PERSO) {
+            sb.append(",").append(perso_substate);
+        }
+        if (app_type == AppType.APPTYPE_CSIM ||
+                app_type == AppType.APPTYPE_USIM ||
+                app_type == AppType.APPTYPE_ISIM) {
+            sb.append(",pin1=").append(pin1);
+            sb.append(",pin2=").append(pin2);
+        }
+        sb.append("}");
+        return sb.toString();
+    }
 }

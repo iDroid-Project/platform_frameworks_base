@@ -15,17 +15,16 @@
 ** limitations under the License.
 */
 
-// This file was generated from the C++ include file: SkMatrix.h
-// Any changes made to this file will be discarded by the build.
-// To change this file, either edit the include, or device/tools/gluemaker/main.cpp, 
-// or one of the auxilary file specifications in device/tools/gluemaker.
-
 #include "jni.h"
 #include "GraphicsJNI.h"
 #include <android_runtime/AndroidRuntime.h>
 
 #include "SkMatrix.h"
 #include "SkTemplates.h"
+
+#include "Matrix.h"
+
+#include <Caches.h>
 
 namespace android {
 
@@ -403,10 +402,20 @@ static JNINativeMethod methods[] = {
     {"native_equals", "(II)Z", (void*) SkMatrixGlue::equals}
 };
 
+static jfieldID sNativeInstanceField;
+
 int register_android_graphics_Matrix(JNIEnv* env) {
     int result = AndroidRuntime::registerNativeMethods(env, "android/graphics/Matrix", methods,
         sizeof(methods) / sizeof(methods[0]));
+
+    jclass clazz = env->FindClass("android/graphics/Matrix");
+    sNativeInstanceField = env->GetFieldID(clazz, "native_instance", "I");
+
     return result;
+}
+
+SkMatrix* android_graphics_Matrix_getSkMatrix(JNIEnv* env, jobject matrixObj) {
+    return reinterpret_cast<SkMatrix*>(env->GetIntField(matrixObj, sNativeInstanceField));
 }
 
 }

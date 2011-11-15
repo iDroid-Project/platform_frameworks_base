@@ -30,7 +30,7 @@ public class WebViewClient {
      * proper handler for the url. If WebViewClient is provided, return true
      * means the host application handles the url, while return false means the
      * current WebView handles the url.
-     * 
+     *
      * @param view The WebView that is initiating the callback.
      * @param url The url to be loaded.
      * @return True if the host application wants to leave the current WebView
@@ -46,7 +46,7 @@ public class WebViewClient {
      * framesets will call onPageStarted one time for the main frame. This also
      * means that onPageStarted will not be called when the contents of an
      * embedded frame changes, i.e. clicking a link whose target is an iframe.
-     * 
+     *
      * @param view The WebView that is initiating the callback.
      * @param url The url to be loaded.
      * @param favicon The favicon for this page if it already exists in the
@@ -60,7 +60,7 @@ public class WebViewClient {
      * is called only for main frame. When onPageFinished() is called, the
      * rendering picture may not be updated yet. To get the notification for the
      * new Picture, use {@link WebView.PictureListener#onNewPicture}.
-     * 
+     *
      * @param view The WebView that is initiating the callback.
      * @param url The url of the page.
      */
@@ -70,7 +70,7 @@ public class WebViewClient {
     /**
      * Notify the host application that the WebView will load the resource
      * specified by the given url.
-     * 
+     *
      * @param view The WebView that is initiating the callback.
      * @param url The url of the resource the WebView will load.
      */
@@ -78,11 +78,31 @@ public class WebViewClient {
     }
 
     /**
+     * Notify the host application of a resource request and allow the
+     * application to return the data.  If the return value is null, the WebView
+     * will continue to load the resource as usual.  Otherwise, the return
+     * response and data will be used.  NOTE: This method is called by the
+     * network thread so clients should exercise caution when accessing private
+     * data.
+     *
+     * @param view The {@link android.webkit.WebView} that is requesting the
+     *             resource.
+     * @param url The raw url of the resource.
+     * @return A {@link android.webkit.WebResourceResponse} containing the
+     *         response information or null if the WebView should load the
+     *         resource itself.
+     */
+    public WebResourceResponse shouldInterceptRequest(WebView view,
+            String url) {
+        return null;
+    }
+
+    /**
      * Notify the host application that there have been an excessive number of
      * HTTP redirects. As the host application if it would like to continue
      * trying to load the resource. The default behavior is to send the cancel
      * message.
-     * 
+     *
      * @param view The WebView that is initiating the callback.
      * @param cancelMsg The message to send if the host wants to cancel
      * @param continueMsg The message to send if the host wants to continue
@@ -144,7 +164,7 @@ public class WebViewClient {
      * As the host application if the browser should resend data as the
      * requested page was a result of a POST. The default is to not resend the
      * data.
-     * 
+     *
      * @param view The WebView that is initiating the callback.
      * @param dontResend The message to send if the browser should not resend
      * @param resend The message to send if the browser should resend data
@@ -156,7 +176,7 @@ public class WebViewClient {
 
     /**
      * Notify the host application to update its visited links database.
-     * 
+     *
      * @param view The WebView that is initiating the callback.
      * @param url The url being visited.
      * @param isReload True if this url is being reloaded.
@@ -166,12 +186,12 @@ public class WebViewClient {
     }
 
     /**
-     * Notify the host application to handle a ssl certificate error request
-     * (display the error to the user and ask whether to proceed or not). The
-     * host application has to call either handler.cancel() or handler.proceed()
-     * as the connection is suspended and waiting for the response. The default
-     * behavior is to cancel the load.
-     * 
+     * Notify the host application that an SSL error occurred while loading a
+     * resource. The host application must call either handler.cancel() or
+     * handler.proceed(). Note that the decision may be retained for use in
+     * response to future SSL errors. The default behavior is to cancel the
+     * load.
+     *
      * @param view The WebView that is initiating the callback.
      * @param handler An SslErrorHandler object that will handle the user's
      *            response.
@@ -183,9 +203,38 @@ public class WebViewClient {
     }
 
     /**
+     * Notify the host application that an SSL error occurred while loading a
+     * resource, but the WebView but chose to proceed anyway based on a
+     * decision retained from a previous response to onReceivedSslError().
+     * @hide
+     */
+    public void onProceededAfterSslError(WebView view, SslError error) {
+    }
+
+    /**
+     * Notify the host application to handle a SSL client certificate
+     * request (display the request to the user and ask whether to
+     * proceed with a client certificate or not). The host application
+     * has to call either handler.cancel() or handler.proceed() as the
+     * connection is suspended and waiting for the response. The
+     * default behavior is to cancel, returning no client certificate.
+     *
+     * @param view The WebView that is initiating the callback.
+     * @param handler An ClientCertRequestHandler object that will
+     *            handle the user's response.
+     * @param host_and_port The host and port of the requesting server.
+     *
+     * @hide
+     */
+    public void onReceivedClientCertRequest(WebView view,
+            ClientCertRequestHandler handler, String host_and_port) {
+        handler.cancel();
+    }
+
+    /**
      * Notify the host application to handle an authentication request. The
      * default behavior is to cancel the request.
-     * 
+     *
      * @param view The WebView that is initiating the callback.
      * @param handler The HttpAuthHandler that will handle the user's response.
      * @param host The host requiring authentication.
@@ -203,7 +252,7 @@ public class WebViewClient {
      * true, WebView will not handle the key event. If return false, WebView
      * will always handle the key event, so none of the super in the view chain
      * will see the key event. The default behavior returns false.
-     * 
+     *
      * @param view The WebView that is initiating the callback.
      * @param event The key event.
      * @return True if the host application wants to handle the key event
@@ -219,7 +268,7 @@ public class WebViewClient {
      * or if shouldOverrideKeyEvent returns true. This is called asynchronously
      * from where the key is dispatched. It gives the host application an chance
      * to handle the unhandled key events.
-     * 
+     *
      * @param view The WebView that is initiating the callback.
      * @param event The key event.
      */
@@ -229,11 +278,25 @@ public class WebViewClient {
     /**
      * Notify the host application that the scale applied to the WebView has
      * changed.
-     * 
+     *
      * @param view he WebView that is initiating the callback.
      * @param oldScale The old scale factor
      * @param newScale The new scale factor
      */
     public void onScaleChanged(WebView view, float oldScale, float newScale) {
+    }
+
+    /**
+     * Notify the host application that a request to automatically log in the
+     * user has been processed.
+     * @param view The WebView requesting the login.
+     * @param realm The account realm used to look up accounts.
+     * @param account An optional account. If not null, the account should be
+     *                checked against accounts on the device. If it is a valid
+     *                account, it should be used to log in the user.
+     * @param args Authenticator specific arguments used to log in the user.
+     */
+    public void onReceivedLoginRequest(WebView view, String realm,
+            String account, String args) {
     }
 }

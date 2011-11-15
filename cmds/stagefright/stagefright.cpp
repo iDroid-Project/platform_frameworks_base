@@ -31,7 +31,7 @@
 #include <media/IMediaPlayerService.h>
 #include <media/stagefright/foundation/ALooper.h>
 #include "include/ARTSPController.h"
-#include "include/LiveSource.h"
+#include "include/LiveSession.h"
 #include "include/NuCachedSource2.h"
 #include <media/stagefright/AudioPlayer.h>
 #include <media/stagefright/DataSource.h>
@@ -49,7 +49,16 @@
 #include <media/stagefright/MPEG2TSWriter.h>
 #include <media/stagefright/MPEG4Writer.h>
 
+#include <private/media/VideoFrame.h>
+#include <SkBitmap.h>
+#include <SkImageEncoder.h>
+
 #include <fcntl.h>
+
+#include <gui/SurfaceTextureClient.h>
+
+#include <surfaceflinger/ISurfaceComposer.h>
+#include <surfaceflinger/SurfaceComposerClient.h>
 
 using namespace android;
 
@@ -57,15 +66,104 @@ static long gNumRepetitions;
 static long gMaxNumFrames;  // 0 means decode all available.
 static long gReproduceBug;  // if not -1.
 static bool gPreferSoftwareCodec;
+static bool gForceToUseHardwareCodec;
 static bool gPlaybackAudio;
 static bool gWriteMP4;
+static bool gDisplayHistogram;
 static String8 gWriteMP4Filename;
+
+static sp<ANativeWindow> gSurface;
 
 static int64_t getNowUs() {
     struct timeval tv;
     gettimeofday(&tv, NULL);
 
     return (int64_t)tv.tv_usec + tv.tv_sec * 1000000ll;
+}
+
+static int CompareIncreasing(const int64_t *a, const int64_t *b) {
+    return (*a) < (*b) ? -1 : (*a) > (*b) ? 1 : 0;
+}
+
+static void displayDecodeHistogram(Vector<int64_t> *decodeTimesUs) {
+    printf("decode times:\n");
+
+    decodeTimesUs->sort(CompareIncreasing);
+
+    size_t n = decodeTimesUs->size();
+    int64_t minUs = decodeTimesUs->itemAt(0);
+    int64_t maxUs = decodeTimesUs->itemAt(n - 1);
+
+    printf("min decode time %lld us (%.2f secs)\n", minUs, minUs / 1E6);
+    printf("max decode time %lld us (%.2f secs)\n", maxUs, maxUs / 1E6);
+
+    size_t counts[100];
+    for (size_t i = 0; i < 100; ++i) {
+        counts[i] = 0;
+    }
+
+    for (size_t i = 0; i < n; ++i) {
+        int64_t x = decodeTimesUs->itemAt(i);
+
+        size_t slot = ((x - minUs) * 100) / (maxUs - minUs);
+        if (slot == 100) { slot = 99; }
+
+        ++counts[slot];
+    }
+
+    for (size_t i = 0; i < 100; ++i) {
+        int64_t slotUs = minUs + (i * (maxUs - minUs) / 100);
+
+        double fps = 1E6 / slotUs;
+        printf("[%.2f fps]: %d\n", fps, counts[i]);
+    }
+}
+
+static void displayAVCProfileLevelIfPossible(const sp<MetaData>& meta) {
+    uint32_t type;
+    const void *data;
+    size_t size;
+    if (meta->findData(kKeyAVCC, &type, &data, &size)) {
+        const uint8_t *ptr = (const uint8_t *)data;
+        CHECK(size >= 7);
+        CHECK(ptr[0] == 1);  // configurationVersion == 1
+        uint8_t profile = ptr[1];
+        uint8_t level = ptr[3];
+        fprintf(stderr, "AVC video profile %d and level %d\n", profile, level);
+    }
+}
+
+static void dumpSource(const sp<MediaSource> &source, const String8 &filename) {
+    FILE *out = fopen(filename.string(), "wb");
+
+    CHECK_EQ((status_t)OK, source->start());
+
+    status_t err;
+    for (;;) {
+        MediaBuffer *mbuf;
+        err = source->read(&mbuf);
+
+        if (err == INFO_FORMAT_CHANGED) {
+            continue;
+        } else if (err != OK) {
+            break;
+        }
+
+        CHECK_EQ(
+                fwrite((const uint8_t *)mbuf->data() + mbuf->range_offset(),
+                       1,
+                       mbuf->range_length(),
+                       out),
+                (ssize_t)mbuf->range_length());
+
+        mbuf->release();
+        mbuf = NULL;
+    }
+
+    CHECK_EQ((status_t)OK, source->stop());
+
+    fclose(out);
+    out = NULL;
 }
 
 static void playSource(OMXClient *client, sp<MediaSource> &source) {
@@ -78,15 +176,25 @@ static void playSource(OMXClient *client, sp<MediaSource> &source) {
     if (!strcasecmp(MEDIA_MIMETYPE_AUDIO_RAW, mime)) {
         rawSource = source;
     } else {
+        int flags = 0;
+        if (gPreferSoftwareCodec) {
+            flags |= OMXCodec::kPreferSoftwareCodecs;
+        }
+        if (gForceToUseHardwareCodec) {
+            CHECK(!gPreferSoftwareCodec);
+            flags |= OMXCodec::kHardwareCodecsOnly;
+        }
         rawSource = OMXCodec::Create(
             client->interface(), meta, false /* createEncoder */, source,
             NULL /* matchComponentName */,
-            gPreferSoftwareCodec ? OMXCodec::kPreferSoftwareCodecs : 0);
+            flags,
+            gSurface);
 
         if (rawSource == NULL) {
             fprintf(stderr, "Failed to instantiate decoder for '%s'.\n", mime);
             return;
         }
+        displayAVCProfileLevelIfPossible(meta);
     }
 
     source.clear();
@@ -201,6 +309,8 @@ static void playSource(OMXClient *client, sp<MediaSource> &source) {
     int64_t sumDecodeUs = 0;
     int64_t totalBytes = 0;
 
+    Vector<int64_t> decodeTimesUs;
+
     while (numIterationsLeft-- > 0) {
         long numFrames = 0;
 
@@ -224,9 +334,17 @@ static void playSource(OMXClient *client, sp<MediaSource> &source) {
                 break;
             }
 
-            if (buffer->range_length() > 0 && (n++ % 16) == 0) {
-                printf(".");
-                fflush(stdout);
+            if (buffer->range_length() > 0) {
+                if (gDisplayHistogram && n > 0) {
+                    // Ignore the first time since it includes some setup
+                    // cost.
+                    decodeTimesUs.push(delayDecodeUs);
+                }
+
+                if ((n++ % 16) == 0) {
+                    printf(".");
+                    fflush(stdout);
+                }
             }
 
             sumDecodeUs += delayDecodeUs;
@@ -266,6 +384,10 @@ static void playSource(OMXClient *client, sp<MediaSource> &source) {
                (double)sumDecodeUs / n);
 
         printf("decoded a total of %d frame(s).\n", n);
+
+        if (gDisplayHistogram) {
+            displayDecodeHistogram(&decodeTimesUs);
+        }
     } else if (!strncasecmp("audio/", mime, 6)) {
         // Frame count makes less sense for audio, as the output buffer
         // sizes may be different across decoders.
@@ -297,13 +419,15 @@ private:
 
     sp<MediaSource> mSource;
     StreamType mStreamType;
+    bool mSawFirstIDRFrame;
 
     DISALLOW_EVIL_CONSTRUCTORS(DetectSyncSource);
 };
 
 DetectSyncSource::DetectSyncSource(const sp<MediaSource> &source)
     : mSource(source),
-      mStreamType(OTHER) {
+      mStreamType(OTHER),
+      mSawFirstIDRFrame(false) {
     const char *mime;
     CHECK(mSource->getFormat()->findCString(kKeyMIMEType, &mime));
 
@@ -319,6 +443,8 @@ DetectSyncSource::DetectSyncSource(const sp<MediaSource> &source)
 }
 
 status_t DetectSyncSource::start(MetaData *params) {
+    mSawFirstIDRFrame = false;
+
     return mSource->start(params);
 }
 
@@ -348,16 +474,30 @@ static bool isIDRFrame(MediaBuffer *buffer) {
 
 status_t DetectSyncSource::read(
         MediaBuffer **buffer, const ReadOptions *options) {
-    status_t err = mSource->read(buffer, options);
+    for (;;) {
+        status_t err = mSource->read(buffer, options);
 
-    if (err != OK) {
-        return err;
-    }
+        if (err != OK) {
+            return err;
+        }
 
-    if (mStreamType == AVC && isIDRFrame(*buffer)) {
-        (*buffer)->meta_data()->setInt32(kKeyIsSyncFrame, true);
-    } else {
-        (*buffer)->meta_data()->setInt32(kKeyIsSyncFrame, true);
+        if (mStreamType == AVC) {
+            bool isIDR = isIDRFrame(*buffer);
+            (*buffer)->meta_data()->setInt32(kKeyIsSyncFrame, isIDR);
+            if (isIDR) {
+                mSawFirstIDRFrame = true;
+            }
+        } else {
+            (*buffer)->meta_data()->setInt32(kKeyIsSyncFrame, true);
+        }
+
+        if (mStreamType != AVC || mSawFirstIDRFrame) {
+            break;
+        }
+
+        // Ignore everything up to the first IDR frame.
+        (*buffer)->release();
+        *buffer = NULL;
     }
 
     return OK;
@@ -463,9 +603,15 @@ static void usage(const char *me) {
     fprintf(stderr, "       -p(rofiles) dump decoder profiles supported\n");
     fprintf(stderr, "       -t(humbnail) extract video thumbnail or album art\n");
     fprintf(stderr, "       -s(oftware) prefer software codec\n");
+    fprintf(stderr, "       -r(hardware) force to use hardware codec\n");
     fprintf(stderr, "       -o playback audio\n");
     fprintf(stderr, "       -w(rite) filename (write to .mp4 file)\n");
     fprintf(stderr, "       -k seek test\n");
+    fprintf(stderr, "       -x display a histogram of decoding times/fps "
+                    "(video only)\n");
+    fprintf(stderr, "       -S allocate buffers from a surface\n");
+    fprintf(stderr, "       -T allocate buffers from a surface texture\n");
+    fprintf(stderr, "       -d(ump) filename (raw stream data to a file)\n");
 }
 
 int main(int argc, char **argv) {
@@ -476,22 +622,36 @@ int main(int argc, char **argv) {
     bool dumpProfiles = false;
     bool extractThumbnail = false;
     bool seekTest = false;
+    bool useSurfaceAlloc = false;
+    bool useSurfaceTexAlloc = false;
+    bool dumpStream = false;
+    String8 dumpStreamFilename;
     gNumRepetitions = 1;
     gMaxNumFrames = 0;
     gReproduceBug = -1;
     gPreferSoftwareCodec = false;
+    gForceToUseHardwareCodec = false;
     gPlaybackAudio = false;
     gWriteMP4 = false;
+    gDisplayHistogram = false;
 
     sp<ALooper> looper;
     sp<ARTSPController> rtspController;
+    sp<LiveSession> liveSession;
 
     int res;
-    while ((res = getopt(argc, argv, "han:lm:b:ptsow:k")) >= 0) {
+    while ((res = getopt(argc, argv, "han:lm:b:ptsrow:kxSTd:")) >= 0) {
         switch (res) {
             case 'a':
             {
                 audioOnly = true;
+                break;
+            }
+
+            case 'd':
+            {
+                dumpStream = true;
+                dumpStreamFilename.setTo(optarg);
                 break;
             }
 
@@ -548,6 +708,12 @@ int main(int argc, char **argv) {
                 break;
             }
 
+            case 'r':
+            {
+                gForceToUseHardwareCodec = true;
+                break;
+            }
+
             case 'o':
             {
                 gPlaybackAudio = true;
@@ -557,6 +723,24 @@ int main(int argc, char **argv) {
             case 'k':
             {
                 seekTest = true;
+                break;
+            }
+
+            case 'x':
+            {
+                gDisplayHistogram = true;
+                break;
+            }
+
+            case 'S':
+            {
+                useSurfaceAlloc = true;
+                break;
+            }
+
+            case 'T':
+            {
+                useSurfaceTexAlloc = true;
                 break;
             }
 
@@ -595,22 +779,42 @@ int main(int argc, char **argv) {
         for (int k = 0; k < argc; ++k) {
             const char *filename = argv[k];
 
+            bool failed = true;
             CHECK_EQ(retriever->setDataSource(filename), (status_t)OK);
             sp<IMemory> mem =
                     retriever->getFrameAtTime(-1,
                                     MediaSource::ReadOptions::SEEK_PREVIOUS_SYNC);
 
             if (mem != NULL) {
+                failed = false;
                 printf("getFrameAtTime(%s) => OK\n", filename);
-            } else {
+
+                VideoFrame *frame = (VideoFrame *)mem->pointer();
+
+                SkBitmap bitmap;
+                bitmap.setConfig(
+                        SkBitmap::kRGB_565_Config, frame->mWidth, frame->mHeight);
+
+                bitmap.setPixels((uint8_t *)frame + sizeof(VideoFrame));
+
+                CHECK(SkImageEncoder::EncodeFile(
+                            "/sdcard/out.jpg", bitmap,
+                            SkImageEncoder::kJPEG_Type,
+                            SkImageEncoder::kDefaultQuality));
+            }
+
+            {
                 mem = retriever->extractAlbumArt();
 
                 if (mem != NULL) {
+                    failed = false;
                     printf("extractAlbumArt(%s) => OK\n", filename);
-                } else {
-                    printf("both getFrameAtTime and extractAlbumArt "
-                           "failed on file '%s'.\n", filename);
                 }
+            }
+
+            if (failed) {
+                printf("both getFrameAtTime and extractAlbumArt "
+                    "failed on file '%s'.\n", filename);
             }
         }
 
@@ -632,7 +836,9 @@ int main(int argc, char **argv) {
             MEDIA_MIMETYPE_VIDEO_AVC, MEDIA_MIMETYPE_VIDEO_MPEG4,
             MEDIA_MIMETYPE_VIDEO_H263, MEDIA_MIMETYPE_AUDIO_AAC,
             MEDIA_MIMETYPE_AUDIO_AMR_NB, MEDIA_MIMETYPE_AUDIO_AMR_WB,
-            MEDIA_MIMETYPE_AUDIO_MPEG
+            MEDIA_MIMETYPE_AUDIO_MPEG, MEDIA_MIMETYPE_AUDIO_G711_MLAW,
+            MEDIA_MIMETYPE_AUDIO_G711_ALAW, MEDIA_MIMETYPE_AUDIO_VORBIS,
+            MEDIA_MIMETYPE_VIDEO_VPX
         };
 
         for (size_t k = 0; k < sizeof(kMimeTypes) / sizeof(kMimeTypes[0]);
@@ -640,6 +846,7 @@ int main(int argc, char **argv) {
             printf("type '%s':\n", kMimeTypes[k]);
 
             Vector<CodecCapabilities> results;
+            // will retrieve hardware and software codecs
             CHECK_EQ(QueryCodecs(omx, kMimeTypes[k],
                                  true, // queryDecoders
                                  &results), (status_t)OK);
@@ -681,8 +888,51 @@ int main(int argc, char **argv) {
 
         for (List<IOMX::ComponentInfo>::iterator it = list.begin();
              it != list.end(); ++it) {
-            printf("%s\n", (*it).mName.string());
+            printf("%s\t Roles: ", (*it).mName.string());
+            for (List<String8>::iterator itRoles = (*it).mRoles.begin() ;
+                    itRoles != (*it).mRoles.end() ; ++itRoles) {
+                printf("%s\t", (*itRoles).string());
+            }
+            printf("\n");
         }
+    }
+
+    sp<SurfaceComposerClient> composerClient;
+    sp<SurfaceControl> control;
+
+    if ((useSurfaceAlloc || useSurfaceTexAlloc) && !audioOnly) {
+        if (useSurfaceAlloc) {
+            composerClient = new SurfaceComposerClient;
+            CHECK_EQ(composerClient->initCheck(), (status_t)OK);
+
+            control = composerClient->createSurface(
+                    String8("A Surface"),
+                    0,
+                    1280,
+                    800,
+                    PIXEL_FORMAT_RGB_565,
+                    0);
+
+            CHECK(control != NULL);
+            CHECK(control->isValid());
+
+            SurfaceComposerClient::openGlobalTransaction();
+            CHECK_EQ(control->setLayer(INT_MAX), (status_t)OK);
+            CHECK_EQ(control->show(), (status_t)OK);
+            SurfaceComposerClient::closeGlobalTransaction();
+
+            gSurface = control->getSurface();
+            CHECK(gSurface != NULL);
+        } else {
+            CHECK(useSurfaceTexAlloc);
+
+            sp<SurfaceTexture> texture = new SurfaceTexture(0 /* tex */);
+            gSurface = new SurfaceTextureClient(texture);
+        }
+
+        CHECK_EQ((status_t)OK,
+                 native_window_api_connect(
+                     gSurface.get(), NATIVE_WINDOW_API_MEDIA));
     }
 
     DataSource::RegisterDefaultSniffers();
@@ -754,8 +1004,15 @@ int main(int argc, char **argv) {
                 String8 uri("http://");
                 uri.append(filename + 11);
 
-                dataSource = new LiveSource(uri.string());
-                dataSource = new NuCachedSource2(dataSource);
+                if (looper == NULL) {
+                    looper = new ALooper;
+                    looper->start();
+                }
+                liveSession = new LiveSession;
+                looper->registerHandler(liveSession);
+
+                liveSession->connect(uri.string());
+                dataSource = liveSession->getDataSource();
 
                 extractor =
                     MediaExtractor::Create(
@@ -767,6 +1024,17 @@ int main(int argc, char **argv) {
                 if (extractor == NULL) {
                     fprintf(stderr, "could not create extractor.\n");
                     return -1;
+                }
+
+                sp<MetaData> meta = extractor->getMetaData();
+
+                if (meta != NULL) {
+                    const char *mime;
+                    CHECK(meta->findCString(kKeyMIMEType, &mime));
+
+                    if (!strcasecmp(mime, MEDIA_MIMETYPE_CONTAINER_MPEG2TS)) {
+                        syncInfoPresent = false;
+                    }
                 }
             }
 
@@ -841,6 +1109,8 @@ int main(int argc, char **argv) {
 
         if (gWriteMP4) {
             writeSourcesToMP4(mediaSources, syncInfoPresent);
+        } else if (dumpStream) {
+            dumpSource(mediaSource, dumpStreamFilename);
         } else if (seekTest) {
             performSeekTest(mediaSource);
         } else {
@@ -852,6 +1122,18 @@ int main(int argc, char **argv) {
             rtspController.clear();
 
             sleep(3);
+        }
+    }
+
+    if ((useSurfaceAlloc || useSurfaceTexAlloc) && !audioOnly) {
+        CHECK_EQ((status_t)OK,
+                 native_window_api_disconnect(
+                     gSurface.get(), NATIVE_WINDOW_API_MEDIA));
+
+        gSurface.clear();
+
+        if (useSurfaceAlloc) {
+            composerClient->dispose();
         }
     }
 

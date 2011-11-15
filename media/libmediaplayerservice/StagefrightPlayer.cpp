@@ -1,3 +1,19 @@
+/*
+ * Copyright (C) 2009 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //#define LOG_NDEBUG 0
 #define LOG_TAG "StagefrightPlayer"
 #include <utils/Log.h>
@@ -31,9 +47,14 @@ status_t StagefrightPlayer::initCheck() {
     return OK;
 }
 
+status_t StagefrightPlayer::setUID(uid_t uid) {
+    mPlayer->setUID(uid);
+
+    return OK;
+}
+
 status_t StagefrightPlayer::setDataSource(
         const char *url, const KeyedVector<String8, String8> *headers) {
-    LOGI("setDataSource('%s')", url);
     return mPlayer->setDataSource(url, headers);
 }
 
@@ -44,11 +65,21 @@ status_t StagefrightPlayer::setDataSource(int fd, int64_t offset, int64_t length
     return mPlayer->setDataSource(dup(fd), offset, length);
 }
 
-status_t StagefrightPlayer::setVideoSurface(const sp<ISurface> &surface) {
+status_t StagefrightPlayer::setDataSource(const sp<IStreamSource> &source) {
+    return mPlayer->setDataSource(source);
+}
+
+status_t StagefrightPlayer::setVideoSurface(const sp<Surface> &surface) {
     LOGV("setVideoSurface");
 
-    mPlayer->setISurface(surface);
-    return OK;
+    return mPlayer->setSurface(surface);
+}
+
+status_t StagefrightPlayer::setVideoSurfaceTexture(
+        const sp<ISurfaceTexture> &surfaceTexture) {
+    LOGV("setVideoSurfaceTexture");
+
+    return mPlayer->setSurfaceTexture(surfaceTexture);
 }
 
 status_t StagefrightPlayer::prepare() {
@@ -83,7 +114,7 @@ bool StagefrightPlayer::isPlaying() {
 }
 
 status_t StagefrightPlayer::seekTo(int msec) {
-    LOGV("seekTo");
+    LOGV("seekTo %.2f secs", msec / 1E3);
 
     status_t err = mPlayer->seekTo((int64_t)msec * 1000);
 
@@ -140,16 +171,6 @@ player_type StagefrightPlayer::playerType() {
     return STAGEFRIGHT_PLAYER;
 }
 
-status_t StagefrightPlayer::suspend() {
-    LOGV("suspend");
-    return mPlayer->suspend();
-}
-
-status_t StagefrightPlayer::resume() {
-    LOGV("resume");
-    return mPlayer->resume();
-}
-
 status_t StagefrightPlayer::invoke(const Parcel &request, Parcel *reply) {
     return INVALID_OPERATION;
 }
@@ -158,6 +179,16 @@ void StagefrightPlayer::setAudioSink(const sp<AudioSink> &audioSink) {
     MediaPlayerInterface::setAudioSink(audioSink);
 
     mPlayer->setAudioSink(audioSink);
+}
+
+status_t StagefrightPlayer::setParameter(int key, const Parcel &request) {
+    LOGV("setParameter");
+    return mPlayer->setParameter(key, request);
+}
+
+status_t StagefrightPlayer::getParameter(int key, Parcel *reply) {
+    LOGV("getParameter");
+    return mPlayer->getParameter(key, reply);
 }
 
 status_t StagefrightPlayer::getMetadata(
@@ -185,6 +216,10 @@ status_t StagefrightPlayer::getMetadata(
             flags & MediaExtractor::CAN_SEEK);
 
     return OK;
+}
+
+status_t StagefrightPlayer::dump(int fd, const Vector<String16> &args) const {
+    return mPlayer->dump(fd, args);
 }
 
 }  // namespace android
